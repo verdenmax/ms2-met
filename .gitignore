@@ -1,0 +1,7 @@
+
+# Byte-compiled
+__pycache__
+
+# Result
+*.csv
+*.png
