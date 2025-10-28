@@ -6,6 +6,9 @@ import logging
 from rich.logging import RichHandler
 
 
+from workflows.pair_flow import PairFlow
+
+
 def main():
     # 设置程序参数， --configpath 来设置配置文件路径
     parser = argparse.ArgumentParser(description='利用代谢标记发展MS2检验技术')
@@ -23,6 +26,13 @@ def main():
 
     # 展示开始的banner
     banner.show_start_banner()
+
+    # 进入 workflow , 系统的处理
+    workflow = PairFlow(workname="main", config=config,
+                        work_path="./workspace")
+
+    # 运行
+    workflow.run()
 
     # 展示程序运行结束banner
     banner.show_end_banner()
