@@ -1,7 +1,9 @@
 
 import configparser
 import logging
+
 import manager.base_manager as base_manager
+from spectrum.dia_data import DIAData
 
 
 class DataManager(base_manager.BaseManager):
@@ -24,3 +26,14 @@ class DataManager(base_manager.BaseManager):
         # 之后决定是否要存储 DIA 文件实例，如果存储就放在 self 下
 
         logging.info(f"初始化： {self.__class__.__name__}")
+
+    def get_dia_data_object(self, tot_raw_path: None | str = None) -> DIAData:
+        """ 从路径中读取 dia 数据 """
+
+        dia_data = DIAData()
+
+        dia_data._load_from_mzml(tot_raw_path)
+
+        dia_data._preprocess_data()
+
+        return dia_data

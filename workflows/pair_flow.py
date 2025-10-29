@@ -64,6 +64,9 @@ class PairFlow:
 
             # 读取配置文件中的 RAW PATH
             tot_raw_path = self._config[ConfigKeys.INPUT][tot_raw_path_key]
+
+            self._dia_data = raw_file_manager.get_dia_data_object(tot_raw_path)
+
             logging.info(tot_raw_path)
 
         # TODO: 这里还需
