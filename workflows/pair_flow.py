@@ -3,6 +3,7 @@ import logging
 import os
 
 import manager.data_manager as data_manager
+from manager.light_result_manager import LightResultManager
 
 from constant.keys import ConfigKeys
 
@@ -19,6 +20,7 @@ class PairFlow:
     """
 
     RAW_DATA_MANAGER_PICKLE = "raw_data_manager.pkl"
+    LIGHT_RESULT_MANAGER_PUCKEL = "light_result_manager.pkl"
 
     def __init__(
         self,
@@ -48,6 +50,17 @@ class PairFlow:
     def load(
         self
     ) -> None:
+        # 读取light result
+        light_result = LightResultManager(
+            self._config,
+            path=os.path.join(
+                self._workpath, self.LIGHT_RESULT_MANAGER_PUCKEL),
+        )
+
+        light_result_path = (
+            self._config[ConfigKeys.INPUT][ConfigKeys.LIGHT_RESULT_PATH])
+        light_result.get_light_result_object(light_result_path)
+
         # 从配置文件中加载所需信息
         raw_file_manager = data_manager.DataManager(
             self._config,

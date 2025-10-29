@@ -18,6 +18,7 @@ class ConfigKeys(metaclass=ConstantsClass):
     INPUT = "input"
     RAW_NUM = "raw_num"
     RAW_PATH = "raw_path"
+    LIGHT_RESULT_PATH = "light_result_file"
 
     GENERAL = "general"
     WORK_DIRECTORY = "work_directory"
