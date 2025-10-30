@@ -42,3 +42,12 @@ class LightResult:
             self.psm_info.append(tot_psminfo)
 
         self.peptide_len = len(self.psm_info)
+
+    def filtered_by_raw_title(
+            self, raw_title: str
+    ) -> np.ndarray[tuple[int], PSMInfo]:
+        """ 过滤出不同的 raw_title """
+        return np.array(
+            [psm
+             for psm in self.psm_info
+                if psm._raw_title == raw_title])
