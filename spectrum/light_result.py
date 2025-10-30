@@ -1,4 +1,5 @@
 
+import re
 import os
 import numpy as np
 import pandas as pd
@@ -30,10 +31,12 @@ class LightResult:
 
         for row in light_input.itertuples():
 
+            modifications = parse_diann_peptide_modify(row._5)
+
             tot_psminfo = PSMInfo(
                 sequence=row._6,
                 charge=row._7,
-                modify=None,
+                modify=modifications,
                 rt=row.RT,
                 precursor_mz=row._11,
                 raw_title=row.Run,
@@ -51,3 +54,34 @@ class LightResult:
             [psm
              for psm in self.psm_info
                 if psm._raw_title == raw_title])
+
+
+def parse_diann_peptide_modify(sequence: str):
+    """ 从DIA-NN 给出的肽段结果中解析出修饰 """
+
+    # 修饰的结果，代表(该修饰位置，unimod id)
+    modifications: [(int, int)] = []
+
+    index = 0
+    count_index = 0
+    slen = len(sequence)
+    while index < slen:
+        if sequence[index] == '(':
+            rindex = index
+            while sequence[rindex] != ')':
+                rindex += 1
+
+            # 解析出unimod id
+            match = re.search(r'UniMod:(\d+)', sequence[index:rindex])
+            unimod_id = int(match.group(1))
+
+            # 记录到结果中
+            modifications.append((count_index, unimod_id))
+
+            index = rindex
+        else:
+            count_index += 1
+
+        index += 1
+
+    return modifications

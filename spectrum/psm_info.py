@@ -16,7 +16,7 @@ class PSMInfo:
         self,
         sequence: str,
         charge: int,
-        modify: str,
+        modify: [(int, int)],
         rt: np.float32,
         precursor_mz: np.float32,
         raw_title: str,
