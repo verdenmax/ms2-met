@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from pyteomics import mzml
+from spectrum.spectrum_utils import match_peak_ppm
 
 
 DEFAULT_VALUE_NO_MOBILITY = 1e-6
@@ -22,6 +23,9 @@ class DIAData:
         """
         记录的原始数据关键数组, mz_value、rt_value、intensity_value、mobility_values。
         """
+        # 这个ms2 index 对应的 ms1 信息
+        self.precursor_scan_ids: np.ndarray[tuple[int],
+                                            np.dtype[np.int64]] = None
         self._mz_values: np.ndarray[tuple[int],
                                     np.dtype[np.float32]] | None = None
         self.rt_values: np.ndarray[tuple[int],
@@ -68,17 +72,7 @@ class DIAData:
             scan = spectrum['scanList']['scan'][0]
             if 'scan start time' in scan:
                 rt = scan['scan start time']
-                # 检查单位并转换为秒
-                if isinstance(rt, dict):
-                    unit = rt.get('unitName', 'minute')
-                    value = rt.get('value', 0)
-                    if unit == 'minute':
-                        return value * 60
-                    elif unit == 'second':
-                        return value
-                else:
-                    # 假设单位是分钟
-                    return rt * 60
+                return float(rt)
         return 0.0
 
     def _extract_scan_number(self, scan_id_str):
@@ -119,6 +113,7 @@ class DIAData:
                 ms_level = spectrum.get('ms level', 1)
 
                 # 获取前体信息 (对于 MS2)
+                precursor_scan_id = -1
                 precursor_mz = None
                 precursor_charge = None
                 precursor_intensity = None
@@ -130,6 +125,8 @@ class DIAData:
 
                     if precursors:
                         precursor = precursors[0]
+                        precursor_scan_id = self._extract_scan_number(
+                            precursor.get('spectrumRef', None))
                         selected_ions = precursor['selectedIonList']['selectedIon']
                         if selected_ions:
                             precursor_mz = selected_ions[0].get(
@@ -166,6 +163,7 @@ class DIAData:
                     'rt': rt,
                     'spec_title': spec_title,
                     'ms_level': ms_level,
+                    'precursor_scan_id': precursor_scan_id,
                     'precursor_mz': precursor_mz,
                     'precursor_charge': precursor_charge,
                     'precursor_intensity': precursor_intensity,
@@ -208,6 +206,8 @@ class DIAData:
         记录的原始数据关键数组, mz_value、rt_value、intensity_value、mobility_values。
         """
         # 提取 m/z 和强度值
+        self.precursor_scan_ids = (
+            self.spectrum_df['precursor_scan_id'].values.astype(np.int64))
         self._mz_values = self.peak_df['mz'].values.astype(np.float32)
         self._intensity_values = self.peak_df['intensity'].values.astype(
             np.float32)
@@ -283,9 +283,9 @@ class DIAData:
 
         # 构建 cycle 数组 (简化版本)
         # 在实际应用中，你需要根据实际的隔离窗口信息来构建
+        # 假设每个循环有1个MS1和多个MS2
         num_cycles = len(ms1_indices)
-        num_windows = self._cycle_length - 1  # 假设每个循环有1个MS1和多个MS2
-
+        num_windows = self._cycle_length - 1
         self.cycle = np.zeros((4, num_windows, num_cycles), dtype=np.float64)
 
         for cycle_idx, ms1_idx in enumerate(ms1_indices):
@@ -311,12 +311,21 @@ class DIAData:
         self._precursor_cycle_max_index = len(
             self.rt_values) // (self._cycle_length if self._cycle_length else 1)
 
-    def get_spectrum(self, scan_id: int) -> tuple[np.ndarray, np.ndarray]:
-        """获取指定索引的谱图数据"""
-        if scan_id < 0 or scan_id >= len(self._scan_id_to_index):
+    def _check_is_ms1(self, index: int) -> bool:
+        """ 检查这个下标对应的谱图是不是一个ms1"""
+        if index < 0 or index >= len(self.precursor_scan_ids):
             raise IndexError("Spectrum index out of range")
 
-        index = self._scan_id_to_index[scan_id]
+        if self.precursor_scan_ids[index] == -1:
+            return True
+        return False
+
+    def get_spectrum_by_index(
+        self, index: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """ 根据自己编码的index 返回谱图信息 """
+        if index < 0 or index >= len(self.rt_values):
+            raise IndexError("Spectrum index out of range")
 
         start_idx = self._peak_start_idx_list[index]
         stop_idx = self._peak_stop_idx_list[index]
@@ -325,3 +334,73 @@ class DIAData:
         intensity = self._intensity_values[start_idx:stop_idx]
 
         return mz, intensity
+
+    def get_spectrum(self, scan_id: int) -> tuple[np.ndarray, np.ndarray]:
+        """获取指定索引的谱图数据"""
+        if scan_id < 0 or scan_id >= len(self._scan_id_to_index):
+            raise IndexError("Spectrum index out of range")
+
+        index = self._scan_id_to_index[scan_id]
+
+        return self.get_spectrum_by_index(index)
+
+    def get_ms1_spectrum_by_ms1_index(
+        self, index: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """ 根据提供的ms2的index获取ms1的谱图信息 """
+        if index < 0 or index >= len(self.precursor_scan_ids):
+            raise IndexError("Spectrum index out of range")
+
+        ms1_scan_id = self.precursor_scan_ids[index]
+
+        return self.get_spectrum(ms1_scan_id)
+
+    def get_spectrum_by_rt(
+        self, rt: np.float32, precurso_mz: np.float32
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """ 根据rt 获得这个谱图信息 """
+
+        # NOTE: 假设 RT 数组是根据时间递增的
+        # 那么这里使用二分来查找对应的 index
+        idx = np.searchsorted(self.rt_values, rt)
+
+        logging.info(f"idx: {idx}")
+        return self.get_spectrum_by_index(idx)
+
+    def xic_peaks_extreact(
+        self,
+        rt_start: np.float32, rt_stop: np.float32,
+        precursor_mz: np.float32,
+        mass_tol_ppm: np.float32,
+    ) -> np.ndarray:
+        """ 过滤出这些保留时间内所有的ms1谱图，然后返回peaks  """
+
+        ans = []
+
+        # 先寻找的起始的 index
+        start_idx = np.searchsorted(self.rt_values, rt_start)
+        end_idx = np.searchsorted(self.rt_values, rt_stop)
+
+        # 遍历所有 index
+        for index in range(start_idx, end_idx):
+
+            if not self._check_is_ms1(index):
+                continue
+
+            # 当是 ms1 谱图的时候，取出这个precursor_mz 对应的信息
+            (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
+
+            (pmm_error, match_intensity) = match_peak_ppm(
+                mz_arr, intensity_arr, precursor_mz, mass_tol_ppm)
+
+            ans.append(
+                {"rt": self.rt_values[index],
+                 "pmm_error": pmm_error,
+                 "intensity": match_intensity})
+
+        dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+
+        # 把 list[dict] 转成结构化 ndarray
+        arr = np.array([tuple(d.values()) for d in ans], dtype=dtype)
+
+        return arr

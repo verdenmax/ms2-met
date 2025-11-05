@@ -90,7 +90,7 @@ class PairFlow:
             self._light_result.filtered_by_raw_title(raw_file_name))
 
         # 获取 dia 数据，当之后想要多进程读数据时，可以直接将 multi_handle 多进程即可_
-        # dia_data = self._raw_file_manager.get_dia_data_object(raw_file_name)
+        dia_data = self._raw_file_manager.get_dia_data_object(raw_file_path)
 
         with Progress() as progress:
             rich_task_progress = progress.add_task(
@@ -101,7 +101,7 @@ class PairFlow:
                 # TODO: 计算出信息
                 single_pair_work(
                     psm=psminfo,
-                    dia_data=None,
+                    dia_data=dia_data,
                     config=self._config,
                 )
 

@@ -38,6 +38,8 @@ class LightResult:
                 charge=row._7,
                 modify=modifications,
                 rt=row.RT,
+                rt_start=row._40,
+                rt_stop=row._41,
                 precursor_mz=row._11,
                 raw_title=row.Run,
             )
