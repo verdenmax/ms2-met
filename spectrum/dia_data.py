@@ -61,6 +61,11 @@ class DIAData:
             np.ndarray[tuple[int], np.dtype[np.int64]] | None) = (None)
         self._peak_stop_idx_list: (
             np.ndarray[tuple[int], np.dtype[np.int64]] | None) = (None)
+        self._precursor_lower_mz: (
+            np.ndarray[tuple[int], np.dtype[np.float32]] | None) = (None)
+        self._precursor_upper_mz: (
+            np.ndarray[tuple[int], np.dtype[np.float32]] | None) = (None)
+
         self._zeroth_frame: int = 0
         self._scan_max_index: int = 1
         self.frame_max_index: int | None = None
@@ -251,6 +256,12 @@ class DIAData:
         self._peak_stop_idx_list = (
             self.spectrum_df['peak_stop_idx'].values.astype(np.int64))
 
+        # 提取这个谱图 mz 范围
+        self._precursor_lower_mz = (
+            self.spectrum_df['isolation_lower_mz'].values.astype(np.float32))
+        self._precursor_upper_mz = (
+            self.spectrum_df['isolation_upper_mz'].values.astype(np.float32))
+
         # 设置帧索引
         self.frame_max_index = len(self.rt_values) - 1
 
@@ -366,6 +377,63 @@ class DIAData:
 
         logging.info(f"idx: {idx}")
         return self.get_spectrum_by_index(idx)
+
+    def xic_ms2_peaks_extract(
+        self,
+        rt_start: np.float32, rt_stop: np.float32,
+        precursor_mz: np.float32,
+        ions_mass: np.float32,
+        mass_tol_ppm: np.float32,
+    ) -> np.ndarray:
+        """ 过滤出这些保留时间内所有的ms2谱图，然后返回peaks  """
+        ans = []
+        protonmass = 1.00727646677  # mass.calculate_mass(formula='H+')
+
+        # 先寻找的起始的 index
+        start_idx = np.searchsorted(self.rt_values, rt_start)
+        end_idx = np.searchsorted(self.rt_values, rt_stop)
+
+        # 遍历所有 index
+        for index in range(start_idx, end_idx):
+            # NOTE:  这里现在是如果是 ms1 就 continue
+            if self._check_is_ms1(index):
+                continue
+
+            # NOTE: 加上如果当前母离子范围不对，也 continue
+            if (precursor_mz > self._precursor_upper_mz[index] or
+                    precursor_mz < self._precursor_lower_mz[index]):
+                continue
+
+            # 当是 ms2 谱图的时候，取出这个precursor_mz 对应的信息
+            (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
+
+            ppm_error = np.nan
+            match_intensity = 0
+
+            # NOTE: 这里最好将多个 电荷的这个累计起来
+            for charge in range(1, 3):
+                theo_mz = (ions_mass + charge * protonmass) / charge
+
+                # 计算出结果之后
+                (tot_ppm_error, tot_match_intensity) = match_peak_ppm(
+                    mz_arr, intensity_arr, theo_mz, mass_tol_ppm)
+
+                # 累计结果
+                if not tot_ppm_error == np.nan:
+                    ppm_error += tot_ppm_error
+                match_intensity += tot_match_intensity
+
+            ans.append(
+                {"rt": self.rt_values[index],
+                 "pmm_error": ppm_error,
+                 "intensity": match_intensity})
+
+        dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+
+        # 把 list[dict] 转成结构化 ndarray
+        arr = np.array([tuple(d.values()) for d in ans], dtype=dtype)
+
+        return arr
 
     def xic_peaks_extreact(
         self,

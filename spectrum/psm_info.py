@@ -51,12 +51,7 @@ class PSMInfo:
         # 可以根据修饰信息、氨基酸序列等来调整母离子质量
         heavy_mass = self._precursor_mz * self._charge
 
-        # 遍历肽段序列中的每个氨基酸
-        for amino_acid in self._sequence:
-            if amino_acid == 'K':  # 赖氨酸，加上 6.020132 C(-6)13C(6)
-                heavy_mass += 6.020132
-            elif amino_acid == 'R':  # 精氨酸，加上 10.008275  C(-6)N(-4)13C(6)15N(4)
-                heavy_mass += 10.008275
+        heavy_mass += get_SILAC_increase_mass(self._sequence)
 
         return heavy_mass / self._charge
 
@@ -66,17 +61,46 @@ class PSMInfo:
         """
 
         # NOTE: 注意这里还要实现修饰的重标
-        # TODO: 实现修饰的重标
+        # TODO: 实现修饰的重标，这里重点是是否需要重标
         heavy_mass = self._precursor_mz * self._charge
 
-        composition = mass.Composition(self._sequence)
-
-        if heavy_type == HeavyType.CHEAVY:
-            heavy_mass += composition['C'] * 1.00727646677
-        elif heavy_type == HeavyType.NHEAVY:
-            heavy_mass += composition['N'] * 0.997036
+        heavy_mass += get_heavy_increase_mass(self._sequence, heavy_type)
 
         return heavy_mass / self._charge
+
+    def get_fragment_ions(self, heavy_type: HeavyType):
+        """返回两个列表：b_ions, y_ions"""
+
+        b_ions = []
+        y_ions = []
+
+        n = len(self._sequence)
+        # 遍历所有长度，得到所有b,y离子
+        for i in range(1, n):
+            # NOTE: 这里还没有添加修饰
+            # TODO: 修饰同上
+            # 先获得b离子
+            b_mass = mass.fast_mass(self._sequence[0:i], ion_type='b')
+
+            b_heavy_mass = (b_mass +
+                            get_heavy_increase_mass(
+                                self._sequence[0:i], heavy_type))
+
+            b_ions.append((b_mass, b_heavy_mass))
+
+            # 获得 y 离子
+            y_mass = mass.fast_mass(self._sequence[-i:], ion_type='y')
+
+            y_heavy_mass = (y_mass +
+                            get_heavy_increase_mass(
+                                self._sequence[-i:], heavy_type))
+            y_ions.append((y_mass, y_heavy_mass))
+
+        b_ans = [("b", i+1, light_mass, heavy_mass)
+                 for i, (light_mass, heavy_mass) in enumerate(b_ions)]
+        y_ans = [("y", i+1, light_mass, heavy_mass)
+                 for i, (light_mass, heavy_mass) in enumerate(y_ions)]
+        return b_ans, y_ans
 
     def get_heavy_info(self, heavy_type: HeavyType):
         # TODO: 待实现，先逐步支持吧，一种一种重标考虑，考虑时尽量考虑通用性
@@ -86,4 +110,39 @@ class PSMInfo:
         else:
             heavy_precursor_mz = self.get_C_N_HEAVY_precursor_mz(heavy_type)
 
-        return heavy_precursor_mz
+        b_ions, y_ions = self.get_fragment_ions(heavy_type)
+
+        return heavy_precursor_mz, b_ions + y_ions
+
+
+def get_SILAC_increase_mass(sequence: str):
+    """ 计算这个序列中SILAC 重标应该增加多少重量 """
+    increase_mass = 0
+
+    # 遍历肽段序列中的每个氨基酸
+    for amino_acid in sequence:
+        if amino_acid == 'K':  # 赖氨酸，加上 8.014204 C(-6)13C(6)N(-2)15N(2)
+            increase_mass += 8.014204
+        elif amino_acid == 'R':  # 精氨酸，加上 10.008275  C(-6)N(-4)13C(6)15N(4)
+            increase_mass += 10.008275
+    return increase_mass
+
+
+def get_heavy_increase_mass(
+    sequence: str,
+    heavy_type: HeavyType,
+) -> float:
+    """ 根据重标类型，计算出这个 sequence 增加了多少质量"""
+
+    if heavy_type == HeavyType.SILAC:
+        return get_SILAC_increase_mass(sequence)
+
+    increase_mass = 0
+    composition = mass.Composition(sequence)
+
+    if heavy_type == HeavyType.CHEAVY:
+        increase_mass += composition['C'] * 1.00727646677
+    elif heavy_type == HeavyType.NHEAVY:
+        increase_mass += composition['N'] * 0.997036
+
+    return increase_mass

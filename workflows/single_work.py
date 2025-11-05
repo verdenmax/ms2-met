@@ -34,7 +34,7 @@ def single_pair_work(
         psm._rt_start - 0.3, psm._rt_stop + 0.3,
         psm._precursor_mz, mass_tol_ppm)
 
-    heavy_precursor_mz = psm.get_heavy_info(HeavyType.SILAC)
+    heavy_precursor_mz, fragment_ions = psm.get_heavy_info(HeavyType.SILAC)
 
     logging.info(f"light_mz: {psm._precursor_mz},heavy_mz: {
                  heavy_precursor_mz}")
@@ -47,12 +47,63 @@ def single_pair_work(
     plot_light_heavy_xic(light_xic, heavy_xic)
 
     # 计算出 person_corr
-    person_corr = calc_ms1_score(light_xic, heavy_xic)
+    person_corr = calc_xic_score(light_xic, heavy_xic)
 
+    res_corr = []  # 用 list 收集
+
+    # 枚举所有的信息
+    for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
+
+        # 说明这个碎片离子不受到重标的影响
+        if np.abs(heavy_mass - light_mass) < 0.01:
+            continue
+
+        # 计算出 light 信息
+        light_ions_xic = dia_data.xic_ms2_peaks_extract(
+            psm._rt_start - 0.3, psm._rt_stop + 0.3,
+            precursor_mz=psm._precursor_mz,
+            ions_mass=light_mass,
+            mass_tol_ppm=mass_tol_ppm
+        )
+
+        # 计算出 heavy 信息
+        heavy_ions_xic = dia_data.xic_ms2_peaks_extract(
+            psm._rt_start - 0.3, psm._rt_stop + 0.3,
+            precursor_mz=heavy_precursor_mz,
+            ions_mass=heavy_mass,
+            mass_tol_ppm=mass_tol_ppm
+        )
+
+        pearson_corr = calc_xic_score(light_ions_xic, heavy_ions_xic)
+
+        res_corr.append(pearson_corr)  # 循环里追加
+
+        # logging.info(f"{ions_type} {ions_num} : person({person_corr})")
+
+        # plot_light_heavy_xic(light_ions_xic, heavy_ions_xic)
+
+        # rt_values = light_ions_xic["rt"]
+        # light_intensitys = light_ions_xic["intensity"]
+        # heavy_intensitys = heavy_ions_xic["intensity"]
+        #
+        # plt.plot(rt_values, light_intensitys, 'o-',
+        #          label=f"light_{ions_type} {ions_num}",
+        #          linewidth=2, markersize=8)
+        # plt.plot(rt_values, heavy_intensitys, 's--',
+        #          label=f"light_{ions_type} {ions_num}",
+        #          linewidth=2, markersize=8)
+
+    res_corr = np.array(res_corr)  # 转成 numpy 数组
+    ms2_count = np.sum(res_corr > 0.8)
+
+    if ms2_count >= 3:
+        logging.info(f"true: {psm}")
+    else:
+        logging.info(f"false: {psm}")
     exit(0)
 
 
-def calc_ms1_score(
+def calc_xic_score(
     light_xic: np.array, heavy_xic: np.array
 ) -> np.float32:
     """ 根据mono 的XIC 计算出相似度打分 """
@@ -76,8 +127,8 @@ def calc_ms1_score(
 
     corr, _ = pearsonr(inten1_interp, inten2_interp)
 
-    logging.info(f"mz_avg_err : {mz_avg_err}, apex_delta:{
-                 apex_delta}, corr:{corr}")
+    # logging.info(f"mz_avg_err : {mz_avg_err}, apex_delta:{
+    #              apex_delta}, corr:{corr}")
 
     return corr
 
