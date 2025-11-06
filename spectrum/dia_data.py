@@ -25,7 +25,7 @@ class DIAData:
         """
         # 这个ms2 index 对应的 ms1 信息
         self.precursor_scan_ids: np.ndarray[tuple[int],
-                                            np.dtype[np.int64]] = None
+                                            np.dtype[np.int32]] = None
         self._mz_values: np.ndarray[tuple[int],
                                     np.dtype[np.float32]] | None = None
         self.rt_values: np.ndarray[tuple[int],
@@ -56,11 +56,11 @@ class DIAData:
 
         """ 索引和边界信息 """
         self._scan_id_to_index: (
-            np.ndarray[tuple[int], np.dtype[np.int64]] | None) = (None)
+            np.ndarray[tuple[int], np.dtype[np.int32]] | None) = (None)
         self._peak_start_idx_list: (
-            np.ndarray[tuple[int], np.dtype[np.int64]] | None) = (None)
+            np.ndarray[tuple[int], np.dtype[np.int32]] | None) = (None)
         self._peak_stop_idx_list: (
-            np.ndarray[tuple[int], np.dtype[np.int64]] | None) = (None)
+            np.ndarray[tuple[int], np.dtype[np.int32]] | None) = (None)
         self._precursor_lower_mz: (
             np.ndarray[tuple[int], np.dtype[np.float32]] | None) = (None)
         self._precursor_upper_mz: (
@@ -91,6 +91,137 @@ class DIAData:
         else:
             raise ValueError(f"无法从 scan_id 提取扫描号: {scan_id_str}")
 
+    def _preallocate_arrays(self, total_spectra: int, total_peaks: int):
+        """ 预先分配数组信息 """
+        # 谱图信息数组
+        self.precursor_scan_ids = np.zeros(total_spectra, dtype=np.int64)
+        self.rt_values = np.zeros(total_spectra, dtype=np.float32)
+        self._peak_start_idx_list = np.zeros(total_spectra, dtype=np.int64)
+        self._peak_stop_idx_list = np.zeros(total_spectra, dtype=np.int64)
+        self._precursor_lower_mz = np.zeros(total_spectra, dtype=np.float32)
+        self._precursor_upper_mz = np.zeros(total_spectra, dtype=np.float32)
+
+        # 峰数据数组
+        self._mz_values = np.zeros(total_peaks, dtype=np.float32)
+        self._intensity_values = np.zeros(total_peaks, dtype=np.float32)
+
+        # 其他数组
+        self._scan_id_to_index = np.zeros(total_spectra + 10, dtype=np.int64)
+
+    def _process_single_spectrum(
+        self, spectrum,
+        spectrum_idx, current_peak_index
+    ):
+        """ 处理单个的谱图，将其中信息记录起来 """
+
+        # 获取保留时间 (转换为秒)
+        rt = self._get_retention_time(spectrum)
+
+        # 获取质谱的scan id，不需要使用 spectrum_idx
+        scan_id = self._extract_scan_number(spectrum['id'])
+
+        # 获取spec title
+        spec_title = spectrum.get('spectrum title', None).split()[0]
+
+        # 获取 MS 级别
+        ms_level = spectrum.get('ms level', 1)
+
+        # 获取前体信息 (对于 MS2)
+        precursor_scan_id = -1
+        precursor_mz = None
+        precursor_charge = None
+        precursor_intensity = None
+        isolation_lower = None
+        isolation_upper = None
+
+        if ms_level > 1 and 'precursorList' in spectrum:
+            precursors = spectrum['precursorList']['precursor']
+            if precursors:
+                precursor = precursors[0]
+                precursor_scan_id = self._extract_scan_number(
+                    precursor.get('spectrumRef', None))
+                selected_ions = precursor['selectedIonList']['selectedIon']
+
+                if selected_ions:
+                    precursor_mz = selected_ions[0].get(
+                        'selected ion m/z', None)
+                    precursor_charge = selected_ions[0].get(
+                        'charge state', None)
+                    precursor_intensity = selected_ions[0].get(
+                        'peak intensity', None)
+
+                # 获取隔离窗口
+                if 'isolationWindow' in precursor:
+                    isolation_lower = precursor['isolationWindow'].get(
+                        'isolation window lower offset', 0)
+                    isolation_upper = precursor['isolationWindow'].get(
+                        'isolation window upper offset', 0)
+
+            if precursor_mz is not None:
+                isolation_lower = precursor_mz - isolation_lower
+                isolation_upper = precursor_mz + isolation_upper
+
+        # 检查是否有离子迁移率数据
+        if 'scanList' in spectrum:
+            scan = spectrum['scanList']['scan'][0]
+            if 'ion mobility drift time' in scan:
+                self.has_mobility = True
+
+        # 获取 m/z 和强度数组
+        mz_array = spectrum['m/z array']
+        intensity_array = spectrum['intensity array']
+
+        # 记录谱图信息
+        # _spectrum_info = {
+        #     'spec_idx': spectrum_idx,
+        #     'scan_id': scan_id,
+        #     'rt': rt,
+        #     'spec_title': spec_title,
+        #     'ms_level': ms_level,
+        #     'precursor_scan_id': precursor_scan_id,
+        #     'precursor_mz': precursor_mz,
+        #     'precursor_charge': precursor_charge,
+        #     'precursor_intensity': precursor_intensity,
+        #     'isolation_lower_mz': isolation_lower,
+        #     'isolation_upper_mz': isolation_upper,
+        #     'peak_start_idx': current_peak_index,
+        #     'peak_stop_idx': current_peak_index + len(mz_array)
+        # }
+
+        del spectrum
+
+        # 检查是否有 MS1 数据
+        if ms_level == 1:
+            self.has_ms1 = True
+
+        """
+        记录的原始数据关键数组, mz_value、rt_value、intensity_value、mobility_values。
+        """
+        peak_stop_idx = current_peak_index + len(mz_array)
+        self.precursor_scan_ids[spectrum_idx] = precursor_scan_id
+        self._mz_values[current_peak_index:peak_stop_idx] = mz_array
+        self._intensity_values[current_peak_index:peak_stop_idx] = intensity_array
+
+        # 提取 RT 值
+        self.rt_values[spectrum_idx] = rt
+
+        # TODO: 应该还有个 mobility
+
+        """ DIA 循环相关属性 """
+        # TODO: 确定 DIA 循环 ，暂时没用没有写
+        # self._determine_dia_cycle()
+
+        """ 索引和边界信息 """
+        # 创建从 scan_id 到 spec_idx 的映射
+        self._scan_id_to_index[scan_id] = spectrum_idx
+        # 提取峰索引
+        self._peak_start_idx_list[spectrum_idx] = current_peak_index
+        self._peak_stop_idx_list[spectrum_idx] = peak_stop_idx
+
+        # 提取这个谱图 mz 范围
+        self._precursor_lower_mz[spectrum_idx] = isolation_lower
+        self._precursor_upper_mz[spectrum_idx] = isolation_upper
+
     def _load_from_mzml(
         self,
         mzml_file_path: None | str = None
@@ -98,104 +229,43 @@ class DIAData:
         """从 mzML 文件加载数据"""
         logging.info(f"Loading DIA data from {mzml_file_path} ...")
 
-        spectra_data = []
-        peak_data = []
-        current_peak_index = 0
-
-        # 开始读取信息
+        # 第一遍：统计数据量
+        total_spectra = 0
+        total_peaks = 0
         with mzml.read(mzml_file_path) as reader:
-            for spectrum_idx, spectrum in enumerate(reader):
-                # 获取保留时间 (转换为秒)
-                rt = self._get_retention_time(spectrum)
+            for spectrum in reader:
+                total_spectra += 1
+                total_peaks += len(spectrum['m/z array'])
 
-                # 获取质谱的scan id，不需要使用 spectrum_idx
-                scan_id = self._extract_scan_number(spectrum['id'])
+        logging.info(f"{mzml_file_path} Total spectra: {
+                     total_spectra}, total peaks: {total_peaks}")
 
-                # 获取spec title
-                spec_title = spectrum.get('spectrum title', None).split()[0]
+        # 预先分配数组
+        self._preallocate_arrays(total_spectra=total_spectra,
+                                 total_peaks=total_peaks)
 
-                # 获取 MS 级别
-                ms_level = spectrum.get('ms level', 1)
+        # 第二遍：填充数据
+        current_spectrum_idx = 0
+        current_peak_idx = 0
+        # 开始处理信息
+        with mzml.read(mzml_file_path) as reader:
+            for spectrum in reader:
 
-                # 获取前体信息 (对于 MS2)
-                precursor_scan_id = -1
-                precursor_mz = None
-                precursor_charge = None
-                precursor_intensity = None
-                isolation_lower = None
-                isolation_upper = None
+                self._process_single_spectrum(
+                    spectrum, current_spectrum_idx, current_peak_idx)
 
-                if ms_level > 1 and 'precursorList' in spectrum:
-                    precursors = spectrum['precursorList']['precursor']
+                # 更新索引
+                num_peaks = len(spectrum['m/z array'])
+                current_peak_idx += num_peaks
+                current_spectrum_idx += 1
 
-                    if precursors:
-                        precursor = precursors[0]
-                        precursor_scan_id = self._extract_scan_number(
-                            precursor.get('spectrumRef', None))
-                        selected_ions = precursor['selectedIonList']['selectedIon']
-                        if selected_ions:
-                            precursor_mz = selected_ions[0].get(
-                                'selected ion m/z', None)
-                            precursor_charge = selected_ions[0].get(
-                                'charge state', None)
-                            precursor_intensity = selected_ions[0].get(
-                                'peak intensity', None)
+        """ mz 范围信息 """
+        # 计算 m/z 范围
+        self._max_mz_value = np.float32(np.max(self._mz_values))
+        self._min_mz_value = np.float32(np.min(self._mz_values))
 
-                        # 获取隔离窗口
-                        if 'isolationWindow' in precursor:
-                            isolation_lower = precursor['isolationWindow'].get(
-                                'isolation window lower offset', 0)
-                            isolation_upper = precursor['isolationWindow'].get(
-                                'isolation window upper offset', 0)
-                            if precursor_mz is not None:
-                                isolation_lower = precursor_mz - isolation_lower
-                                isolation_upper = precursor_mz + isolation_upper
-
-                # 检查是否有离子迁移率数据
-                if 'scanList' in spectrum:
-                    scan = spectrum['scanList']['scan'][0]
-                    if 'ion mobility drift time' in scan:
-                        self.has_mobility = True
-
-                # 获取 m/z 和强度数组
-                mz_array = spectrum['m/z array']
-                intensity_array = spectrum['intensity array']
-
-                # 记录谱图信息
-                spectrum_info = {
-                    'spec_idx': spectrum_idx,
-                    'scan_id': scan_id,
-                    'rt': rt,
-                    'spec_title': spec_title,
-                    'ms_level': ms_level,
-                    'precursor_scan_id': precursor_scan_id,
-                    'precursor_mz': precursor_mz,
-                    'precursor_charge': precursor_charge,
-                    'precursor_intensity': precursor_intensity,
-                    'isolation_lower_mz': isolation_lower,
-                    'isolation_upper_mz': isolation_upper,
-                    'peak_start_idx': current_peak_index,
-                    'peak_stop_idx': current_peak_index + len(mz_array)
-                }
-
-                spectra_data.append(spectrum_info)
-
-                # 记录峰数据
-                for mz, intensity in zip(mz_array, intensity_array):
-                    peak_data.append({
-                        'spec_idx': spectrum_idx,
-                        'mz': mz,
-                        'intensity': intensity
-                    })
-
-                current_peak_index += len(mz_array)
-
-        # 创建 DataFrame
-        self.spectrum_df = pd.DataFrame(spectra_data)
-        self.peak_df = pd.DataFrame(peak_data)
-
-        del spectra_data
-        del peak_data
+        # 设置帧索引
+        self.frame_max_index = len(self.rt_values) - 1
 
     def _preprocess_data(self):
         """预处理数据，填充所有属性"""

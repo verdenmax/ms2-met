@@ -3,3 +3,4 @@ lxml
 pandas
 pyteomics
 pyarrow
+scipy

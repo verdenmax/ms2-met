@@ -34,6 +34,6 @@ class DataManager(base_manager.BaseManager):
 
         dia_data._load_from_mzml(tot_raw_path)
 
-        dia_data._preprocess_data()
+        # dia_data._preprocess_data()
 
         return dia_data
