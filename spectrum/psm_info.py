@@ -4,6 +4,10 @@ import numpy as np
 from enum import Enum
 from pyteomics import mass
 
+# 定义在全局，就不用频繁初始化了
+with open('./unimod.xml', 'rb') as f:
+    unimods = mass.Unimod(source=f)
+
 
 class HeavyType(Enum):
     SILAC = 1
@@ -68,6 +72,18 @@ class PSMInfo:
 
         return heavy_mass / self._charge
 
+    def get_modify_mass(self, end_idx):
+        """ 返回 从 [0,endix] 这个区间的修饰质量 """
+        all_mass = 0
+
+        for idx, mid in self._modify:
+            if idx <= end_idx:
+                tot_modify_mass = unimods.by_id(mid)["mono_mass"]
+
+                all_mass += tot_modify_mass
+
+        return all_mass
+
     def get_fragment_ions(self, heavy_type: HeavyType):
         """返回两个列表：b_ions, y_ions"""
 
@@ -75,12 +91,15 @@ class PSMInfo:
         y_ions = []
 
         n = len(self._sequence)
+
+        all_modify_mass = self.get_modify_mass(n)
         # 遍历所有长度，得到所有b,y离子
         for i in range(1, n):
             # NOTE: 这里还没有添加修饰
             # TODO: 修饰同上
             # 先获得b离子
             b_mass = mass.fast_mass(self._sequence[0:i], ion_type='b')
+            b_mass += self.get_modify_mass(i-1)
 
             b_heavy_mass = (b_mass +
                             get_heavy_increase_mass(
@@ -90,6 +109,7 @@ class PSMInfo:
 
             # 获得 y 离子
             y_mass = mass.fast_mass(self._sequence[-i:], ion_type='y')
+            y_mass += all_modify_mass - self.get_modify_mass(n-i-1)
 
             y_heavy_mass = (y_mass +
                             get_heavy_increase_mass(
