@@ -50,12 +50,17 @@ def single_pair_work(
     person_corr = calc_xic_score(light_xic, heavy_xic)
 
     res_corr = []  # 用 list 收集
+    is_same_ms2 = dia_data.check_in_same_ms2(
+        psm._precursor_mz, heavy_precursor_mz)
 
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
 
+        # NOTE: 这里应该分情况
+        # 如果两个母离子在不同的区间，则均可
+        # 如果在相同的区间，并且质量相同，说明重标不影响该碎片离子
         # 说明这个碎片离子不受到重标的影响
-        if np.abs(heavy_mass - light_mass) < 0.01:
+        if np.abs(heavy_mass - light_mass) < 0.01 and is_same_ms2:
             continue
 
         # 计算出 light 信息
@@ -73,6 +78,9 @@ def single_pair_work(
             ions_mass=heavy_mass,
             mass_tol_ppm=mass_tol_ppm
         )
+
+        if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
+            continue
 
         pearson_corr = calc_xic_score(light_ions_xic, heavy_ions_xic)
 

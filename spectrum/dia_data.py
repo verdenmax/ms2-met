@@ -39,12 +39,10 @@ class DIAData:
 
         """ DIA 循环相关属性 """
         # DIA 循环定义数组
-        self.cycle: (
-            np.ndarray[tuple[int, int, int, int], np.dtype[np.float64]] | None
-        ) = None
-        self._cycle_start: int | None = None
-        self._cycle_length: int | None = None
-        self._precursor_cycle_max_index: int | None = None
+        self._precursor_max_mz_value: np.float32 = None
+        self._precursor_min_mz_value: np.float32 = None
+        self._cycle_left_precursor: (
+            np.ndarray[tuple[int], np.dtype[np.float32]] | None) = (None)
 
         """ mz 范围信息 """
         self._max_mz_value: np.float32 | None = None
@@ -267,6 +265,8 @@ class DIAData:
         # 设置帧索引
         self.frame_max_index = len(self.rt_values) - 1
 
+        self._determine_dia_cycle()
+
     def _preprocess_data(self):
         """预处理数据，填充所有属性"""
 
@@ -342,55 +342,33 @@ class DIAData:
     def _determine_dia_cycle(self):
         """确定 DIA 循环结构"""
         # 简化的 DIA 循环检测
-        # 在实际应用中，你可能需要更复杂的逻辑来检测循环模式
 
-        ms1_indices = self.spectrum_df[self.spectrum_df['ms_level'] == 1].index
-        ms2_indices = self.spectrum_df[self.spectrum_df['ms_level'] == 2].index
+        ms1_indices = [index for index, scan_id in enumerate(
+            self.precursor_scan_ids) if scan_id == -1]
 
-        if len(ms1_indices) == 0 or len(ms2_indices) == 0:
+        if len(ms1_indices) == 0:
             logging.warn("Cannot determine DIA cycle")
             return
+        elif len(ms1_indices) == 1:
+            # 设置为最后一个
+            ms1_indices.append(len(self.precursor_scan_ids + 1))
 
-        # 假设第一个 MS1 是循环开始
-        self._cycle_start = ms1_indices[0]
+        self._cycle_left_precursor = (
+            self._precursor_lower_mz[ms1_indices[0]+1:ms1_indices[1]])
 
-        # 计算平均循环长度 (MS1 之间的间隔)
-        if len(ms1_indices) > 1:
-            cycle_lengths = np.diff(ms1_indices)
-            self._cycle_length = int(np.median(cycle_lengths))
-        else:
-            # 如果只有一个 MS1，使用 MS2 的数量作为循环长度
-            self._cycle_length = len(ms2_indices)
+        # 给出precursor最大值和最小值
+        self._precursor_min_mz_value = (np.min(
+            self._precursor_lower_mz[ms1_indices[0]+1:ms1_indices[1]]))
+        self._precursor_max_mz_value = np.max(
+            self._precursor_upper_mz[ms1_indices[0]+1:ms1_indices[1]])
 
-        # 构建 cycle 数组 (简化版本)
-        # 在实际应用中，你需要根据实际的隔离窗口信息来构建
-        # 假设每个循环有1个MS1和多个MS2
-        num_cycles = len(ms1_indices)
-        num_windows = self._cycle_length - 1
-        self.cycle = np.zeros((4, num_windows, num_cycles), dtype=np.float64)
+    def check_in_same_ms2(self, p1, p2) -> bool:
+        """ 检查这两个是否在同一个 ms2 中"""
 
-        for cycle_idx, ms1_idx in enumerate(ms1_indices):
-            if cycle_idx < num_cycles:
-                # 获取这个循环中的 MS2 谱图
-                cycle_end = ms1_idx + \
-                    self._cycle_length if cycle_idx < len(
-                        ms1_indices) - 1 else len(self.spectrum_df)
-                cycle_ms2 = self.spectrum_df.iloc[ms1_idx + 1:cycle_end]
-                cycle_ms2 = cycle_ms2[cycle_ms2['ms_level'] == 2]
+        idx1 = np.searchsorted(self._cycle_left_precursor, p1)
+        idx2 = np.searchsorted(self._cycle_left_precursor, p2)
 
-                for window_idx, (_, ms2_spec) in enumerate(cycle_ms2.iterrows()):
-                    if window_idx < num_windows:
-                        self.cycle[0, window_idx,
-                                   cycle_idx] = ms1_idx  # MS1 index
-                        self.cycle[1, window_idx,
-                                   cycle_idx] = ms2_spec.name  # MS2 index
-                        self.cycle[2, window_idx,
-                                   cycle_idx] = ms2_spec['isolation_lower_mz'] or 0
-                        self.cycle[3, window_idx,
-                                   cycle_idx] = ms2_spec['isolation_upper_mz'] or 0
-
-        self._precursor_cycle_max_index = len(
-            self.rt_values) // (self._cycle_length if self._cycle_length else 1)
+        return idx1 == idx2
 
     def _check_is_ms1(self, index: int) -> bool:
         """ 检查这个下标对应的谱图是不是一个ms1"""
