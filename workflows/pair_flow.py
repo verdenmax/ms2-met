@@ -2,8 +2,9 @@ import configparser
 import logging
 import os
 import numpy as np
+import pandas as pd
 
-
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from rich.progress import Progress
 
 import workflows.flow_utils as flow_utils
@@ -96,16 +97,28 @@ class PairFlow:
             rich_task_progress = progress.add_task(
                 f"[cyan] 处理文件{raw_file_name} ...", total=len(light_PSM_infos))
 
+            ans = []
+
             # 遍历每一个psm 信息
             for psminfo in light_PSM_infos:
                 # TODO: 计算出信息
-                single_pair_work(
+                psm, ms2_count = single_pair_work(
                     psm=psminfo,
                     dia_data=dia_data,
                     config=self._config,
                 )
 
+                ans.append({
+                    "sequence": psm._sequence,
+                    "charge": psm._charge,
+                    "precursor_mz": psm._precursor_mz,
+                    "raw_title": psm._raw_title,
+                    "ms2_count": ms2_count
+                })
+
                 progress.update(rich_task_progress, advance=1)
+
+        return ans
 
     def distribute(self):
         # 处理每一个任务
@@ -113,14 +126,32 @@ class PairFlow:
         raw_file_nums = self._config.getint(
             ConfigKeys.INPUT, ConfigKeys.RAW_NUM, fallback=1)
 
-        for i in range(raw_file_nums):
-            tot_raw_path_key = f"{ConfigKeys.RAW_PATH}_{i + 1}"
+        ans = []
 
-            # 读取配置文件中的 RAW PATH
-            tot_raw_path = self._config[ConfigKeys.INPUT][tot_raw_path_key]
+        # 进行多进程
+        with ProcessPoolExecutor(max_workers=25) as executor:
+            futures = []
 
-            # 接收 light_PSM_infos 和 rawfiledata，进行处理
-            self.multi_handle(tot_raw_path)
+            for i in range(raw_file_nums):
+                tot_raw_path_key = f"{ConfigKeys.RAW_PATH}_{i + 1}"
+
+                # 读取配置文件中的 RAW PATH
+                tot_raw_path = self._config[ConfigKeys.INPUT][tot_raw_path_key]
+
+                futures.append(executor.submit(
+                    self.multi_handle, tot_raw_path))
+
+            for future in as_completed(futures):
+                res = future.result()
+
+                # 接收 light_PSM_infos 和 rawfiledata，进行处理
+                ans.extend(res)
+
+        # NOTE: 保存结果
+
+        ans_df = pd.DataFrame(ans)
+
+        ans_df.to_csv("result.csv", sep=',', index=False)
 
     def run(self) -> None:
         logging.info(f"运行任务 {self.workname}")

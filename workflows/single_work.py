@@ -21,11 +21,11 @@ def single_pair_work(
 ):
     """ 处理单个肽段，对这单条信息进行处理，计算出是否可信 """
 
-    if psm._sequence != "ALSSQHQAR":
-        return
+    # if psm._sequence != "ALSSQHQAR":
+    #     return
     # TODO:
 
-    logging.info(f"处理信息 {psm}")
+    # logging.info(f"处理信息 {psm}")
 
     # 从配置中获得 ppm
     mass_tol_ppm = config[ConfigKeys.GENERAL].getfloat(ConfigKeys.MASS_TOL_PPM)
@@ -44,10 +44,10 @@ def single_pair_work(
         heavy_precursor_mz, mass_tol_ppm)
 
     # 进行画图
-    plot_light_heavy_xic(light_xic, heavy_xic)
+    # plot_light_heavy_xic(light_xic, heavy_xic)
 
     # 计算出 person_corr
-    person_corr = calc_xic_score(light_xic, heavy_xic)
+    # person_corr = calc_xic_score(light_xic, heavy_xic)
 
     res_corr = []  # 用 list 收集
     is_same_ms2 = dia_data.check_in_same_ms2(
@@ -108,7 +108,7 @@ def single_pair_work(
         logging.info(f"true: {psm}")
     else:
         logging.info(f"false: {psm}")
-    exit(0)
+    return psm, ms2_count
 
 
 def calc_xic_score(
