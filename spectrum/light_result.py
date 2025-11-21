@@ -18,6 +18,43 @@ class LightResult:
 
         self.psm_info: np.ndarray[tuple[int], PSMInfo] = []
 
+    def _load_from_alphadia_input(self, light_result_path: str):
+        """ 输入 alphadia 的搜索结果 """
+
+        if light_result_path is None or not os.path.exists(light_result_path):
+            logging.error("Alphadia 搜索结果 report.parquet 不存在")
+
+        # 正在加载文件
+        logging.info(f"正在加载 Alphadia report: {light_result_path}")
+
+        light_input = pd.read_parquet(light_result_path)
+
+        for idx, row in light_input.iterrows():
+
+            modifications = parse_alphadia_peptide_modify(
+                row["precursor.mods"], row["precursor.mod_sites"])
+
+            rt = rt_sec_to_min(row["precursor.rt.observed"])
+            fwhm = rt_sec_to_min(row["precursor.rt.fwhm"])
+
+            rt_start = rt - fwhm - 0.1
+            rt_end = rt + fwhm + 0.1
+
+            tot_psminfo = PSMInfo(
+                sequence=row["precursor.sequence"],
+                charge=row["precursor.charge"],
+                modify=modifications,
+                rt=rt,
+                rt_start=rt_start,
+                rt_stop=rt_end,
+                precursor_mz=row["precursor.mz.observed"],
+                raw_title=row["raw.name"],
+            )
+
+            self.psm_info.append(tot_psminfo)
+
+        self.peptide_len = len(self.psm_info)
+
     def _load_from_dia_nn_input(self, light_result_path: str):
         """ 输入diann 的搜索结果 """
 
@@ -87,3 +124,53 @@ def parse_diann_peptide_modify(sequence: str):
         index += 1
 
     return modifications
+
+
+def parse_alphadia_peptide_modify(modify_str: str, site_str: str):
+    """ 从 Alphadia 给出结果中解析出修饰 """
+
+    # 修饰的结果，代表(该修饰位置，unimod id)
+    modifications: [(int, int)] = []
+
+    if modify_str == "" or site_str == "":
+        return modifications
+
+    mods_list = modify_str.split(';')
+    mod_sites_list = site_str.split(';')
+
+    if len(mods_list) != len(mod_sites_list):
+        logging.warning("修饰数量不匹配")
+        return modifications
+
+    mod_to_unimod = {
+        "Carbamidomethyl": 4,      # UniMod:4 - Carbamidomethyl
+        "Oxidation": 35,           # UniMod:35 - Oxidation
+        "Phospho": 21,             # UniMod:21 - Phospho
+        "Acetyl": 1,               # UniMod:1 - Acetyl
+        "Methyl": 34,              # UniMod:34 - Methyl
+        "Dimethyl": 36,            # UniMod:36 - Dimethyl
+        "Trimethyl": 37,           # UniMod:37 - Trimethyl
+        "Deamidated": 7,           # UniMod:7 - Deamidated
+        "Pyro-carbamidomethyl": 26,  # UniMod:26 - Pyro-carbamidomethyl
+        "Gln->pyro-Glu": 28,       # UniMod:28 - Gln->pyro-Glu
+        "Glu->pyro-Glu": 27,       # UniMod:27 - Glu->pyro-Glu
+    }
+
+    for mod_type, site_str in zip(mods_list, mod_sites_list):
+        if '@' in mod_type:
+            mod_name, target_aa = mod_type.split('@')
+        else:
+            mod_name = mod_type
+            target_aa = None
+
+        unimod_id = mod_to_unimod.get(mod_name)
+
+        site_index = int(site_str) - 1
+
+        modifications.append((site_index, unimod_id))
+
+    return modifications
+
+
+def rt_sec_to_min(rt: float):
+    return rt / 60
