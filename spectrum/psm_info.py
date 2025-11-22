@@ -24,8 +24,6 @@ class PSMInfo:
         charge: int,
         modify: [(int, int)],
         rt: np.float32,
-        rt_start: np.float32,
-        rt_stop: np.float32,
         precursor_mz: np.float32,
         raw_title: str,
     ):
@@ -34,8 +32,6 @@ class PSMInfo:
         self._charge = charge
         self._modify = modify
         self._rt = rt
-        self._rt_start = rt_start
-        self._rt_stop = rt_stop
         self._precursor_mz = precursor_mz
         self._raw_title = raw_title
 
@@ -43,7 +39,6 @@ class PSMInfo:
         """ 实现标准输出 """
         return (f"PSMInfo(sequence='{self._sequence}', charge={self._charge}, "
                 f"modify='{self._modify}', rt={self._rt}, "
-                f"rt_start= {self._rt_start}, rt_end={self._rt_stop},"
                 f"precursor_mz={self._precursor_mz}, raw_title='{self._raw_title}')")
 
     def get_SILAC_precursor_mz(self):

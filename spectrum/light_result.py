@@ -35,18 +35,12 @@ class LightResult:
                 row["precursor.mods"], row["precursor.mod_sites"])
 
             rt = rt_sec_to_min(row["precursor.rt.observed"])
-            fwhm = rt_sec_to_min(row["precursor.rt.fwhm"])
-
-            rt_start = rt - fwhm - 0.1
-            rt_end = rt + fwhm + 0.1
 
             tot_psminfo = PSMInfo(
                 sequence=row["precursor.sequence"],
                 charge=row["precursor.charge"],
                 modify=modifications,
                 rt=rt,
-                rt_start=rt_start,
-                rt_stop=rt_end,
                 precursor_mz=row["precursor.mz.observed"],
                 raw_title=row["raw.name"],
             )
@@ -75,8 +69,6 @@ class LightResult:
                 charge=row._7,
                 modify=modifications,
                 rt=row.RT,
-                rt_start=row._40,
-                rt_stop=row._41,
                 precursor_mz=row._11,
                 raw_title=row.Run,
             )
