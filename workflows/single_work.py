@@ -22,25 +22,25 @@ def single_pair_work(
     """ 处理单个肽段，对这单条信息进行处理，计算出是否可信 """
 
     # if psm._sequence != "ALSSQHQAR":
-    #     return
+    #     return None, None
     # TODO:
 
     # logging.info(f"处理信息 {psm}")
 
     # 从配置中获得 ppm
     mass_tol_ppm = config[ConfigKeys.GENERAL].getfloat(ConfigKeys.MASS_TOL_PPM)
+    # 从配置中获得 窗口大小
+    xic_cycle_window = config[ConfigKeys.GENERAL].getint(
+        ConfigKeys.XIC_CYCLE_WINDOW, fallback=3)
 
     light_xic = dia_data.xic_peaks_extreact(
-        psm._rt_start - 0.3, psm._rt_stop + 0.3,
+        psm._rt, xic_cycle_window,
         psm._precursor_mz, mass_tol_ppm)
 
     heavy_precursor_mz, fragment_ions = psm.get_heavy_info(HeavyType.SILAC)
 
-    logging.info(f"light_mz: {psm._precursor_mz},heavy_mz: {
-                 heavy_precursor_mz}")
-
     heavy_xic = dia_data.xic_peaks_extreact(
-        psm._rt_start - 0.3, psm._rt_stop + 0.3,
+        psm._rt, xic_cycle_window,
         heavy_precursor_mz, mass_tol_ppm)
 
     # 进行画图
@@ -65,7 +65,7 @@ def single_pair_work(
 
         # 计算出 light 信息
         light_ions_xic = dia_data.xic_ms2_peaks_extract(
-            psm._rt_start - 0.3, psm._rt_stop + 0.3,
+            psm._rt, xic_cycle_window,
             precursor_mz=psm._precursor_mz,
             ions_mass=light_mass,
             mass_tol_ppm=mass_tol_ppm
@@ -73,7 +73,7 @@ def single_pair_work(
 
         # 计算出 heavy 信息
         heavy_ions_xic = dia_data.xic_ms2_peaks_extract(
-            psm._rt_start - 0.3, psm._rt_stop + 0.3,
+            psm._rt, xic_cycle_window,
             precursor_mz=heavy_precursor_mz,
             ions_mass=heavy_mass,
             mass_tol_ppm=mass_tol_ppm
@@ -86,7 +86,7 @@ def single_pair_work(
 
         res_corr.append(pearson_corr)  # 循环里追加
 
-        # logging.info(f"{ions_type} {ions_num} : person({person_corr})")
+        # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
 
         # plot_light_heavy_xic(light_ions_xic, heavy_ions_xic)
 

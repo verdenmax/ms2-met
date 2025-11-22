@@ -24,3 +24,4 @@ class ConfigKeys(metaclass=ConstantsClass):
     GENERAL = "general"
     WORK_DIRECTORY = "work_directory"
     MASS_TOL_PPM = "mass_tol_ppm"
+    XIC_CYCLE_WINDOW = "xic_cycle_window"

@@ -23,6 +23,12 @@ class DIAData:
         """
         记录的原始数据关键数组, mz_value、rt_value、intensity_value、mobility_values。
         """
+        # 记录所有的 ms1 index
+        self.ms1_indexs: np.ndarray[tuple[int], np.dtype[np.int32]] = None
+        self.ms1_indexs_rt: np.ndarray[tuple[int], np.dtype[np.int32]] = None
+        # 记录不同区间内的 ms2 的 index
+        self.ms2_indexs: list[np.ndarray] = None
+        self.ms2_indexs_rt: list[np.ndarray] = None
         # 这个ms2 index 对应的 ms1 信息
         self.precursor_scan_ids: np.ndarray[tuple[int],
                                             np.dtype[np.int32]] = None
@@ -262,6 +268,10 @@ class DIAData:
         self._max_mz_value = np.float32(np.max(self._mz_values))
         self._min_mz_value = np.float32(np.min(self._mz_values))
 
+        self.ms1_indexs = np.where(
+            self.precursor_scan_ids == -1)[0].astype(np.int32)
+        self.ms1_indexs_rt = self.rt_values[self.ms1_indexs]
+
         # 设置帧索引
         self.frame_max_index = len(self.rt_values) - 1
 
@@ -362,6 +372,30 @@ class DIAData:
         self._precursor_max_mz_value = np.max(
             self._precursor_upper_mz[ms1_indices[0]+1:ms1_indices[1]])
 
+        tmp = [[] for _ in range(len(self._cycle_left_precursor) + 1)]
+        # 遍历所有 spectrum index，将 MS2 放入对应窗口
+        for spec_idx in range(len(self.precursor_scan_ids)):
+            precursor_scan = self.precursor_scan_ids[spec_idx]
+
+            # MS2 才有 precursor_scan_id != -1
+            if precursor_scan == -1:
+                continue
+
+            # 找到该 MS2 属于哪个 DIA 窗口
+            # 或者 upper_mz 都可以
+            precursor_mz = (
+                self._precursor_lower_mz[spec_idx] +
+                self._precursor_upper_mz[spec_idx]) / 2
+            win = np.searchsorted(
+                self._cycle_left_precursor, precursor_mz, side="left")
+
+            # 加入窗口列表
+            tmp[win].append(spec_idx)
+
+        # 得到 属于同一个 ms2 窗口的结果
+        self.ms2_indexs = [np.array(x, dtype=np.int32) for x in tmp]
+        self.ms2_indexs_rt = [self.rt_values[x] for x in self.ms2_indexs]
+
     def check_in_same_ms2(self, p1, p2) -> bool:
         """ 检查这两个是否在同一个 ms2 中"""
 
@@ -426,9 +460,26 @@ class DIAData:
         logging.info(f"idx: {idx}")
         return self.get_spectrum_by_index(idx)
 
+    def find_near_ms2_idx(self, rt: np.float32, ms2_win_id: int):
+        """ 找到那个离这个 rt 更加接近 """
+        idx = np.searchsorted(self.ms2_indexs_rt[ms2_win_id], rt)
+
+        if idx == 0:
+            return 0
+        if idx == len(self.ms2_indexs[ms2_win_id]):
+            return idx - 1
+
+        left = self.ms2_indexs_rt[ms2_win_id][idx - 1]
+        right = self.ms2_indexs_rt[ms2_win_id][idx]
+
+        if abs(rt - left) <= abs(rt - right):
+            return idx - 1
+        else:
+            return idx
+
     def xic_ms2_peaks_extract(
         self,
-        rt_start: np.float32, rt_stop: np.float32,
+        rt: np.float32, xic_cycle_window: int,
         precursor_mz: np.float32,
         ions_mass: np.float32,
         mass_tol_ppm: np.float32,
@@ -438,14 +489,17 @@ class DIAData:
         protonmass = 1.00727646677  # mass.calculate_mass(formula='H+')
 
         # 先寻找的起始的 index
-        start_idx = np.searchsorted(self.rt_values, rt_start)
-        end_idx = np.searchsorted(self.rt_values, rt_stop)
+        ms2_win_id = np.searchsorted(
+            self._cycle_left_precursor, precursor_mz, side='left')
+
+        mid_index = self.find_near_ms2_idx(rt, ms2_win_id)
+
+        start_index = max(0, mid_index - xic_cycle_window)
+        end_index = min(len(self.ms2_indexs[ms2_win_id]),
+                        mid_index + xic_cycle_window + 1)
 
         # 遍历所有 index
-        for index in range(start_idx, end_idx):
-            # NOTE:  这里现在是如果是 ms1 就 continue
-            if self._check_is_ms1(index):
-                continue
+        for index in self.ms2_indexs[ms2_win_id][start_index:end_index]:
 
             # NOTE: 加上如果当前母离子范围不对，也 continue
             if (precursor_mz > self._precursor_upper_mz[index] or
@@ -483,9 +537,26 @@ class DIAData:
 
         return arr
 
+    def find_near_ms1_idx(self, rt: np.float32):
+        """ 找到那个离这个 rt 更加接近 """
+        idx = np.searchsorted(self.ms1_indexs_rt, rt)
+
+        if idx == 0:
+            return 0
+        if idx == len(self.ms1_indexs_rt):
+            return idx - 1
+
+        left = self.ms1_indexs_rt[idx - 1]
+        right = self.ms1_indexs_rt[idx]
+
+        if abs(rt - left) <= abs(rt - right):
+            return idx - 1
+        else:
+            return idx
+
     def xic_peaks_extreact(
         self,
-        rt_start: np.float32, rt_stop: np.float32,
+        rt: np.float32, xic_cycle_window: int,
         precursor_mz: np.float32,
         mass_tol_ppm: np.float32,
     ) -> np.ndarray:
@@ -494,14 +565,14 @@ class DIAData:
         ans = []
 
         # 先寻找的起始的 index
-        start_idx = np.searchsorted(self.rt_values, rt_start)
-        end_idx = np.searchsorted(self.rt_values, rt_stop)
+        mid_rt_index = self.find_near_ms1_idx(rt)
+
+        start_index = max(0, mid_rt_index - xic_cycle_window)
+        end_index = min(len(self.ms1_indexs),
+                        mid_rt_index + xic_cycle_window + 1)
 
         # 遍历所有 index
-        for index in range(start_idx, end_idx):
-
-            if not self._check_is_ms1(index):
-                continue
+        for index in self.ms1_indexs[start_index:end_index]:
 
             # 当是 ms1 谱图的时候，取出这个precursor_mz 对应的信息
             (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
