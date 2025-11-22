@@ -25,3 +25,4 @@ class ConfigKeys(metaclass=ConstantsClass):
     WORK_DIRECTORY = "work_directory"
     MASS_TOL_PPM = "mass_tol_ppm"
     XIC_CYCLE_WINDOW = "xic_cycle_window"
+    RESULT_FILE = "result_file"

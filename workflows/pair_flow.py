@@ -151,7 +151,12 @@ class PairFlow:
 
         ans_df = pd.DataFrame(ans)
 
-        ans_df.to_csv("result.csv", sep=',', index=False)
+        result_file = self._config.get(
+            ConfigKeys.GENERAL, ConfigKeys.RESULT_FILE,
+            fallback="result.csv")
+
+        logging.info(f"保存结果文件 {result_file}")
+        ans_df.to_csv(result_file, sep=',', index=False)
 
     def run(self) -> None:
         logging.info(f"运行任务 {self.workname}")
