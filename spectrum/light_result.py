@@ -43,6 +43,7 @@ class LightResult:
                 rt=rt,
                 precursor_mz=row["precursor.mz.observed"],
                 raw_title=row["raw.name"],
+                protein_names=row["pg.genes"],
             )
 
             self.psm_info.append(tot_psminfo)
@@ -71,6 +72,7 @@ class LightResult:
                 rt=row.RT,
                 precursor_mz=row._11,
                 raw_title=row.Run,
+                protein_names=row._14,
             )
 
             self.psm_info.append(tot_psminfo)

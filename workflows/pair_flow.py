@@ -113,7 +113,8 @@ class PairFlow:
                     "charge": psm._charge,
                     "precursor_mz": psm._precursor_mz,
                     "raw_title": psm._raw_title,
-                    "ms2_count": ms2_count
+                    "ms2_count": ms2_count,
+                    "protein_names": psm._protein_names,
                 })
 
                 progress.update(rich_task_progress, advance=1)

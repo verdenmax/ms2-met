@@ -26,6 +26,7 @@ class PSMInfo:
         rt: np.float32,
         precursor_mz: np.float32,
         raw_title: str,
+        protein_names: str,
     ):
 
         self._sequence = sequence
@@ -34,12 +35,15 @@ class PSMInfo:
         self._rt = rt
         self._precursor_mz = precursor_mz
         self._raw_title = raw_title
+        self._protein_names = protein_names
 
     def __repr__(self):
         """ 实现标准输出 """
         return (f"PSMInfo(sequence='{self._sequence}', charge={self._charge}, "
                 f"modify='{self._modify}', rt={self._rt}, "
-                f"precursor_mz={self._precursor_mz}, raw_title='{self._raw_title}')")
+                f"precursor_mz={self._precursor_mz}, raw_title='{
+                    self._raw_title}')"
+                f"protein_names={self._protein_names}")
 
     def get_SILAC_precursor_mz(self):
         """
