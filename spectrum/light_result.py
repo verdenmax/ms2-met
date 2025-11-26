@@ -46,6 +46,11 @@ class LightResult:
                 protein_names=row["pg.genes"],
             )
 
+            # 如果当肽段不合法，就不进行添加
+            if not tot_psminfo.valid():
+                logging.warn(f"存在无法处理的肽段 {tot_psminfo}")
+                continue
+
             self.psm_info.append(tot_psminfo)
 
         self.peptide_len = len(self.psm_info)
@@ -74,6 +79,11 @@ class LightResult:
                 raw_title=row.Run,
                 protein_names=row._14,
             )
+
+            # 如果当肽段不合法，就不进行添加
+            if not tot_psminfo.valid():
+                logging.warn(f"存在无法处理的肽段 {tot_psminfo}")
+                continue
 
             self.psm_info.append(tot_psminfo)
 

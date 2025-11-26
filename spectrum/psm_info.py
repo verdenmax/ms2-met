@@ -45,6 +45,17 @@ class PSMInfo:
                     self._raw_title}')"
                 f"protein_names={self._protein_names}")
 
+    def valid(self) -> bool:
+        """
+        检查自己是否合法，或者说受当前代码支持
+        1. 氨基酸出现未知 X
+        2. 待发现，之后再在这里进行添加
+        """
+        if 'X' in self._sequence:
+            return False
+
+        return True
+
     def get_SILAC_precursor_mz(self):
         """
         根据轻序列计算出重标重量
