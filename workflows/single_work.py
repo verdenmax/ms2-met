@@ -47,12 +47,28 @@ def single_pair_work(
     # plot_light_heavy_xic(light_xic, heavy_xic)
 
     # 计算出 person_corr
-    # person_corr = calc_xic_score(light_xic, heavy_xic)
 
-    res_corr = []  # 用 list 收集
+    features = {}
+    if len(light_xic) == 0 or len(heavy_xic) == 0:
+        features["precursor_pearson"] = 0
+    else:
+        person_corr = calc_xic_score(light_xic, heavy_xic)
+        features["precursor_pearson"] = person_corr
+
     is_same_ms2 = dia_data.check_in_same_ms2(
         psm._precursor_mz, heavy_precursor_mz)
 
+    pearsons_map = {
+        "b": [],
+        "y": [],
+        "all": [],
+    }
+
+    intensitys_map = {
+        "b": 0,
+        "y": 0,
+        "all": 1,
+    }
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
 
@@ -64,7 +80,7 @@ def single_pair_work(
             continue
 
         # 计算出 light 信息
-        light_ions_xic = dia_data.xic_ms2_peaks_extract(
+        light_ions_xic, light_all_intensity = dia_data.xic_ms2_peaks_extract(
             psm._rt, xic_cycle_window,
             precursor_mz=psm._precursor_mz,
             ions_mass=light_mass,
@@ -72,7 +88,7 @@ def single_pair_work(
         )
 
         # 计算出 heavy 信息
-        heavy_ions_xic = dia_data.xic_ms2_peaks_extract(
+        heavy_ions_xic, heavy_all_intensity = dia_data.xic_ms2_peaks_extract(
             psm._rt, xic_cycle_window,
             precursor_mz=heavy_precursor_mz,
             ions_mass=heavy_mass,
@@ -80,11 +96,21 @@ def single_pair_work(
         )
 
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
+            pearsons_map[ions_type].append(0)
+            pearsons_map["all"].append(0)
             continue
+
+        if (np.max(light_ions_xic["intensity"]) > 0 and
+                np.max(heavy_ions_xic["intensity"]) > 0):
+            intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
+            intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
+            intensitys_map["all"] = light_all_intensity + \
+                heavy_all_intensity
 
         pearson_corr = calc_xic_score(light_ions_xic, heavy_ions_xic)
 
-        res_corr.append(pearson_corr)  # 循环里追加
+        pearsons_map[ions_type].append(pearson_corr)
+        pearsons_map["all"].append(pearson_corr)
 
         # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
 
@@ -101,14 +127,52 @@ def single_pair_work(
         #          label=f"light_{ions_type} {ions_num}",
         #          linewidth=2, markersize=8)
 
-    res_corr = np.array(res_corr)  # 转成 numpy 数组
-    ms2_count = np.sum(res_corr > 0.8)
+    # 分别提取出b离子，y离子，全部的三种特征
+    for key, value_list in pearsons_map.items():
+        # logging.info(f"{key} {value_list}")
+        stats = extract_ion_pearson_features(value_list)
+        # logging.info(stats)
 
-    if ms2_count >= 3:
-        logging.info(f"true: {psm}")
-    else:
-        logging.info(f"false: {psm}")
-    return psm, ms2_count
+        features[f"{key}_count"] = stats["count"]
+        features[f"{key}_p25"] = stats["p25"]
+        features[f"{key}_p50"] = stats["p50"]  # 关键特征！
+        features[f"{key}_p75"] = stats["p75"]
+        features[f"{key}_mean"] = stats["mean"]
+
+    features["matched_intensity_percent"] = (
+        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
+    return features
+
+
+def extract_ion_pearson_features(ions_pearsons: []) -> dict:
+    """
+    计算出这个数组中的25%,50%,75% 分位数，和均值
+    """
+    clean_vals = [v for v in ions_pearsons if not np.isnan(
+        v) and np.isfinite(v)]
+    count = len(clean_vals)
+
+    if count == 0:
+        return {
+            "count": 0,
+            "p25": 0,
+            "p50": 0,
+            "p75": 0,
+            "mean": 0,
+        }
+
+    p25 = np.clip(np.percentile(clean_vals, 25), 0, 1)
+    p50 = np.clip(np.percentile(clean_vals, 50), 0, 1)
+    p75 = np.clip(np.percentile(clean_vals, 75), 0, 1)
+    mean = np.mean(clean_vals)
+
+    return {
+        "count": count,
+        "p25": p25,
+        "p50": p50,
+        "p75": p75,
+        "mean": mean,
+    }
 
 
 def calc_xic_score(
@@ -137,6 +201,9 @@ def calc_xic_score(
 
     # logging.info(f"mz_avg_err : {mz_avg_err}, apex_delta:{
     #              apex_delta}, corr:{corr}")
+
+    if np.isnan(corr):
+        return 0
 
     return corr
 

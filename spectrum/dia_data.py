@@ -483,7 +483,7 @@ class DIAData:
         precursor_mz: np.float32,
         ions_mass: np.float32,
         mass_tol_ppm: np.float32,
-    ) -> np.ndarray:
+    ) -> (np.ndarray, np.float32):
         """ 过滤出这些保留时间内所有的ms2谱图，然后返回peaks  """
         ans = []
         protonmass = 1.00727646677  # mass.calculate_mass(formula='H+')
@@ -498,6 +498,7 @@ class DIAData:
         end_index = min(len(self.ms2_indexs[ms2_win_id]),
                         mid_index + xic_cycle_window + 1)
 
+        all_intensity = 0
         # 遍历所有 index
         for index in self.ms2_indexs[ms2_win_id][start_index:end_index]:
 
@@ -508,6 +509,9 @@ class DIAData:
 
             # 当是 ms2 谱图的时候，取出这个precursor_mz 对应的信息
             (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
+
+            # 记录所有谱图intensity
+            all_intensity += np.sum(intensity_arr)
 
             ppm_error = np.nan
             match_intensity = 0
@@ -535,7 +539,7 @@ class DIAData:
         # 把 list[dict] 转成结构化 ndarray
         arr = np.array([tuple(d.values()) for d in ans], dtype=dtype)
 
-        return arr
+        return arr, all_intensity
 
     def find_near_ms1_idx(self, rt: np.float32):
         """ 找到那个离这个 rt 更加接近 """

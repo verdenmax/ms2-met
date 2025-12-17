@@ -102,19 +102,21 @@ class PairFlow:
             # 遍历每一个psm 信息
             for psminfo in light_PSM_infos:
                 # TODO: 计算出信息
-                psm, ms2_count = single_pair_work(
+                tot_features = single_pair_work(
                     psm=psminfo,
                     dia_data=dia_data,
                     config=self._config,
                 )
 
                 ans.append({
-                    "sequence": psm._sequence,
-                    "charge": psm._charge,
-                    "precursor_mz": psm._precursor_mz,
-                    "raw_title": psm._raw_title,
-                    "ms2_count": ms2_count,
-                    "protein_names": psm._protein_names,
+                    "sequence": psminfo._sequence,
+                    "charge": psminfo._charge,
+                    "precursor_mz": psminfo._precursor_mz,
+                    "raw_title": psminfo._raw_title,
+                    "protein_names": psminfo._protein_names,
+                    "sequence_len": len(psminfo._sequence),
+                    "label": "human" in psminfo._protein_names.lower(),
+                    ** tot_features
                 })
 
                 progress.update(rich_task_progress, advance=1)
