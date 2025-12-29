@@ -127,6 +127,8 @@ def single_pair_work(
         #          label=f"light_{ions_type} {ions_num}",
         #          linewidth=2, markersize=8)
 
+    features["valid_fragment_ions_num"] = len(pearsons_map["all"])
+
     # 分别提取出b离子，y离子，全部的三种特征
     for key, value_list in pearsons_map.items():
         # logging.info(f"{key} {value_list}")
