@@ -14,6 +14,131 @@ from constant.keys import ConfigKeys
 from configparser import ConfigParser
 
 
+def multi_batch_work(
+    psm1: PSMInfo,
+    dia_data1: DIAData,
+    psm2: PSMInfo,
+    dia_data2: DIAData,
+    config: ConfigParser
+):
+    """ 处理单个肽段，对这单条信息进行处理，计算出是否可信 """
+
+    # logging.info(f"处理信息 {psm}")
+
+    # 从配置中获得 ppm
+    mass_tol_ppm = config[ConfigKeys.GENERAL].getfloat(ConfigKeys.MASS_TOL_PPM)
+    # 从配置中获得 窗口大小
+    xic_cycle_window = config[ConfigKeys.GENERAL].getint(
+        ConfigKeys.XIC_CYCLE_WINDOW, fallback=3)
+
+    light_xic = dia_data1.xic_peaks_extreact(
+        psm1._rt, xic_cycle_window,
+        psm1._precursor_mz, mass_tol_ppm)
+
+    heavy_xic = dia_data2.xic_peaks_extreact(
+        psm2._rt, xic_cycle_window,
+        psm2._precursor_mz, mass_tol_ppm)
+
+    # 进行画图
+    # plot_light_heavy_xic(light_xic, heavy_xic)
+
+    # 计算出 person_corr
+
+    features = {}
+    if len(light_xic) == 0 or len(heavy_xic) == 0:
+        features["precursor_pearson"] = 0
+    else:
+        person_corr = calc_xic_score(light_xic, heavy_xic)
+        features["precursor_pearson"] = person_corr
+
+    pearsons_map = {
+        "b": [],
+        "y": [],
+        "all": [],
+    }
+
+    intensitys_map = {
+        "b": 0,
+        "y": 0,
+        "all": 1,
+    }
+
+    _, fragment_ions = psm1.get_heavy_info(HeavyType.SILAC)
+    # 枚举所有的信息
+    for ions_type, ions_num, light_mass, _ in fragment_ions:
+
+        # NOTE: 这里应该分情况
+        # 如果两个母离子在不同的区间，则均可
+        # 如果在相同的区间，并且质量相同，说明重标不影响该碎片离子
+        # 说明这个碎片离子不受到重标的影响
+
+        # 计算出 light 信息
+        light_ions_xic, light_all_intensity = dia_data1.xic_ms2_peaks_extract(
+            psm1._rt, xic_cycle_window,
+            precursor_mz=psm1._precursor_mz,
+            ions_mass=light_mass,
+            mass_tol_ppm=mass_tol_ppm
+        )
+
+        # 计算出 heavy 信息
+        heavy_ions_xic, heavy_all_intensity = dia_data2.xic_ms2_peaks_extract(
+            psm2._rt, xic_cycle_window,
+            precursor_mz=psm2._precursor_mz,
+            ions_mass=light_mass,
+            mass_tol_ppm=mass_tol_ppm
+        )
+
+        if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
+            pearsons_map[ions_type].append(0)
+            pearsons_map["all"].append(0)
+            continue
+
+        if (np.max(light_ions_xic["intensity"]) > 0 and
+                np.max(heavy_ions_xic["intensity"]) > 0):
+            intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
+            intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
+            intensitys_map["all"] = light_all_intensity + \
+                heavy_all_intensity
+
+        pearson_corr = calc_xic_score(light_ions_xic, heavy_ions_xic)
+
+        pearsons_map[ions_type].append(pearson_corr)
+        pearsons_map["all"].append(pearson_corr)
+
+        # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
+
+        # plot_light_heavy_xic(light_ions_xic, heavy_ions_xic)
+
+        # rt_values = light_ions_xic["rt"]
+        # light_intensitys = light_ions_xic["intensity"]
+        # heavy_intensitys = heavy_ions_xic["intensity"]
+        #
+        # plt.plot(rt_values, light_intensitys, 'o-',
+        #          label=f"light_{ions_type} {ions_num}",
+        #          linewidth=2, markersize=8)
+        # plt.plot(rt_values, heavy_intensitys, 's--',
+        #          label=f"light_{ions_type} {ions_num}",
+        #          linewidth=2, markersize=8)
+
+    features["valid_fragment_ions_num"] = len(pearsons_map["all"])
+
+    # 分别提取出b离子，y离子，全部的三种特征
+    for key, value_list in pearsons_map.items():
+        # logging.info(f"{key} {value_list}")
+        stats = extract_ion_pearson_features(value_list)
+        # logging.info(stats)
+
+        features[f"{key}_count"] = stats["count"]
+        features[f"{key}_p25"] = stats["p25"]
+        features[f"{key}_p50"] = stats["p50"]  # 关键特征！
+        features[f"{key}_p75"] = stats["p75"]
+        features[f"{key}_mean"] = stats["mean"]
+
+    features["matched_intensity_percent"] = (
+        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
+    return features
+
+
 def single_pair_work(
     psm: PSMInfo,
     dia_data: DIAData,

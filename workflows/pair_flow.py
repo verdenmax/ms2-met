@@ -3,14 +3,16 @@ import logging
 import os
 import numpy as np
 import pandas as pd
+from collections import defaultdict
+from itertools import combinations
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.progress import Progress
 
 import workflows.flow_utils as flow_utils
 import manager.data_manager as data_manager
 
-from workflows.single_work import single_pair_work
+from workflows.single_work import multi_batch_work
 from manager.light_result_manager import LightResultManager
 from spectrum.psm_info import PSMInfo
 
@@ -22,7 +24,6 @@ class PairFlow:
     轻重标匹配的工作流
     这个工作流将会完成
     1. 质谱数据文件读取，通过 data_manager
-    TODO: 
     2. 搜索结果文件读取，需要支持多种格式
     3. 取出每一条搜索结果，将其在谱图中找到对应的轻重标配对
     4. 得到通过检验的结果，存储到文件中
@@ -45,6 +46,8 @@ class PairFlow:
         self._config: configparser.ConfigParser = config
 
         self._workpath: str = work_path
+
+        self._nametoDATA = {}
 
         # 创建不存在的目录
         for path in [self._workpath]:
@@ -80,47 +83,51 @@ class PairFlow:
 
     def multi_handle(
         self,
-        raw_file_path: str,
+        psm1: PSMInfo,
+        psm2: PSMInfo,
     ):
         """ 进行多线程地处理 """
-        # 获取当前 file name
-        raw_file_name = flow_utils.get_filename_stem(raw_file_path)
-
-        # 从 self._light_result 中获得所有该文件数据
-        light_PSM_infos: np.ndarray[tuple(int), PSMInfo] = (
-            self._light_result.filtered_by_raw_title(raw_file_name))
 
         # 获取 dia 数据，当之后想要多进程读数据时，可以直接将 multi_handle 多进程即可_
-        dia_data = self._raw_file_manager.get_dia_data_object(raw_file_path)
+        # dia_data = self._raw_file_manager.get_dia_data_object(raw_file_path)
+        light_dia_data = self._nametoDATA[psm1._raw_title]
+        heavy_dia_data = self._nametoDATA[psm2._raw_title]
 
-        with Progress() as progress:
-            rich_task_progress = progress.add_task(
-                f"[cyan] 处理文件{raw_file_name} ...", total=len(light_PSM_infos))
+        # TODO: 计算出信息
+        tot_features = multi_batch_work(
+            psm1=psm1,
+            dia_data1=light_dia_data,
+            psm2=psm2,
+            dia_data2=heavy_dia_data,
+            config=self._config,
+        )
 
-            ans = []
+        return {
+            "sequence": psm1._sequence,
+            "charge": psm1._charge,
+            "precursor_mz": psm1._precursor_mz,
+            "raw_title1": psm1._raw_title,
+            "raw_title2": psm2._raw_title,
+            "protein_names": psm1._protein_names,
+            "sequence_len": len(psm1._sequence),
+            "label": int("human" in psm1._protein_names.lower()),
+            ** tot_features
+        }
 
-            # 遍历每一个psm 信息
-            for psminfo in light_PSM_infos:
-                # TODO: 计算出信息
-                tot_features = single_pair_work(
-                    psm=psminfo,
-                    dia_data=dia_data,
-                    config=self._config,
-                )
+    def pharse_data(self, tot_raw_path: str):
+        """ 从 manager 中解析出数据"""
+        tot_raw_file_name = flow_utils.get_filename_stem(tot_raw_path)
 
-                ans.append({
-                    "sequence": psminfo._sequence,
-                    "charge": psminfo._charge,
-                    "precursor_mz": psminfo._precursor_mz,
-                    "raw_title": psminfo._raw_title,
-                    "protein_names": psminfo._protein_names,
-                    "sequence_len": len(psminfo._sequence),
-                    "label": "human" in psminfo._protein_names.lower(),
-                    ** tot_features
-                })
+        tot_dia_data = self._raw_file_manager.get_dia_data_object(
+            tot_raw_path)
 
-                progress.update(rich_task_progress, advance=1)
+        return tot_raw_file_name, tot_dia_data
 
+    def _process_group(self, group):
+        ans = []
+        for a, b in combinations(group, 2):
+            res = self.multi_handle(a, b)
+            ans.append(res)
         return ans
 
     def distribute(self):
@@ -129,10 +136,8 @@ class PairFlow:
         raw_file_nums = self._config.getint(
             ConfigKeys.INPUT, ConfigKeys.RAW_NUM, fallback=1)
 
-        ans = []
-
         # 进行多进程
-        with ProcessPoolExecutor(max_workers=25) as executor:
+        with ThreadPoolExecutor(max_workers=25) as executor:
             futures = []
 
             for i in range(raw_file_nums):
@@ -142,16 +147,42 @@ class PairFlow:
                 tot_raw_path = self._config[ConfigKeys.INPUT][tot_raw_path_key]
 
                 futures.append(executor.submit(
-                    self.multi_handle, tot_raw_path))
+                    self.pharse_data, tot_raw_path))
 
             for future in as_completed(futures):
-                res = future.result()
+                tot_raw_file_name, tot_dia_data = future.result()
+                self._nametoDATA[tot_raw_file_name] = tot_dia_data
 
-                # 接收 light_PSM_infos 和 rawfiledata，进行处理
-                ans.extend(res)
+        # NOTE: 处理信息，让 psm 信息两两分组
+        psm_groups = defaultdict(list)
+
+        for psm in self._light_result.psm_info:
+            key = PSMInfo.get_key(psm)
+            psm_groups[key].append(psm)
+
+        ans = []
+        with ThreadPoolExecutor(max_workers=25) as executor:
+            multi_sample_futures = [
+                executor.submit(self._process_group, group)
+                for group in psm_groups.values()
+                if len(group) >= 2  # 跳过不足2个的组
+            ]
+
+            with Progress() as progress:
+                rich_task_progress = progress.add_task(
+                    "[cyan] 处理进度 ...", total=len(multi_sample_futures))
+
+                # 收集结果（as_completed 可尽早获取已完成任务）
+                for future in as_completed(multi_sample_futures):
+                    progress.update(rich_task_progress, advance=1)
+                    try:
+                        group_results = future.result()
+                        ans.extend(group_results)  # 主线程合并，线程安全 ✅
+                    except Exception as e:
+                        # 建议记录日志，不要静默失败
+                        logging.info(f"Error in group processing: {e}")
 
         # NOTE: 保存结果
-
         ans_df = pd.DataFrame(ans)
 
         result_file = self._config.get(

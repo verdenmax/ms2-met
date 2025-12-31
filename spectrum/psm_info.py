@@ -3,6 +3,8 @@ import logging
 import numpy as np
 from enum import Enum
 from pyteomics import mass
+from typing import Tuple
+
 
 # 定义在全局，就不用频繁初始化了
 with open('./unimod.xml', 'rb') as f:
@@ -44,6 +46,12 @@ class PSMInfo:
                 f"precursor_mz={self._precursor_mz}, raw_title='{
                     self._raw_title}')"
                 f"protein_names={self._protein_names}")
+
+    def get_key(self) -> Tuple[str, int, Tuple[Tuple[int, int], ...]]:
+        """ 返回这个key ，两两 psm 中，sequence、charge、modify 相同认为是相同的。"""
+        # 将 modify list 转为嵌套 tuple，使其可哈希
+        mod_tuple = tuple(tuple(pair) for pair in self._modify)
+        return (self._sequence, self._charge, mod_tuple)
 
     def valid(self) -> bool:
         """
