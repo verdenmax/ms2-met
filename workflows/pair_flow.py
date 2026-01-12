@@ -85,6 +85,7 @@ class PairFlow:
         self,
         psm1: PSMInfo,
         psm2: PSMInfo,
+        label: int,
     ):
         """ 进行多线程地处理 """
 
@@ -110,7 +111,7 @@ class PairFlow:
             "raw_title2": psm2._raw_title,
             "protein_names": psm1._protein_names,
             "sequence_len": len(psm1._sequence),
-            "label": int("human" in psm1._protein_names.lower()),
+            "label": label,
             ** tot_features
         }
 
@@ -125,9 +126,22 @@ class PairFlow:
 
     def _process_group(self, group):
         ans = []
+
+        # 这个其实是在重复样本中找到重复出现的
         for a, b in combinations(group, 2):
-            res = self.multi_handle(a, b)
+            # label 设置为 1,记为正样本
+            res = self.multi_handle(a, b, 1)
             ans.append(res)
+
+        # 在重复样本中，找到负样本
+        for a, b in combinations(group, 2):
+            # label 设置为 0,记为负样本
+            # 这里对 b 进行一个小处理就行 ，其实就是对b 的 时间稍微做一个偏移
+
+            b._rt = b._rt + 10
+            res = self.multi_handle(a, b, 0)
+            ans.append(res)
+
         return ans
 
     def distribute(self):
