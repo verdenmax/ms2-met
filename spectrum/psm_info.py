@@ -39,6 +39,33 @@ class PSMInfo:
         self._raw_title = raw_title
         self._protein_names = protein_names
 
+    def to_dict(self):
+        """将对象转为 JSON 兼容的字典"""
+        return {
+            "sequence": self._sequence,
+            "charge": self._charge,
+            "modify": [list(pair) for pair in self._modify],  # tuple -> list
+            # np.float32 -> float
+            "rt": float(self._rt),
+            "precursor_mz": float(self._precursor_mz),
+            "raw_title": self._raw_title,
+            "protein_names": self._protein_names,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """从字典重建 PSMInfo 对象"""
+        return cls(
+            sequence=data["sequence"],
+            charge=data["charge"],
+            modify=[(int(pos), int(mod))
+                    for pos, mod in data["modify"]],  # list -> tuple
+            rt=np.float32(data["rt"]),
+            precursor_mz=np.float32(data["precursor_mz"]),
+            raw_title=data["raw_title"],
+            protein_names=data["protein_names"],
+        )
+
     def __repr__(self):
         """ 实现标准输出 """
         return (f"PSMInfo(sequence='{self._sequence}', charge={self._charge}, "

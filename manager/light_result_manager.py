@@ -40,7 +40,9 @@ class LightResultManager(BaseManager):
         search_engine_type = self._config[ConfigKeys.INPUT].getint(
             ConfigKeys.SEARCH_ENGINE_TYPE, fallback=1)
 
-        if search_engine_type == 1:
+        if search_engine_type == 0:
+            light_result._load_from_pkl(light_result_path)
+        elif search_engine_type == 1:
             light_result._load_from_dia_nn_input(light_result_path)
         elif search_engine_type == 2:
             light_result._load_from_alphadia_input(light_result_path)

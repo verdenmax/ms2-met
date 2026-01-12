@@ -1,6 +1,7 @@
 
 import re
 import os
+import json
 import numpy as np
 import pandas as pd
 import logging
@@ -17,6 +18,23 @@ class LightResult:
         self.peptide_len: np.int64 = 0
 
         self.psm_info: np.ndarray[tuple[int], PSMInfo] = []
+
+    def _load_from_pkl(self, light_result_path: str):
+        """ 从自定义的 json 文件读取 """
+
+        if light_result_path is None or not os.path.exists(light_result_path):
+            logging.error(f"json 结果 {light_result_path} 不存在")
+
+        # 正在加载文件
+        logging.info(f"正在加载 json 结果: {light_result_path}")
+
+        with open(light_result_path, 'rb') as f:
+            loaded_data = json.load(f)
+
+        # 重建 PSMInfo 对象列表
+        self.psm_info = [PSMInfo.from_dict(item) for item in loaded_data]
+
+        self.peptide_len = len(self.psm_info)
 
     def _load_from_alphadia_input(self, light_result_path: str):
         """ 输入 alphadia 的搜索结果 """

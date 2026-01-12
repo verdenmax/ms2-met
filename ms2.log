@@ -1,0 +1,298 @@
+2026-01-12 21:56:54,929 | INFO | root | 开始运行
+2026-01-12 21:56:54,932 | INFO | root |                                                   
+                                                  
+                        ██                        
+           ████████     ██                     ██ 
+           ████████     ██                     ██ 
+           ██                                  ██ 
+ ██░███▒   ██         ████     ██░████    ▒███░██ 
+ ███████▒  ██         ████     ███████▓  ▒███████ 
+ ███  ███  ███████      ██     ███  ▒██  ███  ███ 
+ ██░  ░██  ███████      ██     ██    ██  ██░  ░██ 
+ ██    ██  ██           ██     ██    ██  ██    ██ 
+ ██░  ░██  ██           ██     ██    ██  ██░  ░██ 
+ ███  ███  ██           ██     ██    ██  ███  ███ 
+ ███████▒  ██        ████████  ██    ██  ▒███████ 
+ ██░███▒   ██        ████████  ██    ██   ▒███░██ 
+ ██                                               
+ ██                                               
+ ██                                               
+                                                  
+
+2026-01-12 21:56:54,935 | INFO | root | 运行任务 main
+2026-01-12 21:56:54,935 | INFO | root | 初始化： LightResultManager
+2026-01-12 21:56:54,936 | INFO | root | 正在加载 pkl 结果: ../hela_2da.pkl
+2026-01-12 22:07:50,250 | INFO | root | 开始运行
+2026-01-12 22:07:50,253 | INFO | root |                                                   
+                                                  
+                        ██                        
+           ████████     ██                     ██ 
+           ████████     ██                     ██ 
+           ██                                  ██ 
+ ██░███▒   ██         ████     ██░████    ▒███░██ 
+ ███████▒  ██         ████     ███████▓  ▒███████ 
+ ███  ███  ███████      ██     ███  ▒██  ███  ███ 
+ ██░  ░██  ███████      ██     ██    ██  ██░  ░██ 
+ ██    ██  ██           ██     ██    ██  ██    ██ 
+ ██░  ░██  ██           ██     ██    ██  ██░  ░██ 
+ ███  ███  ██           ██     ██    ██  ███  ███ 
+ ███████▒  ██        ████████  ██    ██  ▒███████ 
+ ██░███▒   ██        ████████  ██    ██   ▒███░██ 
+ ██                                               
+ ██                                               
+ ██                                               
+                                                  
+
+2026-01-12 22:07:50,255 | INFO | root | 运行任务 main
+2026-01-12 22:07:50,256 | INFO | root | 初始化： LightResultManager
+2026-01-12 22:07:50,257 | INFO | root | 正在加载 json 结果: ../hela.json
+2026-01-12 22:07:50,494 | INFO | root | PSMInfo(sequence='AAAAPAGGNPEQR', charge=2, modify='[]', rt=12.648256301879883, precursor_mz=605.3021850585938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=MSL1_HUMAN
+2026-01-12 22:10:33,484 | INFO | root | 开始运行
+2026-01-12 22:10:33,487 | INFO | root |                                                   
+                                                  
+                        ██                        
+           ████████     ██                     ██ 
+           ████████     ██                     ██ 
+           ██                                  ██ 
+ ██░███▒   ██         ████     ██░████    ▒███░██ 
+ ███████▒  ██         ████     ███████▓  ▒███████ 
+ ███  ███  ███████      ██     ███  ▒██  ███  ███ 
+ ██░  ░██  ███████      ██     ██    ██  ██░  ░██ 
+ ██    ██  ██           ██     ██    ██  ██    ██ 
+ ██░  ░██  ██           ██     ██    ██  ██░  ░██ 
+ ███  ███  ██           ██     ██    ██  ███  ███ 
+ ███████▒  ██        ████████  ██    ██  ▒███████ 
+ ██░███▒   ██        ████████  ██    ██   ▒███░██ 
+ ██                                               
+ ██                                               
+ ██                                               
+                                                  
+
+2026-01-12 22:10:33,490 | INFO | root | 运行任务 main
+2026-01-12 22:10:33,490 | INFO | root | 初始化： LightResultManager
+2026-01-12 22:10:33,491 | INFO | root | 正在加载 json 结果: ../hela.json
+2026-01-12 22:10:33,736 | INFO | root | PSMInfo(sequence='AAAAPAGGNPEQR', charge=2, modify='[]', rt=12.648256301879883, precursor_mz=605.3021850585938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=MSL1_HUMAN
+2026-01-12 22:10:33,738 | INFO | root | PSMInfo(sequence='AAAAPAGGNPEQR', charge=2, modify='[]', rt=12.635286331176758, precursor_mz=605.3021850585938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=MSL1_HUMAN
+2026-01-12 22:10:33,739 | INFO | root | PSMInfo(sequence='AAAAPAGGNPEQR', charge=2, modify='[]', rt=12.629914283752441, precursor_mz=605.3021850585938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=MSL1_HUMAN
+2026-01-12 22:10:33,741 | INFO | root | PSMInfo(sequence='AAAEGLMSLLR', charge=2, modify='[]', rt=84.83546447753906, precursor_mz=566.3131713867188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=CDC27_HUMAN
+2026-01-12 22:10:33,742 | INFO | root | PSMInfo(sequence='AAAEGLMSLLR', charge=2, modify='[]', rt=85.2562484741211, precursor_mz=566.3131713867188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=CDC27_HUMAN
+2026-01-12 22:10:33,743 | INFO | root | PSMInfo(sequence='AAAEGLMSLLR', charge=2, modify='[]', rt=85.27446746826172, precursor_mz=566.3131713867188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=CDC27_HUMAN
+2026-01-12 22:10:33,745 | INFO | root | PSMInfo(sequence='AAAEQAISVR', charge=2, modify='[]', rt=27.194435119628906, precursor_mz=508.2801818847656, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=EXOSX_HUMAN
+2026-01-12 22:10:33,746 | INFO | root | PSMInfo(sequence='AAAEQAISVR', charge=2, modify='[]', rt=27.220561981201172, precursor_mz=508.2801818847656, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=EXOSX_HUMAN
+2026-01-12 22:10:33,747 | INFO | root | PSMInfo(sequence='AAAEQAISVR', charge=2, modify='[]', rt=27.139171600341797, precursor_mz=508.2801818847656, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=EXOSX_HUMAN
+2026-01-12 22:10:33,749 | INFO | root | PSMInfo(sequence='AAAEVAGQFVIK', charge=2, modify='[]', rt=55.52439498901367, precursor_mz=602.3402099609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=TFR1_HUMAN
+2026-01-12 22:10:33,750 | INFO | root | PSMInfo(sequence='AAAEVAGQFVIK', charge=2, modify='[]', rt=55.49555587768555, precursor_mz=602.3402099609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=TFR1_HUMAN
+2026-01-12 22:10:33,751 | INFO | root | PSMInfo(sequence='AAAEVAGQFVIK', charge=2, modify='[]', rt=55.43663024902344, precursor_mz=602.3402099609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=TFR1_HUMAN
+2026-01-12 22:10:33,752 | INFO | root | PSMInfo(sequence='AAAGGLAMLTSMR', charge=2, modify='[]', rt=72.35252380371094, precursor_mz=625.3231811523438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=UN45A_HUMAN
+2026-01-12 22:10:33,754 | INFO | root | PSMInfo(sequence='AAAGGLAMLTSMR', charge=2, modify='[]', rt=72.20464324951172, precursor_mz=625.3231811523438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=UN45A_HUMAN
+2026-01-12 22:10:33,755 | INFO | root | PSMInfo(sequence='AAAGGLAMLTSMR', charge=2, modify='[]', rt=72.18859100341797, precursor_mz=625.3231811523438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=UN45A_HUMAN
+2026-01-12 22:10:33,756 | INFO | root | PSMInfo(sequence='AAAGLMSLLR', charge=2, modify='[]', rt=79.25110626220703, precursor_mz=501.7918701171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=I3L328_HUMAN
+2026-01-12 22:10:33,758 | INFO | root | PSMInfo(sequence='AAAGLMSLLR', charge=2, modify='[]', rt=79.33094024658203, precursor_mz=501.7918701171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=I3L328_HUMAN
+2026-01-12 22:10:33,759 | INFO | root | PSMInfo(sequence='AAAGLMSLLR', charge=2, modify='[]', rt=79.3154525756836, precursor_mz=501.7918701171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=I3L328_HUMAN
+2026-01-12 22:10:33,760 | INFO | root | PSMInfo(sequence='AAAGSAAGGFQR', charge=2, modify='[]', rt=18.26885414123535, precursor_mz=532.267578125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=ARI1B_HUMAN
+2026-01-12 22:10:33,761 | INFO | root | PSMInfo(sequence='AAAGSAAGGFQR', charge=2, modify='[]', rt=18.088918685913086, precursor_mz=532.267578125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=ARI1B_HUMAN
+2026-01-12 22:10:33,763 | INFO | root | PSMInfo(sequence='AAAGSAAGGFQR', charge=2, modify='[]', rt=18.218990325927734, precursor_mz=532.267578125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=ARI1B_HUMAN
+2026-01-12 22:10:33,764 | INFO | root | PSMInfo(sequence='AAAGYPDPYSR', charge=2, modify='[]', rt=34.92548751831055, precursor_mz=584.2750854492188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=EPIPL_HUMAN
+2026-01-12 22:10:33,765 | INFO | root | PSMInfo(sequence='AAAGYPDPYSR', charge=2, modify='[]', rt=35.04172897338867, precursor_mz=584.2750854492188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=EPIPL_HUMAN
+2026-01-12 22:10:33,767 | INFO | root | PSMInfo(sequence='AAAGYPDPYSR', charge=2, modify='[]', rt=34.91889190673828, precursor_mz=584.2750854492188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=EPIPL_HUMAN
+2026-01-12 22:10:33,768 | INFO | root | PSMInfo(sequence='AAAQQLGEVVK', charge=2, modify='[]', rt=36.41659164428711, precursor_mz=557.3167724609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=BTAF1_HUMAN
+2026-01-12 22:10:33,769 | INFO | root | PSMInfo(sequence='AAAQQLGEVVK', charge=2, modify='[]', rt=36.53267288208008, precursor_mz=557.3167724609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=BTAF1_HUMAN
+2026-01-12 22:10:33,770 | INFO | root | PSMInfo(sequence='AAAQQLGEVVK', charge=2, modify='[]', rt=36.408565521240234, precursor_mz=557.3167724609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=BTAF1_HUMAN
+2026-01-12 22:10:33,772 | INFO | root | PSMInfo(sequence='AAATAEEPDPK', charge=2, modify='[]', rt=13.480928421020508, precursor_mz=550.2669067382812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=NP1L4_HUMAN
+2026-01-12 22:10:33,773 | INFO | root | PSMInfo(sequence='AAATAEEPDPK', charge=2, modify='[]', rt=13.47412395477295, precursor_mz=550.2669067382812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=NP1L4_HUMAN
+2026-01-12 22:10:33,774 | INFO | root | PSMInfo(sequence='AAATAEEPDPK', charge=2, modify='[]', rt=13.244994163513184, precursor_mz=550.2669067382812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=NP1L4_HUMAN
+2026-01-12 22:10:33,775 | INFO | root | PSMInfo(sequence='AAATYEQMK', charge=2, modify='[]', rt=19.14518165588379, precursor_mz=506.7420349121094, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=DHR11_HUMAN
+2026-01-12 22:10:33,777 | INFO | root | PSMInfo(sequence='AAATYEQMK', charge=2, modify='[]', rt=19.15829849243164, precursor_mz=506.7420349121094, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=DHR11_HUMAN
+2026-01-12 22:10:33,778 | INFO | root | PSMInfo(sequence='AAATYEQMK', charge=2, modify='[]', rt=19.054941177368164, precursor_mz=506.7420349121094, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=DHR11_HUMAN
+2026-01-12 22:10:33,779 | INFO | root | PSMInfo(sequence='AAAYLSEAMK', charge=2, modify='[]', rt=42.1729850769043, precursor_mz=527.7655029296875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=NRBF2_HUMAN
+2026-01-12 22:10:33,780 | INFO | root | PSMInfo(sequence='AAAYLSEAMK', charge=2, modify='[]', rt=42.297035217285156, precursor_mz=527.7655029296875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=NRBF2_HUMAN
+2026-01-12 22:10:33,781 | INFO | root | PSMInfo(sequence='AAAYLSEAMK', charge=2, modify='[]', rt=42.1746940612793, precursor_mz=527.7655029296875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=NRBF2_HUMAN
+2026-01-12 22:10:33,783 | INFO | root | PSMInfo(sequence='AADALEEQQR', charge=2, modify='[]', rt=17.06551170349121, precursor_mz=565.7754516601562, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=NUMA1_HUMAN
+2026-01-12 22:10:33,784 | INFO | root | PSMInfo(sequence='AADALEEQQR', charge=2, modify='[]', rt=17.369661331176758, precursor_mz=565.7754516601562, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=NUMA1_HUMAN
+2026-01-12 22:10:33,785 | INFO | root | PSMInfo(sequence='AADALEEQQR', charge=2, modify='[]', rt=17.018096923828125, precursor_mz=565.7754516601562, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=NUMA1_HUMAN
+2026-01-12 22:10:33,786 | INFO | root | PSMInfo(sequence='AADEAMEER', charge=2, modify='[]', rt=13.467652320861816, precursor_mz=511.2164001464844, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=TRM1_HUMAN
+2026-01-12 22:10:33,788 | INFO | root | PSMInfo(sequence='AADEAMEER', charge=2, modify='[]', rt=13.495776176452637, precursor_mz=511.2164001464844, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=TRM1_HUMAN
+2026-01-12 22:10:33,789 | INFO | root | PSMInfo(sequence='AADEAMEER', charge=2, modify='[]', rt=13.39516830444336, precursor_mz=511.2164001464844, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=TRM1_HUMAN
+2026-01-12 22:10:33,790 | INFO | root | PSMInfo(sequence='AADEIEKEK', charge=2, modify='[]', rt=8.617926597595215, precursor_mz=516.7640380859375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=OTUL_HUMAN
+2026-01-12 22:10:33,791 | INFO | root | PSMInfo(sequence='AADEIEKEK', charge=2, modify='[]', rt=8.720208168029785, precursor_mz=516.7640380859375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=OTUL_HUMAN
+2026-01-12 22:10:33,793 | INFO | root | PSMInfo(sequence='AADEIEKEK', charge=2, modify='[]', rt=9.041971206665039, precursor_mz=516.7640380859375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=OTUL_HUMAN
+2026-01-12 22:10:33,794 | INFO | root | PSMInfo(sequence='AADEVLAEAK', charge=2, modify='[]', rt=32.044986724853516, precursor_mz=508.7665710449219, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=CDC73_HUMAN
+2026-01-12 22:10:33,795 | INFO | root | PSMInfo(sequence='AADEVLAEAK', charge=2, modify='[]', rt=31.902284622192383, precursor_mz=508.7665710449219, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=CDC73_HUMAN
+2026-01-12 22:10:33,796 | INFO | root | PSMInfo(sequence='AADEVLAEAK', charge=2, modify='[]', rt=31.817354202270508, precursor_mz=508.7665710449219, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=CDC73_HUMAN
+2026-01-12 22:10:33,798 | INFO | root | PSMInfo(sequence='AADFIDQALAQK', charge=2, modify='[]', rt=69.02041625976562, precursor_mz=645.8380737304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=DUS3_HUMAN
+2026-01-12 22:10:33,799 | INFO | root | PSMInfo(sequence='AADFIDQALAQK', charge=2, modify='[]', rt=69.02637481689453, precursor_mz=645.8380737304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=DUS3_HUMAN
+2026-01-12 22:10:33,800 | INFO | root | PSMInfo(sequence='AADFIDQALAQK', charge=2, modify='[]', rt=68.84859466552734, precursor_mz=645.8380737304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=DUS3_HUMAN
+2026-01-12 22:10:33,802 | INFO | root | PSMInfo(sequence='AADGGERPLAASPPGTVK', charge=3, modify='[]', rt=32.29325485229492, precursor_mz=565.3004150390625, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=A0A669KAV7_HUMAN
+2026-01-12 22:10:33,803 | INFO | root | PSMInfo(sequence='AADGGERPLAASPPGTVK', charge=3, modify='[]', rt=32.02023696899414, precursor_mz=565.3004150390625, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=A0A669KAV7_HUMAN
+2026-01-12 22:10:33,804 | INFO | root | PSMInfo(sequence='AADGGERPLAASPPGTVK', charge=3, modify='[]', rt=32.09402847290039, precursor_mz=565.3004150390625, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=A0A669KAV7_HUMAN
+2026-01-12 22:10:33,806 | INFO | root | PSMInfo(sequence='AADGSLDTQPK', charge=2, modify='[]', rt=15.32198429107666, precursor_mz=551.7723999023438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=TFE2_HUMAN
+2026-01-12 22:10:33,807 | INFO | root | PSMInfo(sequence='AADGSLDTQPK', charge=2, modify='[]', rt=15.586877822875977, precursor_mz=551.7723999023438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=TFE2_HUMAN
+2026-01-12 22:10:33,809 | INFO | root | PSMInfo(sequence='AADGSLDTQPK', charge=2, modify='[]', rt=15.155391693115234, precursor_mz=551.7723999023438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=TFE2_HUMAN
+2026-01-12 22:10:33,810 | INFO | root | PSMInfo(sequence='AADHLKPFLDDSTLR', charge=3, modify='[]', rt=52.7625846862793, precursor_mz=566.9651489257812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=PRPF3_HUMAN
+2026-01-12 22:10:33,811 | INFO | root | PSMInfo(sequence='AADHLKPFLDDSTLR', charge=3, modify='[]', rt=52.6464958190918, precursor_mz=566.9651489257812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=PRPF3_HUMAN
+2026-01-12 22:10:33,813 | INFO | root | PSMInfo(sequence='AADHLKPFLDDSTLR', charge=3, modify='[]', rt=52.473026275634766, precursor_mz=566.9651489257812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=PRPF3_HUMAN
+2026-01-12 22:10:33,815 | INFO | root | PSMInfo(sequence='AADKPADQGAEK', charge=2, modify='[]', rt=6.601090431213379, precursor_mz=600.79638671875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=CNO10_HUMAN
+2026-01-12 22:10:33,816 | INFO | root | PSMInfo(sequence='AADKPADQGAEK', charge=2, modify='[]', rt=6.598940849304199, precursor_mz=600.79638671875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=CNO10_HUMAN
+2026-01-12 22:10:33,818 | INFO | root | PSMInfo(sequence='AADKPADQGAEK', charge=2, modify='[]', rt=6.7594757080078125, precursor_mz=600.79638671875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=CNO10_HUMAN
+2026-01-12 22:10:33,819 | INFO | root | PSMInfo(sequence='AADLFESEGAK', charge=2, modify='[]', rt=39.2860107421875, precursor_mz=569.2747802734375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=GATA_HUMAN
+2026-01-12 22:10:33,820 | INFO | root | PSMInfo(sequence='AADLFESEGAK', charge=2, modify='[]', rt=39.01042938232422, precursor_mz=569.2747802734375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=GATA_HUMAN
+2026-01-12 22:10:33,822 | INFO | root | PSMInfo(sequence='AADLFESEGAK', charge=2, modify='[]', rt=39.04199981689453, precursor_mz=569.2747802734375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=GATA_HUMAN
+2026-01-12 22:10:33,823 | INFO | root | PSMInfo(sequence='AADLLVNPLDPR', charge=2, modify='[]', rt=77.68014526367188, precursor_mz=647.3616943359375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=SRPK2_HUMAN
+2026-01-12 22:10:33,824 | INFO | root | PSMInfo(sequence='AADLLVNPLDPR', charge=2, modify='[]', rt=77.61579895019531, precursor_mz=647.3616943359375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=SRPK2_HUMAN
+2026-01-12 22:10:33,826 | INFO | root | PSMInfo(sequence='AADLLVNPLDPR', charge=2, modify='[]', rt=77.41584777832031, precursor_mz=647.3616943359375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=SRPK2_HUMAN
+2026-01-12 22:10:33,827 | INFO | root | PSMInfo(sequence='AADLNGDLTATR', charge=2, modify='[]', rt=37.20621109008789, precursor_mz=609.3096923828125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=RCN1_HUMAN
+2026-01-12 22:10:33,829 | INFO | root | PSMInfo(sequence='AADLNGDLTATR', charge=2, modify='[]', rt=37.01876449584961, precursor_mz=609.3096923828125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=RCN1_HUMAN
+2026-01-12 22:10:33,830 | INFO | root | PSMInfo(sequence='AADLNGDLTATR', charge=2, modify='[]', rt=36.95802307128906, precursor_mz=609.3096923828125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=RCN1_HUMAN
+2026-01-12 22:10:33,831 | INFO | root | PSMInfo(sequence='AADMDLEWR', charge=2, modify='[]', rt=56.78543472290039, precursor_mz=553.7504272460938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=PLXA1_HUMAN
+2026-01-12 22:10:33,833 | INFO | root | PSMInfo(sequence='AADMDLEWR', charge=2, modify='[]', rt=56.74140930175781, precursor_mz=553.7504272460938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=PLXA1_HUMAN
+2026-01-12 22:10:33,834 | INFO | root | PSMInfo(sequence='AADMDLEWR', charge=2, modify='[]', rt=56.72503662109375, precursor_mz=553.7504272460938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=PLXA1_HUMAN
+2026-01-12 22:10:33,835 | INFO | root | PSMInfo(sequence='AADSLQQNLQR', charge=2, modify='[]', rt=31.460538864135742, precursor_mz=622.3231201171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=KNOP1_HUMAN
+2026-01-12 22:10:33,837 | INFO | root | PSMInfo(sequence='AADSLQQNLQR', charge=2, modify='[]', rt=31.463581085205078, precursor_mz=622.3231201171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=KNOP1_HUMAN
+2026-01-12 22:10:33,838 | INFO | root | PSMInfo(sequence='AADSLQQNLQR', charge=2, modify='[]', rt=31.286338806152344, precursor_mz=622.3231201171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=KNOP1_HUMAN
+2026-01-12 22:10:33,839 | INFO | root | PSMInfo(sequence='AADSSAPEDSEK', charge=2, modify='[]', rt=8.147686958312988, precursor_mz=603.7596435546875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=S20A2_HUMAN
+2026-01-12 22:10:33,841 | INFO | root | PSMInfo(sequence='AADSSAPEDSEK', charge=2, modify='[]', rt=8.026620864868164, precursor_mz=603.7596435546875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=S20A2_HUMAN
+2026-01-12 22:10:33,842 | INFO | root | PSMInfo(sequence='AADTQVSETLK', charge=2, modify='[]', rt=27.78923225402832, precursor_mz=581.8011474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=GCN1_HUMAN
+2026-01-12 22:10:33,843 | INFO | root | PSMInfo(sequence='AADTQVSETLK', charge=2, modify='[]', rt=28.079679489135742, precursor_mz=581.8011474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=GCN1_HUMAN
+2026-01-12 22:10:33,845 | INFO | root | PSMInfo(sequence='AADTQVSETLK', charge=2, modify='[]', rt=27.780855178833008, precursor_mz=581.8011474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=GCN1_HUMAN
+2026-01-12 22:10:33,846 | INFO | root | PSMInfo(sequence='AADVENVPPVISTPHHYLISIYR', charge=4, modify='[]', rt=79.31230163574219, precursor_mz=648.5958862304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=AP3M1_HUMAN
+2026-01-12 22:10:33,848 | INFO | root | PSMInfo(sequence='AADVENVPPVISTPHHYLISIYR', charge=4, modify='[]', rt=79.32508087158203, precursor_mz=648.5958862304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=AP3M1_HUMAN
+2026-01-12 22:10:33,849 | INFO | root | PSMInfo(sequence='AADVENVPPVISTPHHYLISIYR', charge=4, modify='[]', rt=79.27104949951172, precursor_mz=648.5958862304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=AP3M1_HUMAN
+2026-01-12 22:10:33,850 | INFO | root | PSMInfo(sequence='AAEAEQEMQR', charge=2, modify='[]', rt=14.12733268737793, precursor_mz=581.761474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=MERL_HUMAN
+2026-01-12 22:10:33,852 | INFO | root | PSMInfo(sequence='AAEAEQEMQR', charge=2, modify='[]', rt=13.888063430786133, precursor_mz=581.761474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=MERL_HUMAN
+2026-01-12 22:10:33,853 | INFO | root | PSMInfo(sequence='AAEAEVELSAR', charge=2, modify='[]', rt=34.61552047729492, precursor_mz=573.29345703125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=A16A1_HUMAN
+2026-01-12 22:10:33,854 | INFO | root | PSMInfo(sequence='AAEAEVELSAR', charge=2, modify='[]', rt=34.69482421875, precursor_mz=573.29345703125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=A16A1_HUMAN
+2026-01-12 22:10:33,856 | INFO | root | PSMInfo(sequence='AAEAEVELSAR', charge=2, modify='[]', rt=34.49646759033203, precursor_mz=573.29345703125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=A16A1_HUMAN
+2026-01-12 22:10:33,857 | INFO | root | PSMInfo(sequence='AAEDDEDDDVDTKK', charge=3, modify='[]', rt=10.260480880737305, precursor_mz=522.5531616210938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=PTMA_HUMAN
+2026-01-12 22:10:33,858 | INFO | root | PSMInfo(sequence='AAEDDEDDDVDTKK', charge=3, modify='[]', rt=9.652021408081055, precursor_mz=522.5531616210938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=PTMA_HUMAN
+2026-01-12 22:10:33,860 | INFO | root | PSMInfo(sequence='AAEDDEDDDVDTKK', charge=3, modify='[]', rt=10.33129596710205, precursor_mz=522.5531616210938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=PTMA_HUMAN
+2026-01-12 22:10:33,861 | INFO | root | PSMInfo(sequence='AAEDELNIEAK', charge=2, modify='[]', rt=39.767173767089844, precursor_mz=601.798583984375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=SPG7_HUMAN
+2026-01-12 22:10:33,863 | INFO | root | PSMInfo(sequence='AAEDELNIEAK', charge=2, modify='[]', rt=39.61802673339844, precursor_mz=601.798583984375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=SPG7_HUMAN
+2026-01-12 22:10:33,864 | INFO | root | PSMInfo(sequence='AAEDELNIEAK', charge=2, modify='[]', rt=39.4816780090332, precursor_mz=601.798583984375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=SPG7_HUMAN
+2026-01-12 22:10:33,865 | INFO | root | PSMInfo(sequence='AAEDLFVNIR', charge=2, modify='[]', rt=67.81956481933594, precursor_mz=574.3089599609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=NCKP1_HUMAN
+2026-01-12 22:10:33,867 | INFO | root | PSMInfo(sequence='AAEDLFVNIR', charge=2, modify='[]', rt=67.96175384521484, precursor_mz=574.3089599609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=NCKP1_HUMAN
+2026-01-12 22:10:33,868 | INFO | root | PSMInfo(sequence='AAEDLFVNIR', charge=2, modify='[]', rt=67.8970718383789, precursor_mz=574.3089599609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=NCKP1_HUMAN
+2026-01-12 22:10:55,611 | INFO | root | 开始运行
+2026-01-12 22:10:55,614 | INFO | root |                                                   
+                                                  
+                        ██                        
+           ████████     ██                     ██ 
+           ████████     ██                     ██ 
+           ██                                  ██ 
+ ██░███▒   ██         ████     ██░████    ▒███░██ 
+ ███████▒  ██         ████     ███████▓  ▒███████ 
+ ███  ███  ███████      ██     ███  ▒██  ███  ███ 
+ ██░  ░██  ███████      ██     ██    ██  ██░  ░██ 
+ ██    ██  ██           ██     ██    ██  ██    ██ 
+ ██░  ░██  ██           ██     ██    ██  ██░  ░██ 
+ ███  ███  ██           ██     ██    ██  ███  ███ 
+ ███████▒  ██        ████████  ██    ██  ▒███████ 
+ ██░███▒   ██        ████████  ██    ██   ▒███░██ 
+ ██                                               
+ ██                                               
+ ██                                               
+                                                  
+
+2026-01-12 22:10:55,617 | INFO | root | 运行任务 main
+2026-01-12 22:10:55,617 | INFO | root | 初始化： LightResultManager
+2026-01-12 22:10:55,618 | INFO | root | 正在加载 json 结果: ../hela.json
+2026-01-12 22:10:55,869 | INFO | root | PSMInfo(sequence='AAAAPAGGNPEQR', charge=2, modify='[]', rt=12.648256301879883, precursor_mz=605.3021850585938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=MSL1_HUMAN
+2026-01-12 22:10:55,870 | INFO | root | PSMInfo(sequence='AAAAPAGGNPEQR', charge=2, modify='[]', rt=12.635286331176758, precursor_mz=605.3021850585938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=MSL1_HUMAN
+2026-01-12 22:10:55,872 | INFO | root | PSMInfo(sequence='AAAAPAGGNPEQR', charge=2, modify='[]', rt=12.629914283752441, precursor_mz=605.3021850585938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=MSL1_HUMAN
+2026-01-12 22:10:55,873 | INFO | root | PSMInfo(sequence='AAAEGLMSLLR', charge=2, modify='[]', rt=84.83546447753906, precursor_mz=566.3131713867188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=CDC27_HUMAN
+2026-01-12 22:10:55,874 | INFO | root | PSMInfo(sequence='AAAEGLMSLLR', charge=2, modify='[]', rt=85.2562484741211, precursor_mz=566.3131713867188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=CDC27_HUMAN
+2026-01-12 22:10:55,876 | INFO | root | PSMInfo(sequence='AAAEGLMSLLR', charge=2, modify='[]', rt=85.27446746826172, precursor_mz=566.3131713867188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=CDC27_HUMAN
+2026-01-12 22:10:55,877 | INFO | root | PSMInfo(sequence='AAAEQAISVR', charge=2, modify='[]', rt=27.194435119628906, precursor_mz=508.2801818847656, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=EXOSX_HUMAN
+2026-01-12 22:10:55,878 | INFO | root | PSMInfo(sequence='AAAEQAISVR', charge=2, modify='[]', rt=27.220561981201172, precursor_mz=508.2801818847656, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=EXOSX_HUMAN
+2026-01-12 22:10:55,880 | INFO | root | PSMInfo(sequence='AAAEQAISVR', charge=2, modify='[]', rt=27.139171600341797, precursor_mz=508.2801818847656, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=EXOSX_HUMAN
+2026-01-12 22:10:55,881 | INFO | root | PSMInfo(sequence='AAAEVAGQFVIK', charge=2, modify='[]', rt=55.52439498901367, precursor_mz=602.3402099609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=TFR1_HUMAN
+2026-01-12 22:10:55,882 | INFO | root | PSMInfo(sequence='AAAEVAGQFVIK', charge=2, modify='[]', rt=55.49555587768555, precursor_mz=602.3402099609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=TFR1_HUMAN
+2026-01-12 22:10:55,884 | INFO | root | PSMInfo(sequence='AAAEVAGQFVIK', charge=2, modify='[]', rt=55.43663024902344, precursor_mz=602.3402099609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=TFR1_HUMAN
+2026-01-12 22:10:55,885 | INFO | root | PSMInfo(sequence='AAAGGLAMLTSMR', charge=2, modify='[]', rt=72.35252380371094, precursor_mz=625.3231811523438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=UN45A_HUMAN
+2026-01-12 22:10:55,886 | INFO | root | PSMInfo(sequence='AAAGGLAMLTSMR', charge=2, modify='[]', rt=72.20464324951172, precursor_mz=625.3231811523438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=UN45A_HUMAN
+2026-01-12 22:10:55,888 | INFO | root | PSMInfo(sequence='AAAGGLAMLTSMR', charge=2, modify='[]', rt=72.18859100341797, precursor_mz=625.3231811523438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=UN45A_HUMAN
+2026-01-12 22:10:55,889 | INFO | root | PSMInfo(sequence='AAAGLMSLLR', charge=2, modify='[]', rt=79.25110626220703, precursor_mz=501.7918701171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=I3L328_HUMAN
+2026-01-12 22:10:55,890 | INFO | root | PSMInfo(sequence='AAAGLMSLLR', charge=2, modify='[]', rt=79.33094024658203, precursor_mz=501.7918701171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=I3L328_HUMAN
+2026-01-12 22:10:55,891 | INFO | root | PSMInfo(sequence='AAAGLMSLLR', charge=2, modify='[]', rt=79.3154525756836, precursor_mz=501.7918701171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=I3L328_HUMAN
+2026-01-12 22:10:55,893 | INFO | root | PSMInfo(sequence='AAAGSAAGGFQR', charge=2, modify='[]', rt=18.26885414123535, precursor_mz=532.267578125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=ARI1B_HUMAN
+2026-01-12 22:10:55,894 | INFO | root | PSMInfo(sequence='AAAGSAAGGFQR', charge=2, modify='[]', rt=18.088918685913086, precursor_mz=532.267578125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=ARI1B_HUMAN
+2026-01-12 22:10:55,895 | INFO | root | PSMInfo(sequence='AAAGSAAGGFQR', charge=2, modify='[]', rt=18.218990325927734, precursor_mz=532.267578125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=ARI1B_HUMAN
+2026-01-12 22:10:55,896 | INFO | root | PSMInfo(sequence='AAAGYPDPYSR', charge=2, modify='[]', rt=34.92548751831055, precursor_mz=584.2750854492188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=EPIPL_HUMAN
+2026-01-12 22:10:55,898 | INFO | root | PSMInfo(sequence='AAAGYPDPYSR', charge=2, modify='[]', rt=35.04172897338867, precursor_mz=584.2750854492188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=EPIPL_HUMAN
+2026-01-12 22:10:55,899 | INFO | root | PSMInfo(sequence='AAAGYPDPYSR', charge=2, modify='[]', rt=34.91889190673828, precursor_mz=584.2750854492188, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=EPIPL_HUMAN
+2026-01-12 22:10:55,900 | INFO | root | PSMInfo(sequence='AAAQQLGEVVK', charge=2, modify='[]', rt=36.41659164428711, precursor_mz=557.3167724609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=BTAF1_HUMAN
+2026-01-12 22:10:55,901 | INFO | root | PSMInfo(sequence='AAAQQLGEVVK', charge=2, modify='[]', rt=36.53267288208008, precursor_mz=557.3167724609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=BTAF1_HUMAN
+2026-01-12 22:10:55,903 | INFO | root | PSMInfo(sequence='AAAQQLGEVVK', charge=2, modify='[]', rt=36.408565521240234, precursor_mz=557.3167724609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=BTAF1_HUMAN
+2026-01-12 22:10:55,904 | INFO | root | PSMInfo(sequence='AAATAEEPDPK', charge=2, modify='[]', rt=13.480928421020508, precursor_mz=550.2669067382812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=NP1L4_HUMAN
+2026-01-12 22:10:55,905 | INFO | root | PSMInfo(sequence='AAATAEEPDPK', charge=2, modify='[]', rt=13.47412395477295, precursor_mz=550.2669067382812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=NP1L4_HUMAN
+2026-01-12 22:10:55,907 | INFO | root | PSMInfo(sequence='AAATAEEPDPK', charge=2, modify='[]', rt=13.244994163513184, precursor_mz=550.2669067382812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=NP1L4_HUMAN
+2026-01-12 22:10:55,908 | INFO | root | PSMInfo(sequence='AAATYEQMK', charge=2, modify='[]', rt=19.14518165588379, precursor_mz=506.7420349121094, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=DHR11_HUMAN
+2026-01-12 22:10:55,909 | INFO | root | PSMInfo(sequence='AAATYEQMK', charge=2, modify='[]', rt=19.15829849243164, precursor_mz=506.7420349121094, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=DHR11_HUMAN
+2026-01-12 22:10:55,910 | INFO | root | PSMInfo(sequence='AAATYEQMK', charge=2, modify='[]', rt=19.054941177368164, precursor_mz=506.7420349121094, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=DHR11_HUMAN
+2026-01-12 22:10:55,911 | INFO | root | PSMInfo(sequence='AAAYLSEAMK', charge=2, modify='[]', rt=42.1729850769043, precursor_mz=527.7655029296875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=NRBF2_HUMAN
+2026-01-12 22:10:55,913 | INFO | root | PSMInfo(sequence='AAAYLSEAMK', charge=2, modify='[]', rt=42.297035217285156, precursor_mz=527.7655029296875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=NRBF2_HUMAN
+2026-01-12 22:10:55,914 | INFO | root | PSMInfo(sequence='AAAYLSEAMK', charge=2, modify='[]', rt=42.1746940612793, precursor_mz=527.7655029296875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=NRBF2_HUMAN
+2026-01-12 22:10:55,915 | INFO | root | PSMInfo(sequence='AADALEEQQR', charge=2, modify='[]', rt=17.06551170349121, precursor_mz=565.7754516601562, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=NUMA1_HUMAN
+2026-01-12 22:10:55,916 | INFO | root | PSMInfo(sequence='AADALEEQQR', charge=2, modify='[]', rt=17.369661331176758, precursor_mz=565.7754516601562, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=NUMA1_HUMAN
+2026-01-12 22:10:55,918 | INFO | root | PSMInfo(sequence='AADALEEQQR', charge=2, modify='[]', rt=17.018096923828125, precursor_mz=565.7754516601562, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=NUMA1_HUMAN
+2026-01-12 22:10:55,919 | INFO | root | PSMInfo(sequence='AADEAMEER', charge=2, modify='[]', rt=13.467652320861816, precursor_mz=511.2164001464844, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=TRM1_HUMAN
+2026-01-12 22:10:55,920 | INFO | root | PSMInfo(sequence='AADEAMEER', charge=2, modify='[]', rt=13.495776176452637, precursor_mz=511.2164001464844, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=TRM1_HUMAN
+2026-01-12 22:10:55,921 | INFO | root | PSMInfo(sequence='AADEAMEER', charge=2, modify='[]', rt=13.39516830444336, precursor_mz=511.2164001464844, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=TRM1_HUMAN
+2026-01-12 22:10:55,922 | INFO | root | PSMInfo(sequence='AADEIEKEK', charge=2, modify='[]', rt=8.617926597595215, precursor_mz=516.7640380859375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=OTUL_HUMAN
+2026-01-12 22:10:55,924 | INFO | root | PSMInfo(sequence='AADEIEKEK', charge=2, modify='[]', rt=8.720208168029785, precursor_mz=516.7640380859375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=OTUL_HUMAN
+2026-01-12 22:10:55,925 | INFO | root | PSMInfo(sequence='AADEIEKEK', charge=2, modify='[]', rt=9.041971206665039, precursor_mz=516.7640380859375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=OTUL_HUMAN
+2026-01-12 22:10:55,926 | INFO | root | PSMInfo(sequence='AADEVLAEAK', charge=2, modify='[]', rt=32.044986724853516, precursor_mz=508.7665710449219, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=CDC73_HUMAN
+2026-01-12 22:10:55,927 | INFO | root | PSMInfo(sequence='AADEVLAEAK', charge=2, modify='[]', rt=31.902284622192383, precursor_mz=508.7665710449219, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=CDC73_HUMAN
+2026-01-12 22:10:55,928 | INFO | root | PSMInfo(sequence='AADEVLAEAK', charge=2, modify='[]', rt=31.817354202270508, precursor_mz=508.7665710449219, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=CDC73_HUMAN
+2026-01-12 22:10:55,930 | INFO | root | PSMInfo(sequence='AADFIDQALAQK', charge=2, modify='[]', rt=69.02041625976562, precursor_mz=645.8380737304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=DUS3_HUMAN
+2026-01-12 22:10:55,931 | INFO | root | PSMInfo(sequence='AADFIDQALAQK', charge=2, modify='[]', rt=69.02637481689453, precursor_mz=645.8380737304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=DUS3_HUMAN
+2026-01-12 22:10:55,932 | INFO | root | PSMInfo(sequence='AADFIDQALAQK', charge=2, modify='[]', rt=68.84859466552734, precursor_mz=645.8380737304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=DUS3_HUMAN
+2026-01-12 22:10:55,933 | INFO | root | PSMInfo(sequence='AADGGERPLAASPPGTVK', charge=3, modify='[]', rt=32.29325485229492, precursor_mz=565.3004150390625, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=A0A669KAV7_HUMAN
+2026-01-12 22:10:55,935 | INFO | root | PSMInfo(sequence='AADGGERPLAASPPGTVK', charge=3, modify='[]', rt=32.02023696899414, precursor_mz=565.3004150390625, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=A0A669KAV7_HUMAN
+2026-01-12 22:10:55,936 | INFO | root | PSMInfo(sequence='AADGGERPLAASPPGTVK', charge=3, modify='[]', rt=32.09402847290039, precursor_mz=565.3004150390625, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=A0A669KAV7_HUMAN
+2026-01-12 22:10:55,938 | INFO | root | PSMInfo(sequence='AADGSLDTQPK', charge=2, modify='[]', rt=15.32198429107666, precursor_mz=551.7723999023438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=TFE2_HUMAN
+2026-01-12 22:10:55,939 | INFO | root | PSMInfo(sequence='AADGSLDTQPK', charge=2, modify='[]', rt=15.586877822875977, precursor_mz=551.7723999023438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=TFE2_HUMAN
+2026-01-12 22:10:55,940 | INFO | root | PSMInfo(sequence='AADGSLDTQPK', charge=2, modify='[]', rt=15.155391693115234, precursor_mz=551.7723999023438, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=TFE2_HUMAN
+2026-01-12 22:10:55,942 | INFO | root | PSMInfo(sequence='AADHLKPFLDDSTLR', charge=3, modify='[]', rt=52.7625846862793, precursor_mz=566.9651489257812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=PRPF3_HUMAN
+2026-01-12 22:10:55,943 | INFO | root | PSMInfo(sequence='AADHLKPFLDDSTLR', charge=3, modify='[]', rt=52.6464958190918, precursor_mz=566.9651489257812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=PRPF3_HUMAN
+2026-01-12 22:10:55,944 | INFO | root | PSMInfo(sequence='AADHLKPFLDDSTLR', charge=3, modify='[]', rt=52.473026275634766, precursor_mz=566.9651489257812, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=PRPF3_HUMAN
+2026-01-12 22:10:55,946 | INFO | root | PSMInfo(sequence='AADKPADQGAEK', charge=2, modify='[]', rt=6.601090431213379, precursor_mz=600.79638671875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=CNO10_HUMAN
+2026-01-12 22:10:55,947 | INFO | root | PSMInfo(sequence='AADKPADQGAEK', charge=2, modify='[]', rt=6.598940849304199, precursor_mz=600.79638671875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=CNO10_HUMAN
+2026-01-12 22:10:55,948 | INFO | root | PSMInfo(sequence='AADKPADQGAEK', charge=2, modify='[]', rt=6.7594757080078125, precursor_mz=600.79638671875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=CNO10_HUMAN
+2026-01-12 22:10:55,950 | INFO | root | PSMInfo(sequence='AADLFESEGAK', charge=2, modify='[]', rt=39.2860107421875, precursor_mz=569.2747802734375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=GATA_HUMAN
+2026-01-12 22:10:55,951 | INFO | root | PSMInfo(sequence='AADLFESEGAK', charge=2, modify='[]', rt=39.01042938232422, precursor_mz=569.2747802734375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=GATA_HUMAN
+2026-01-12 22:10:55,952 | INFO | root | PSMInfo(sequence='AADLFESEGAK', charge=2, modify='[]', rt=39.04199981689453, precursor_mz=569.2747802734375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=GATA_HUMAN
+2026-01-12 22:10:55,954 | INFO | root | PSMInfo(sequence='AADLLVNPLDPR', charge=2, modify='[]', rt=77.68014526367188, precursor_mz=647.3616943359375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=SRPK2_HUMAN
+2026-01-12 22:10:55,955 | INFO | root | PSMInfo(sequence='AADLLVNPLDPR', charge=2, modify='[]', rt=77.61579895019531, precursor_mz=647.3616943359375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=SRPK2_HUMAN
+2026-01-12 22:10:55,956 | INFO | root | PSMInfo(sequence='AADLLVNPLDPR', charge=2, modify='[]', rt=77.41584777832031, precursor_mz=647.3616943359375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=SRPK2_HUMAN
+2026-01-12 22:10:55,958 | INFO | root | PSMInfo(sequence='AADLNGDLTATR', charge=2, modify='[]', rt=37.20621109008789, precursor_mz=609.3096923828125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=RCN1_HUMAN
+2026-01-12 22:10:55,959 | INFO | root | PSMInfo(sequence='AADLNGDLTATR', charge=2, modify='[]', rt=37.01876449584961, precursor_mz=609.3096923828125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=RCN1_HUMAN
+2026-01-12 22:10:55,961 | INFO | root | PSMInfo(sequence='AADLNGDLTATR', charge=2, modify='[]', rt=36.95802307128906, precursor_mz=609.3096923828125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=RCN1_HUMAN
+2026-01-12 22:10:55,962 | INFO | root | PSMInfo(sequence='AADMDLEWR', charge=2, modify='[]', rt=56.78543472290039, precursor_mz=553.7504272460938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=PLXA1_HUMAN
+2026-01-12 22:10:55,964 | INFO | root | PSMInfo(sequence='AADMDLEWR', charge=2, modify='[]', rt=56.74140930175781, precursor_mz=553.7504272460938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=PLXA1_HUMAN
+2026-01-12 22:10:55,965 | INFO | root | PSMInfo(sequence='AADMDLEWR', charge=2, modify='[]', rt=56.72503662109375, precursor_mz=553.7504272460938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=PLXA1_HUMAN
+2026-01-12 22:10:55,966 | INFO | root | PSMInfo(sequence='AADSLQQNLQR', charge=2, modify='[]', rt=31.460538864135742, precursor_mz=622.3231201171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=KNOP1_HUMAN
+2026-01-12 22:10:55,968 | INFO | root | PSMInfo(sequence='AADSLQQNLQR', charge=2, modify='[]', rt=31.463581085205078, precursor_mz=622.3231201171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=KNOP1_HUMAN
+2026-01-12 22:10:55,969 | INFO | root | PSMInfo(sequence='AADSLQQNLQR', charge=2, modify='[]', rt=31.286338806152344, precursor_mz=622.3231201171875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=KNOP1_HUMAN
+2026-01-12 22:10:55,970 | INFO | root | PSMInfo(sequence='AADSSAPEDSEK', charge=2, modify='[]', rt=8.147686958312988, precursor_mz=603.7596435546875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=S20A2_HUMAN
+2026-01-12 22:10:55,972 | INFO | root | PSMInfo(sequence='AADSSAPEDSEK', charge=2, modify='[]', rt=8.026620864868164, precursor_mz=603.7596435546875, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=S20A2_HUMAN
+2026-01-12 22:10:55,973 | INFO | root | PSMInfo(sequence='AADTQVSETLK', charge=2, modify='[]', rt=27.78923225402832, precursor_mz=581.8011474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=GCN1_HUMAN
+2026-01-12 22:10:55,974 | INFO | root | PSMInfo(sequence='AADTQVSETLK', charge=2, modify='[]', rt=28.079679489135742, precursor_mz=581.8011474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=GCN1_HUMAN
+2026-01-12 22:10:55,976 | INFO | root | PSMInfo(sequence='AADTQVSETLK', charge=2, modify='[]', rt=27.780855178833008, precursor_mz=581.8011474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=GCN1_HUMAN
+2026-01-12 22:10:55,977 | INFO | root | PSMInfo(sequence='AADVENVPPVISTPHHYLISIYR', charge=4, modify='[]', rt=79.31230163574219, precursor_mz=648.5958862304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=AP3M1_HUMAN
+2026-01-12 22:10:55,978 | INFO | root | PSMInfo(sequence='AADVENVPPVISTPHHYLISIYR', charge=4, modify='[]', rt=79.32508087158203, precursor_mz=648.5958862304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=AP3M1_HUMAN
+2026-01-12 22:10:55,980 | INFO | root | PSMInfo(sequence='AADVENVPPVISTPHHYLISIYR', charge=4, modify='[]', rt=79.27104949951172, precursor_mz=648.5958862304688, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=AP3M1_HUMAN
+2026-01-12 22:10:55,981 | INFO | root | PSMInfo(sequence='AAEAEQEMQR', charge=2, modify='[]', rt=14.12733268737793, precursor_mz=581.761474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=MERL_HUMAN
+2026-01-12 22:10:55,982 | INFO | root | PSMInfo(sequence='AAEAEQEMQR', charge=2, modify='[]', rt=13.888063430786133, precursor_mz=581.761474609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=MERL_HUMAN
+2026-01-12 22:10:55,984 | INFO | root | PSMInfo(sequence='AAEAEVELSAR', charge=2, modify='[]', rt=34.61552047729492, precursor_mz=573.29345703125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=A16A1_HUMAN
+2026-01-12 22:10:55,985 | INFO | root | PSMInfo(sequence='AAEAEVELSAR', charge=2, modify='[]', rt=34.69482421875, precursor_mz=573.29345703125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=A16A1_HUMAN
+2026-01-12 22:10:55,986 | INFO | root | PSMInfo(sequence='AAEAEVELSAR', charge=2, modify='[]', rt=34.49646759033203, precursor_mz=573.29345703125, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=A16A1_HUMAN
+2026-01-12 22:10:55,988 | INFO | root | PSMInfo(sequence='AAEDDEDDDVDTKK', charge=3, modify='[]', rt=10.260480880737305, precursor_mz=522.5531616210938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1')protein_names=PTMA_HUMAN
+2026-01-12 22:10:55,989 | INFO | root | PSMInfo(sequence='AAEDDEDDDVDTKK', charge=3, modify='[]', rt=9.652021408081055, precursor_mz=522.5531616210938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2')protein_names=PTMA_HUMAN
+2026-01-12 22:10:55,990 | INFO | root | PSMInfo(sequence='AAEDDEDDDVDTKK', charge=3, modify='[]', rt=10.33129596710205, precursor_mz=522.5531616210938, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep3')protein_names=PTMA_HUMAN
+2026-01-12 22:10:55,992 | INFO | root | PSMInfo(sequence='AAEDELNIEAK', charge=2, modify='[]', rt=39.767173767089844, precursor_mz=601.798583984375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1')protein_names=SPG7_HUMAN
+2026-01-12 22:10:55,993 | INFO | root | PSMInfo(sequence='AAEDELNIEAK', charge=2, modify='[]', rt=39.61802673339844, precursor_mz=601.798583984375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2')protein_names=SPG7_HUMAN
+2026-01-12 22:10:55,994 | INFO | root | PSMInfo(sequence='AAEDELNIEAK', charge=2, modify='[]', rt=39.4816780090332, precursor_mz=601.798583984375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep3')protein_names=SPG7_HUMAN
+2026-01-12 22:10:55,996 | INFO | root | PSMInfo(sequence='AAEDLFVNIR', charge=2, modify='[]', rt=67.81956481933594, precursor_mz=574.3089599609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1')protein_names=NCKP1_HUMAN
+2026-01-12 22:10:55,997 | INFO | root | PSMInfo(sequence='AAEDLFVNIR', charge=2, modify='[]', rt=67.96175384521484, precursor_mz=574.3089599609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2')protein_names=NCKP1_HUMAN
+2026-01-12 22:10:55,998 | INFO | root | PSMInfo(sequence='AAEDLFVNIR', charge=2, modify='[]', rt=67.8970718383789, precursor_mz=574.3089599609375, raw_title='20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep3')protein_names=NCKP1_HUMAN
+2026-01-12 22:10:56,000 | INFO | root | 53824
