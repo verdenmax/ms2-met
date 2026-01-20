@@ -145,7 +145,7 @@ def main():
             X_train, y_train, test_size=valid_size, random_state=42, stratify=y_train
         )
 
-    # 👇 创建模型（关键改动）
+    # 创建模型（关键改动）
     model = ModelManager.create(cfg)
 
     # Train

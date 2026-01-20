@@ -5,13 +5,15 @@ from .base_model import BaseModel
 
 
 class LGBModel(BaseModel):
-    def __init__(self, model_params, training_params):
+    def __init__(self, model_params, training_params, feature_names):
+        super().__init__(feature_names)  # 传入特征名
         self.model_params = model_params
         self.training_params = training_params
         self.model = None
 
     def fit(self, X_train, y_train, X_val=None, y_val=None):
-        train_data = lgb.Dataset(X_train, label=y_train)
+        train_data = lgb.Dataset(
+            X_train, label=y_train, feature_name=self.feature_names)
         valid_sets = []
         valid_names = []
 
@@ -49,7 +51,8 @@ class LGBModel(BaseModel):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.model.save_model(path)
 
-    def feature_importance(self, importance_type='gain'):
+    def _raw_feature_importance(self, importance_type='gain'):
         if self.model is None:
             return None
+        # LightGBM 返回 array，顺序 = feature_name 顺序（因为我们设置了 feature_name!）
         return self.model.feature_importance(importance_type=importance_type)
