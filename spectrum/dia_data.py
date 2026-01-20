@@ -389,8 +389,8 @@ class DIAData:
 
         """ mz 范围信息 """
         # 计算 m/z 范围
-        self._max_mz_value = np.float32(np.max(self._mz_values))
-        self._min_mz_value = np.float32(np.min(self._mz_values))
+        self._max_mz_value = np.float32(np.max(self._precursor_upper_mz))
+        self._min_mz_value = np.float32(np.min(self._precursor_lower_mz))
 
         self.ms1_indexs = np.where(
             self.precursor_scan_ids == -1)[0].astype(np.int32)
@@ -409,6 +409,17 @@ class DIAData:
                 self._precursor_lower_mz,
                 tolerance=0.1
             )
+
+    def check_in_raw(self, precursor_mz) -> bool:
+        """ 检查这个 mz 是否在当前 raw 中"""
+        if (precursor_mz <= self._max_mz_value + 0.1
+                and precursor_mz >= self._min_mz_value - 0.1):
+            return True
+
+        logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
+        logging.warn(f"precursor_mz: {precursor_mz}  left: {
+            self._cycle_left_precursor}")
+        return False
 
     def check_in_same_ms2(self, p1, p2) -> bool:
         """ 检查这两个是否在同一个 ms2 中"""
@@ -525,6 +536,8 @@ class DIAData:
             # 没有找到任何窗口匹配的 MS2 谱图
             dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
             logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
+            logging.warn(f"precursor_mz: {precursor_mz}  left: {
+                         self._cycle_left_precursor}")
             return np.array([], dtype=dtype), 0.0
 
         # Step 2: 向左收集 xic_cycle_window 个有效谱图

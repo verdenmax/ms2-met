@@ -194,8 +194,14 @@ def single_pair_work(
         "y": 0,
         "all": 1,
     }
+
+    heavy_in_raw = dia_data.check_in_raw(heavy_precursor_mz)
+
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
+
+        if not heavy_in_raw:
+            continue
 
         # NOTE: 这里应该分情况
         # 如果两个母离子在不同的区间，则均可
@@ -268,6 +274,12 @@ def single_pair_work(
 
     features["matched_intensity_percent"] = (
         (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
+
+    if heavy_in_raw:
+        features["heavy_in_raw"] = 1
+    else:
+        features["heavy_in_raw"] = 0
+
     return features
 
 
@@ -303,7 +315,8 @@ def extract_ion_pearson_features(ions_pearsons: []) -> dict:
 
 
 def calc_xic_score(
-    light_xic: np.array, heavy_xic: np.array
+    light_xic: np.array, heavy_xic: np.array,
+    intensity_threshold: float = 1e-10
 ) -> np.float32:
     """ 根据mono 的XIC 计算出相似度打分 """
 
@@ -324,15 +337,32 @@ def calc_xic_score(
     inten1_interp = interp(common_rt, light_xic["rt"], light_xic["intensity"])
     inten2_interp = interp(common_rt, heavy_xic["rt"], heavy_xic["intensity"])
 
-    corr, _ = pearsonr(inten1_interp, inten2_interp)
+    # 检查是否都是0或接近0
+    light_near_zero = np.all(np.abs(inten1_interp) < intensity_threshold)
+    heavy_near_zero = np.all(np.abs(inten2_interp) < intensity_threshold)
+
+    if light_near_zero and heavy_near_zero:
+        # 两个强度都是0或接近0，返回默认值（根据你的需求，可能是0或1）
+        # 如果是空白区域，通常认为不相关，返回0
+        corr = 0.0
+    elif light_near_zero or heavy_near_zero:
+        # 只有一个接近0，另一个有信号，不相关
+        corr = 0.0
+    else:
+        # 正常计算相关系数，但需要处理可能的常数数组
+        # 先检查标准差是否为0
+        if np.std(inten1_interp) < 1e-10 or np.std(inten2_interp) < 1e-10:
+            # 常数数组
+            corr = 0.0
+        else:
+            try:
+                corr, _ = pearsonr(inten1_interp, inten2_interp)
+            except (ValueError, RuntimeWarning):
+                corr = 0.0
 
     # logging.info(f"mz_avg_err : {mz_avg_err}, apex_delta:{
     #              apex_delta}, corr:{corr}")
-
-    if np.isnan(corr):
-        return 0
-
-    return corr
+    return np.float32(corr)
 
 
 def plot_light_heavy_xic(light_xic, heavy_xic):
