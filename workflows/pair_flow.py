@@ -177,6 +177,7 @@ class PairFlow:
 
             name_to_shared = {name: path for name, path in shared_files}
 
+        logging.info("开始psm 任务分配")
         # NOTE: 处理信息，让 psm 信息两两分组
         psm_groups = defaultdict(list)
 

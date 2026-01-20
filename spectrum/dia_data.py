@@ -11,15 +11,40 @@ from spectrum.spectrum_utils import match_peak_ppm
 DEFAULT_VALUE_NO_MOBILITY = 1e-6
 
 
+def deduplicate_with_tolerance(arr, tolerance=0.1):
+    """
+    对float32数组进行容差去重并排序
+
+    Args:
+        arr: np.ndarray[float32] 输入数组
+        tolerance: float 容差值
+
+    Returns:
+        去重并排序后的数组
+    """
+    if arr is None or len(arr) == 0:
+        return None
+
+    # 确保是float32类型
+    arr = arr.astype(np.float32)
+
+    # 先排序
+    sorted_arr = np.sort(arr)
+
+    # 容差去重
+    unique_values = []
+    for value in sorted_arr:
+        if not unique_values or abs(value - unique_values[-1]) >= tolerance:
+            unique_values.append(value)
+
+    return np.array(unique_values, dtype=np.float32)
+
+
 def _load_attrs(obj, data):
     """辅助函数：从 npz 数据填充属性"""
     # 标量
     obj.has_mobility = bool(data['has_mobility'])
     obj.has_ms1 = bool(data['has_ms1'])
-    obj._precursor_max_mz_value = float(
-        data['_precursor_max_mz_value']) if '_precursor_max_mz_value' in data else None
-    obj._precursor_min_mz_value = float(
-        data['_precursor_min_mz_value']) if '_precursor_min_mz_value' in data else None
     obj._max_mz_value = float(
         data['_max_mz_value']) if '_max_mz_value' in data else None
     obj._min_mz_value = float(
@@ -32,14 +57,16 @@ def _load_attrs(obj, data):
     # 数组（自动是 mmap 视图）
     obj.ms1_indexs = data['ms1_indexs']
     obj.ms1_indexs_rt = data['ms1_indexs_rt']
+    obj.ms2_indexs = data['ms2_indexs']
+    obj.ms2_indexs_rt = data['ms2_indexs_rt']
     obj.precursor_scan_ids = data['precursor_scan_ids']
     obj._mz_values = data['_mz_values']
     obj.rt_values = data['rt_values']
     obj._intensity_values = data['_intensity_values']
     obj.mobility_values = data['mobility_values']
+    obj._cycle_left_precursor = data['_cycle_left_precursor']
 
     # 可选数组
-    obj._cycle_left_precursor = data['_cycle_left_precursor'] if '_cycle_left_precursor' in data else None
     obj._quad_max_mz_value = data['_quad_max_mz_value'] if '_quad_max_mz_value' in data else None
     obj._quad_min_mz_value = data['_quad_min_mz_value'] if '_quad_min_mz_value' in data else None
     obj._scan_id_to_index = data['_scan_id_to_index'] if '_scan_id_to_index' in data else None
@@ -63,10 +90,10 @@ class DIAData:
         """
         # 记录所有的 ms1 index
         self.ms1_indexs: np.ndarray[tuple[int], np.dtype[np.int32]] = None
-        self.ms1_indexs_rt: np.ndarray[tuple[int], np.dtype[np.int32]] = None
-        # 记录不同区间内的 ms2 的 index
-        self.ms2_indexs: list[np.ndarray] = None
-        self.ms2_indexs_rt: list[np.ndarray] = None
+        self.ms1_indexs_rt: np.ndarray[tuple[int], np.dtype[np.float32]] = None
+        # 记录所有的 ms2 index
+        self.ms2_indexs: np.ndarray[tuple[int], np.dtype[np.int32]] = None
+        self.ms2_indexs_rt: np.ndarray[tuple[int], np.dtype[np.float32]] = None
         # 这个ms2 index 对应的 ms1 信息
         self.precursor_scan_ids: np.ndarray[tuple[int],
                                             np.dtype[np.int32]] = None
@@ -76,21 +103,22 @@ class DIAData:
                                    np.dtype[np.float32]] | None = None
         self._intensity_values: (
             np.ndarray[tuple[int], np.dtype[np.float32]] | None) = (None)
+
+        # TODO: 未使用
         self.mobility_values: (
             np.ndarray[tuple[int], np.dtype[np.float32]]) = np.array(
             [DEFAULT_VALUE_NO_MOBILITY, 0], dtype=np.float32
         )
 
-        """ DIA 循环相关属性 """
-        # DIA 循环定义数组
-        self._precursor_max_mz_value: np.float32 = None
-        self._precursor_min_mz_value: np.float32 = None
+        """ DIA 窗口相关属性，为了判断ms2 是否落在了同一个窗口 """
         self._cycle_left_precursor: (
             np.ndarray[tuple[int], np.dtype[np.float32]] | None) = (None)
 
         """ mz 范围信息 """
         self._max_mz_value: np.float32 | None = None
         self._min_mz_value: np.float32 | None = None
+
+        # TODO: 未使用
         self._quad_max_mz_value: (
             np.ndarray[tuple[int], np.dtype[np.float32]] | None) = (None)
         self._quad_min_mz_value: (
@@ -120,8 +148,6 @@ class DIAData:
             # 标量属性
             'has_mobility': self.has_mobility,
             'has_ms1': self.has_ms1,
-            '_precursor_max_mz_value': self._precursor_max_mz_value,
-            '_precursor_min_mz_value': self._precursor_min_mz_value,
             '_max_mz_value': self._max_mz_value,
             '_min_mz_value': self._min_mz_value,
             '_zeroth_frame': self._zeroth_frame,
@@ -131,6 +157,8 @@ class DIAData:
             # 数组属性（只保存非 None 的）
             'ms1_indexs': self.ms1_indexs,
             'ms1_indexs_rt': self.ms1_indexs_rt,
+            'ms2_indexs': self.ms2_indexs,
+            'ms2_indexs_rt': self.ms2_indexs_rt,
             'precursor_scan_ids': self.precursor_scan_ids,
             '_mz_values': self._mz_values,
             'rt_values': self.rt_values,
@@ -366,131 +394,21 @@ class DIAData:
 
         self.ms1_indexs = np.where(
             self.precursor_scan_ids == -1)[0].astype(np.int32)
-        self.ms1_indexs_rt = self.rt_values[self.ms1_indexs]
+        self.ms1_indexs_rt = self.rt_values[self.ms1_indexs].copy()
 
         # 设置帧索引
         self.frame_max_index = len(self.rt_values) - 1
 
-        self._determine_dia_cycle()
+        self.ms2_indexs = np.where(
+            self.precursor_scan_ids != -1)[0].astype(np.int32)
+        self.ms2_indexs_rt = self.rt_values[self.ms2_indexs].copy()
 
-    def _preprocess_data(self):
-        """预处理数据，填充所有属性"""
-
-        """ 数据特征标识 """
-        # 检查是否有 MS1 数据
-        self.has_ms1 = (self.spectrum_df['ms_level'] == 1).any()
-
-        if not self.has_ms1:
-            logging.warn("No MS1 spectra found in the file")
-
-        """
-        记录的原始数据关键数组, mz_value、rt_value、intensity_value、mobility_values。
-        """
-        # 提取 m/z 和强度值
-        self.precursor_scan_ids = (
-            self.spectrum_df['precursor_scan_id'].values.astype(np.int64))
-        self._mz_values = self.peak_df['mz'].values.astype(np.float32)
-        self._intensity_values = self.peak_df['intensity'].values.astype(
-            np.float32)
-
-        # 提取 RT 值
-        self.rt_values = self.spectrum_df['rt'].values.astype(np.float32)
-
-        # TODO: 应该还有个 mobility
-
-        """ DIA 循环相关属性 """
-        # TODO: 确定 DIA 循环 ，暂时没用没有写
-        # self._determine_dia_cycle()
-
-        """ mz 范围信息 """
-        # 计算 m/z 范围
-        self._max_mz_value = np.float32(self.peak_df['mz'].max())
-        self._min_mz_value = np.float32(self.peak_df['mz'].min())
-
-        # 计算四极杆 m/z 范围 (仅 MS2)
-        ms2_spectra = self.spectrum_df[self.spectrum_df['ms_level'] == 2]
-        if not ms2_spectra.empty:
-            self._quad_max_mz_value = np.array(
-                [ms2_spectra['isolation_upper_mz'].max()], dtype=np.float32)
-            self._quad_min_mz_value = np.array(
-                [ms2_spectra['isolation_lower_mz'].min()], dtype=np.float32)
-        else:
-            self._quad_max_mz_value = np.array([0], dtype=np.float32)
-            self._quad_min_mz_value = np.array([0], dtype=np.float32)
-
-        """ 索引和边界信息 """
-        # 创建从 scan_id 到 spec_idx 的映射
-        self._scan_id_to_index = (
-            self.spectrum_df.set_index('scan_id')['spec_idx']
-            .reindex(range(self.spectrum_df['scan_id'].max() + 1))
-            .fillna(0)  # 或者用其他默认值填充缺失的 scan_id
-            .values.astype(np.int64)
-        )
-        # 提取峰索引
-        self._peak_start_idx_list = (
-            self.spectrum_df['peak_start_idx'].values.astype(np.int64))
-        self._peak_stop_idx_list = (
-            self.spectrum_df['peak_stop_idx'].values.astype(np.int64))
-
-        # 提取这个谱图 mz 范围
-        self._precursor_lower_mz = (
-            self.spectrum_df['isolation_lower_mz'].values.astype(np.float32))
-        self._precursor_upper_mz = (
-            self.spectrum_df['isolation_upper_mz'].values.astype(np.float32))
-
-        # 设置帧索引
-        self.frame_max_index = len(self.rt_values) - 1
-
-        # clean
-        del self.spectrum_df
-        del self.peak_df
-
-    def _determine_dia_cycle(self):
-        """确定 DIA 循环结构"""
-        # 简化的 DIA 循环检测
-
-        ms1_indices = [index for index, scan_id in enumerate(
-            self.precursor_scan_ids) if scan_id == -1]
-
-        if len(ms1_indices) == 0:
-            logging.warn("Cannot determine DIA cycle")
-            return
-        elif len(ms1_indices) == 1:
-            # 设置为最后一个
-            ms1_indices.append(len(self.precursor_scan_ids + 1))
-
-        self._cycle_left_precursor = (
-            self._precursor_lower_mz[ms1_indices[0]+1:ms1_indices[1]])
-
-        # 给出precursor最大值和最小值
-        self._precursor_min_mz_value = (np.min(
-            self._precursor_lower_mz[ms1_indices[0]+1:ms1_indices[1]]))
-        self._precursor_max_mz_value = np.max(
-            self._precursor_upper_mz[ms1_indices[0]+1:ms1_indices[1]])
-
-        tmp = [[] for _ in range(len(self._cycle_left_precursor) + 1)]
-        # 遍历所有 spectrum index，将 MS2 放入对应窗口
-        for spec_idx in range(len(self.precursor_scan_ids)):
-            precursor_scan = self.precursor_scan_ids[spec_idx]
-
-            # MS2 才有 precursor_scan_id != -1
-            if precursor_scan == -1:
-                continue
-
-            # 找到该 MS2 属于哪个 DIA 窗口
-            # 或者 upper_mz 都可以
-            precursor_mz = (
-                self._precursor_lower_mz[spec_idx] +
-                self._precursor_upper_mz[spec_idx]) / 2
-            win = np.searchsorted(
-                self._cycle_left_precursor, precursor_mz, side="left")
-
-            # 加入窗口列表
-            tmp[win].append(spec_idx)
-
-        # 得到 属于同一个 ms2 窗口的结果
-        self.ms2_indexs = [np.array(x, dtype=np.int32) for x in tmp]
-        self.ms2_indexs_rt = [self.rt_values[x] for x in self.ms2_indexs]
+        # 更新窗口信息
+        if self._precursor_lower_mz is not None:
+            self._cycle_left_precursor = deduplicate_with_tolerance(
+                self._precursor_lower_mz,
+                tolerance=0.1
+            )
 
     def check_in_same_ms2(self, p1, p2) -> bool:
         """ 检查这两个是否在同一个 ms2 中"""
@@ -556,86 +474,117 @@ class DIAData:
         logging.info(f"idx: {idx}")
         return self.get_spectrum_by_index(idx)
 
-    def find_near_ms2_idx(self, rt: np.float32, ms2_win_id: int):
-        """ 找到那个离这个 rt 更加接近 """
-        idx = np.searchsorted(self.ms2_indexs_rt[ms2_win_id], rt)
-
-        if idx == 0:
-            return 0
-        if idx == len(self.ms2_indexs[ms2_win_id]):
-            return idx - 1
-
-        left = self.ms2_indexs_rt[ms2_win_id][idx - 1]
-        right = self.ms2_indexs_rt[ms2_win_id][idx]
-
-        if abs(rt - left) <= abs(rt - right):
-            return idx - 1
-        else:
-            return idx
-
     def xic_ms2_peaks_extract(
         self,
-        rt: np.float32, xic_cycle_window: int,
+        rt: np.float32,
+        xic_cycle_window: int,
         precursor_mz: np.float32,
         ions_mass: np.float32,
         mass_tol_ppm: np.float32,
-    ) -> (np.ndarray, np.float32):
-        """ 过滤出这些保留时间内所有的ms2谱图，然后返回peaks  """
+    ) -> tuple[np.ndarray, np.float32]:
+        """
+        提取 XIC：从最接近 rt 的、且 precursor_mz 在隔离窗口内的 MS2 谱图开始，
+        向左/右各扩展 xic_cycle_window 个「有效」MS2 谱图（即窗口包含 precursor_mz）。
+        """
+        if self.ms2_indexs is None or len(self.ms2_indexs) == 0:
+            dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+            return np.array([], dtype=dtype), 0.0
+
+        protonmass = 1.00727646677
         ans = []
-        protonmass = 1.00727646677  # mass.calculate_mass(formula='H+')
+        total_intensity = 0.0
 
-        # 先寻找的起始的 index
-        ms2_win_id = np.searchsorted(
-            self._cycle_left_precursor, precursor_mz, side='left')
+        # Step 1: 找到 _ms2_rt_values 中最接近 rt 的位置
+        pos = np.searchsorted(self.ms2_indexs_rt, rt)
 
-        mid_index = self.find_near_ms2_idx(rt, ms2_win_id)
+        # 候选中心点：检查 pos-1 和 pos（二分查找的两个邻点）
+        candidates = []
+        for i in range(1, 5):
+            if pos - i >= 0:
+                candidates.append(pos - i)
+        for i in range(0, 5):
+            if pos + i < len(self.ms2_indexs_rt):
+                candidates.append(pos + i)
 
-        start_index = max(0, mid_index - xic_cycle_window)
-        end_index = min(len(self.ms2_indexs[ms2_win_id]),
-                        mid_index + xic_cycle_window + 1)
+        center_idx = None
+        min_diff = float('inf')
+        for i in candidates:
+            global_idx = self.ms2_indexs[i]
+            lower = self._precursor_lower_mz[global_idx]
+            upper = self._precursor_upper_mz[global_idx]
 
-        all_intensity = 0
-        # 遍历所有 index
-        for index in self.ms2_indexs[ms2_win_id][start_index:end_index]:
-
-            # NOTE: 加上如果当前母离子范围不对，也 continue
-            if (precursor_mz > self._precursor_upper_mz[index] or
-                    precursor_mz < self._precursor_lower_mz[index]):
+            if np.isnan(lower) or np.isnan(upper):
                 continue
+            if lower <= precursor_mz <= upper:
+                diff = abs(self.ms2_indexs_rt[i] - rt)
+                if diff < min_diff:
+                    min_diff = diff
+                    center_idx = i  # 在 _ms2_indices 中的位置
 
-            # 当是 ms2 谱图的时候，取出这个precursor_mz 对应的信息
-            (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
+        if center_idx is None:
+            # 没有找到任何窗口匹配的 MS2 谱图
+            dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+            logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
+            return np.array([], dtype=dtype), 0.0
 
-            # 记录所有谱图intensity
-            all_intensity += np.sum(intensity_arr)
+        # Step 2: 向左收集 xic_cycle_window 个有效谱图
+        left_list = []
+        i = center_idx - 1
+        while i >= 0 and len(left_list) < xic_cycle_window:
+            global_idx = self.ms2_indexs[i]
+            lower = self._precursor_lower_mz[global_idx]
+            upper = self._precursor_upper_mz[global_idx]
+            if (not (np.isnan(lower) or np.isnan(upper)) and
+                    lower <= precursor_mz <= upper):
+                left_list.append(global_idx)
+            i -= 1
 
-            ppm_error = np.nan
-            match_intensity = 0
+        # Step 3: 向右收集 xic_cycle_window 个有效谱图
+        right_list = []
+        i = center_idx + 1
+        while (i < len(self.ms2_indexs) and
+               len(right_list) < xic_cycle_window):
+            global_idx = self.ms2_indexs[i]
+            lower = self._precursor_lower_mz[global_idx]
+            upper = self._precursor_upper_mz[global_idx]
+            if (not (np.isnan(lower) or np.isnan(upper))
+                    and lower <= precursor_mz <= upper):
+                right_list.append(global_idx)
+            i += 1
 
-            # NOTE: 这里最好将多个 电荷的这个累计起来
+        # Step 4: 合并（左 + 中心 + 右）
+        selected_global_indices = left_list[::-1] + \
+            [self.ms2_indexs[center_idx]] + right_list
+
+        # logging.info(selected_global_indices)
+
+        # Step 5: 处理每个谱图
+        for global_idx in selected_global_indices:
+            mz_arr, intensity_arr = self.get_spectrum_by_index(global_idx)
+            total_intensity += np.sum(intensity_arr)
+
+            ppm_error = 0.0
+            match_intensity = 0.0
+
             for charge in range(1, 3):
                 theo_mz = (ions_mass + charge * protonmass) / charge
-
-                # 计算出结果之后
-                (tot_ppm_error, tot_match_intensity) = match_peak_ppm(
-                    mz_arr, intensity_arr, theo_mz, mass_tol_ppm)
-
-                # 累计结果
-                if not tot_ppm_error == np.nan:
+                tot_ppm_error, tot_match_intensity = match_peak_ppm(
+                    mz_arr, intensity_arr, theo_mz, mass_tol_ppm
+                )
+                if not np.isnan(tot_ppm_error):
                     ppm_error += tot_ppm_error
                 match_intensity += tot_match_intensity
 
-            ans.append(
-                {"rt": self.rt_values[index],
-                 "pmm_error": ppm_error,
-                 "intensity": match_intensity})
+            ans.append({
+                "rt": self.rt_values[global_idx],
+                "pmm_error": ppm_error,
+                "intensity": match_intensity
+            })
 
         dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
-
-        # 把 list[dict] 转成结构化 ndarray
         arr = np.array([tuple(d.values()) for d in ans], dtype=dtype)
 
-        return arr, all_intensity
+        return arr, total_intensity
 
     def find_near_ms1_idx(self, rt: np.float32):
         """ 找到那个离这个 rt 更加接近 """

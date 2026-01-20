@@ -1,6 +1,7 @@
 
 import os
 import configparser
+import logging
 
 from spectrum.dia_data import DIAData
 from spectrum.psm_info import PSMInfo
@@ -27,6 +28,7 @@ def data_to_npz(
         dia_data = raw_file_manager.get_dia_data_object(filepath)
         dia_data.save_to_file(shared_path)
 
+    logging.info(f"生成 DIA data {shared_path} 完成")
     return name, shared_path
 
 
