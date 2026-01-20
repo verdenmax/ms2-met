@@ -12,6 +12,9 @@ from sklearn.metrics import (  # 评估模型效果的各种指标
 from sklearn.metrics import roc_curve, auc
 import numpy as np
 
+import logging
+from rich.logging import RichHandler
+
 
 def load_data(file_paths, feature_cols, target_col):
     dfs = []
@@ -118,7 +121,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--name", type=str, required=True)
+    parser.add_argument(
+        '--logpath', help='日志文件路径，默认为 ./spec.log',
+        default="./spec.log")
+
     args = parser.parse_args()
+
+    # 设置日志文件handle
+    file_handler = logging.FileHandler(args.logpath, encoding="utf-8")
+    file_formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    )
+    file_handler.setFormatter(file_formatter)
+
+    # 注册日志
+    logging.basicConfig(level=logging.INFO, handlers=[
+                        RichHandler(), file_handler])
 
     # 加载配置文件
     with open(args.config) as f:
@@ -173,11 +191,11 @@ def main():
         roc_path=roc_path
     )
 
-    print(f"✅ Experiment '{args.name}' completed.")
-    print(f"   Model: {model_path}")
-    print(f"   Report: {report_path}")
-    print(f"   Feature importance: {fig_path}")
-    print(f"   ROC curve: {roc_path}")
+    logging.info(f"✅ Experiment '{args.name}' completed.")
+    logging.info(f"   Model: {model_path}")
+    logging.info(f"   Report: {report_path}")
+    logging.info(f"   Feature importance: {fig_path}")
+    logging.info(f"   ROC curve: {roc_path}")
 
 
 if __name__ == "__main__":
