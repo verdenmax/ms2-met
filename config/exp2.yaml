@@ -1,8 +1,8 @@
 data:
   train_files:
     - data/hela_2da_comm_features_all.csv
-  test_files:
     - data/hela_5da_comm_features_all.csv
+  test_files:
     - data/mix_dinn_features_new.csv
   feature_cols:
     - precursor_mz

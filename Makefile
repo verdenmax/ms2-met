@@ -11,7 +11,7 @@ all: $(EXPS)
 $(EXPS):
 	@echo "🚀 Running experiment: $@"
 	@mkdir -p models results figures
-	python src/train.py --config config/$@.yaml --name $@
+	python src/train2.py --config config/$@.yaml --name $@
 	@touch $@.done  # 标记已完成，避免重复运行
 
 # 强制重新运行某个实验
