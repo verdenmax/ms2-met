@@ -192,7 +192,7 @@ class PairFlow:
                 ConfigKeys.GENERAL,
                 ConfigKeys.FEATURE_TYPE, fallback=0) == 0:
 
-            for group in psm_groups:
+            for group in psm_groups.values():
                 for a in group:
                     tasks.append(
                         (a.to_dict(),
@@ -200,7 +200,7 @@ class PairFlow:
 
         else:
             # 两两之间进行处理任务
-            for group in psm_groups:
+            for group in psm_groups.values():
                 for a, b in combinations(group, 2):
                     # 添加正样本
                     tasks.append(
@@ -228,7 +228,7 @@ class PairFlow:
                         process_psm_single,
                         psm1_dict, shared1, self._config
                     )
-                    for (psm1_dict, shared1, label) in tasks
+                    for (psm1_dict, shared1) in tasks
                 ]
             else:
                 multi_sample_futures = [
