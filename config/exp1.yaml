@@ -26,14 +26,16 @@ data:
   target_col: label  # 假设你的标签列叫 'label'
 
 model:
-  boosting_type: gbdt
-  objective: binary
-  metric: [auc, binary_logloss]
-  num_leaves: 31
-  learning_rate: 0.05
-  feature_fraction: 0.9
-  bagging_fraction: 0.8
-  verbose: -1
+  type: lightgbm  # 选择是什么模型
+  params:         # 这个模型的参数
+    boosting_type: gbdt
+    objective: binary
+    metric: [auc, binary_logloss]
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    verbose: -1
 
 training:
   num_boost_round: 1000  # 训练轮数
