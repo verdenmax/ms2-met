@@ -6,12 +6,14 @@ import pandas as pd
 from collections import defaultdict
 from itertools import combinations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from rich.progress import Progress
 
 import workflows.flow_utils as flow_utils
 import manager.data_manager as data_manager
 
+from workflows.flow_utils import data_to_npz, process_psm_pair_shared, process_psm_single
 from workflows.single_work import multi_batch_work
 from manager.light_result_manager import LightResultManager
 from spectrum.psm_info import PSMInfo
@@ -151,36 +153,91 @@ class PairFlow:
             ConfigKeys.INPUT, ConfigKeys.RAW_NUM, fallback=1)
 
         # 进行多进程
-        with ThreadPoolExecutor(max_workers=25) as executor:
+        with ProcessPoolExecutor(
+                max_workers=min(raw_file_nums, 25)) as executor:
+
             futures = []
 
+            # 记录所有 shared 文件对应信息，就是 name 对应的 shared_path
+            shared_files = []
             for i in range(raw_file_nums):
                 tot_raw_path_key = f"{ConfigKeys.RAW_PATH}_{i + 1}"
 
                 # 读取配置文件中的 RAW PATH
                 tot_raw_path = self._config[ConfigKeys.INPUT][tot_raw_path_key]
 
+                # 分发任务，去分配不同的进程进行读取 mz 数据
                 futures.append(executor.submit(
-                    self.pharse_data, tot_raw_path))
+                    data_to_npz,
+                    self._raw_file_manager, tot_raw_path, self._workpath))
 
             for future in as_completed(futures):
-                tot_raw_file_name, tot_dia_data = future.result()
-                self._nametoDATA[tot_raw_file_name] = tot_dia_data
+                tot_raw_file_name, shared_path = future.result()
+                shared_files.append((tot_raw_file_name, shared_path))
+
+            name_to_shared = {name: path for name, path in shared_files}
 
         # NOTE: 处理信息，让 psm 信息两两分组
         psm_groups = defaultdict(list)
 
+        # 对每一个 psm ，都映射他们的 key 到一个相同的 groups
         for psm in self._light_result.psm_info:
             key = PSMInfo.get_key(psm)
             psm_groups[key].append(psm)
 
+        tasks = []
+
+        # 不同的类型
+        if self._config.getint(
+                ConfigKeys.GENERAL,
+                ConfigKeys.FEATURE_TYPE, fallback=0) == 0:
+
+            for group in psm_groups:
+                for a in group:
+                    tasks.append(
+                        (a.to_dict(),
+                         name_to_shared[a._raw_title]))
+
+        else:
+            # 两两之间进行处理任务
+            for group in psm_groups:
+                for a, b in combinations(group, 2):
+                    # 添加正样本
+                    tasks.append(
+                        (a.to_dict(), b.to_dict(),
+                         name_to_shared[a._raw_title],
+                         name_to_shared[b._raw_title],
+                         1))
+
+                    # 添加负样本
+                    tasks.append(
+                        (a.to_dict(), b.to_dict(),
+                         name_to_shared[a._raw_title],
+                         name_to_shared[b._raw_title],
+                         0))
+
+        # 进行计算
         ans = []
-        with ThreadPoolExecutor(max_workers=25) as executor:
-            multi_sample_futures = [
-                executor.submit(self._process_group, group)
-                for group in psm_groups.values()
-                if len(group) >= 2  # 跳过不足2个的组
-            ]
+        with ProcessPoolExecutor(max_workers=25) as executor:
+
+            if self._config.getint(
+                    ConfigKeys.GENERAL,
+                    ConfigKeys.FEATURE_TYPE, fallback=0) == 0:
+                multi_sample_futures = [
+                    executor.submit(
+                        process_psm_single,
+                        psm1_dict, shared1, self._config
+                    )
+                    for (psm1_dict, shared1, label) in tasks
+                ]
+            else:
+                multi_sample_futures = [
+                    executor.submit(
+                        process_psm_pair_shared,
+                        psm1_dict, psm2_dict, shared1, shared2, self._config, label
+                    )
+                    for (psm1_dict, psm2_dict, shared1, shared2, label) in tasks
+                ]
 
             with Progress() as progress:
                 rich_task_progress = progress.add_task(
@@ -190,8 +247,8 @@ class PairFlow:
                 for future in as_completed(multi_sample_futures):
                     progress.update(rich_task_progress, advance=1)
                     try:
-                        group_results = future.result()
-                        ans.extend(group_results)  # 主线程合并，线程安全 ✅
+                        tot_results = future.result()
+                        ans.append(tot_results)  # 主线程合并，线程安全 ✅
                     except Exception as e:
                         # 建议记录日志，不要静默失败
                         logging.info(f"Error in group processing: {e}")

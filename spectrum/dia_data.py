@@ -11,6 +11,44 @@ from spectrum.spectrum_utils import match_peak_ppm
 DEFAULT_VALUE_NO_MOBILITY = 1e-6
 
 
+def _load_attrs(obj, data):
+    """辅助函数：从 npz 数据填充属性"""
+    # 标量
+    obj.has_mobility = bool(data['has_mobility'])
+    obj.has_ms1 = bool(data['has_ms1'])
+    obj._precursor_max_mz_value = float(
+        data['_precursor_max_mz_value']) if '_precursor_max_mz_value' in data else None
+    obj._precursor_min_mz_value = float(
+        data['_precursor_min_mz_value']) if '_precursor_min_mz_value' in data else None
+    obj._max_mz_value = float(
+        data['_max_mz_value']) if '_max_mz_value' in data else None
+    obj._min_mz_value = float(
+        data['_min_mz_value']) if '_min_mz_value' in data else None
+    obj._zeroth_frame = int(data['_zeroth_frame'])
+    obj._scan_max_index = int(data['_scan_max_index'])
+    obj.frame_max_index = int(
+        data['frame_max_index']) if 'frame_max_index' in data and data['frame_max_index'] is not None else None
+
+    # 数组（自动是 mmap 视图）
+    obj.ms1_indexs = data['ms1_indexs']
+    obj.ms1_indexs_rt = data['ms1_indexs_rt']
+    obj.precursor_scan_ids = data['precursor_scan_ids']
+    obj._mz_values = data['_mz_values']
+    obj.rt_values = data['rt_values']
+    obj._intensity_values = data['_intensity_values']
+    obj.mobility_values = data['mobility_values']
+
+    # 可选数组
+    obj._cycle_left_precursor = data['_cycle_left_precursor'] if '_cycle_left_precursor' in data else None
+    obj._quad_max_mz_value = data['_quad_max_mz_value'] if '_quad_max_mz_value' in data else None
+    obj._quad_min_mz_value = data['_quad_min_mz_value'] if '_quad_min_mz_value' in data else None
+    obj._scan_id_to_index = data['_scan_id_to_index'] if '_scan_id_to_index' in data else None
+    obj._peak_start_idx_list = data['_peak_start_idx_list'] if '_peak_start_idx_list' in data else None
+    obj._peak_stop_idx_list = data['_peak_stop_idx_list'] if '_peak_stop_idx_list' in data else None
+    obj._precursor_lower_mz = data['_precursor_lower_mz'] if '_precursor_lower_mz' in data else None
+    obj._precursor_upper_mz = data['_precursor_upper_mz'] if '_precursor_upper_mz' in data else None
+
+
 class DIAData:
     def __init__(self):
         # 初始化这个 dia 数据的所有特征
@@ -74,6 +112,61 @@ class DIAData:
         self._scan_max_index: int = 1
         self.frame_max_index: int | None = None
 
+    # 在 DIAData 类中添加
+    def save_to_file(self, filepath: str):
+        """将所有 NumPy 数组和标量保存到 .npz 文件"""
+
+        data = {
+            # 标量属性
+            'has_mobility': self.has_mobility,
+            'has_ms1': self.has_ms1,
+            '_precursor_max_mz_value': self._precursor_max_mz_value,
+            '_precursor_min_mz_value': self._precursor_min_mz_value,
+            '_max_mz_value': self._max_mz_value,
+            '_min_mz_value': self._min_mz_value,
+            '_zeroth_frame': self._zeroth_frame,
+            '_scan_max_index': self._scan_max_index,
+            'frame_max_index': self.frame_max_index,
+
+            # 数组属性（只保存非 None 的）
+            'ms1_indexs': self.ms1_indexs,
+            'ms1_indexs_rt': self.ms1_indexs_rt,
+            'precursor_scan_ids': self.precursor_scan_ids,
+            '_mz_values': self._mz_values,
+            'rt_values': self.rt_values,
+            '_intensity_values': self._intensity_values,
+            'mobility_values': self.mobility_values,
+            '_cycle_left_precursor': self._cycle_left_precursor,
+            '_quad_max_mz_value': self._quad_max_mz_value,
+            '_quad_min_mz_value': self._quad_min_mz_value,
+            '_scan_id_to_index': self._scan_id_to_index,
+            '_peak_start_idx_list': self._peak_start_idx_list,
+            '_peak_stop_idx_list': self._peak_stop_idx_list,
+            '_precursor_lower_mz': self._precursor_lower_mz,
+            '_precursor_upper_mz': self._precursor_upper_mz,
+        }
+
+        # 过滤掉 None 值（np.savez 不支持 None）
+        data = {k: v for k, v in data.items() if v is not None}
+        np.savez_compressed(filepath, **data)
+        logging.info(f"Saved DIAData to {filepath}")
+
+    @classmethod
+    def load_from_file(cls, filepath: str, use_mmap: bool = True):
+        """从 .npz 文件加载 DIAData，支持内存映射（只读）"""
+        obj = cls()
+
+        if use_mmap:
+            # 使用 mmap_mode='r' 实现零拷贝共享
+            with np.load(filepath, mmap_mode='r') as data:
+                _load_attrs(obj, data)
+        else:
+            # 普通加载（用于主进程预处理）
+            data = np.load(filepath)
+            _load_attrs(obj, data)
+
+        return obj
+
     def _get_retention_time(self, spectrum) -> float:
         """从谱图中提取保留时间（转换为秒）"""
 
@@ -89,6 +182,9 @@ class DIAData:
         从谱图 ID 字符串中提取 scan number（整数）。
         例如："controllerType=0 controllerNumber=1 scan=1234" -> 1234
         """
+        if scan_id_str is None:
+            return -1
+
         match = re.search(r'scan=(\d+)', scan_id_str)
         if match:
             return int(match.group(1))

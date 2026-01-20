@@ -26,3 +26,4 @@ class ConfigKeys(metaclass=ConstantsClass):
     MASS_TOL_PPM = "mass_tol_ppm"
     XIC_CYCLE_WINDOW = "xic_cycle_window"
     RESULT_FILE = "result_file"
+    FEATURE_TYPE = "feature_type"
