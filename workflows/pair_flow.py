@@ -14,11 +14,14 @@ import workflows.flow_utils as flow_utils
 import manager.data_manager as data_manager
 
 from workflows.flow_utils import data_to_npz, process_psm_pair_shared, process_psm_single
+from workflows.flow_utils import process_batch_single, process_batch_pair
 from workflows.single_work import multi_batch_work
 from manager.light_result_manager import LightResultManager
 from spectrum.psm_info import PSMInfo
 
 from constant.keys import ConfigKeys
+
+BATCH_SIZE = 5000
 
 
 class PairFlow:
@@ -217,28 +220,47 @@ class PairFlow:
                          name_to_shared[b._raw_title],
                          0))
 
+        feature_type = self._config.getint(
+            ConfigKeys.GENERAL, ConfigKeys.FEATURE_TYPE, fallback=0)
+
+        if feature_type == 0:
+            # 单文件：按 shared1 分组
+            task_groups = defaultdict(list)
+            for psm_dict, shared1 in tasks:
+                task_groups[shared1].append((psm_dict,))
+        else:
+            # 双文件：按 (shared1, shared2) 分组（注意顺序？若无序可用 frozenset）
+            task_groups = defaultdict(list)
+            for psm1_dict, psm2_dict, shared1, shared2, label in tasks:
+                key = (shared1, shared2)
+                task_groups[key].append((psm1_dict, psm2_dict, label))
+
         # 进行计算
         ans = []
         with ProcessPoolExecutor(max_workers=25) as executor:
 
-            if self._config.getint(
-                    ConfigKeys.GENERAL,
-                    ConfigKeys.FEATURE_TYPE, fallback=0) == 0:
-                multi_sample_futures = [
-                    executor.submit(
-                        process_psm_single,
-                        psm1_dict, shared1, self._config
-                    )
-                    for (psm1_dict, shared1) in tasks
-                ]
+            multi_sample_futures = []
+
+            if feature_type == 0:
+                for shared_path, batch_tasks in task_groups.items():
+                    # 切分成每批最多 BATCH_SIZE 个
+                    for i in range(0, len(batch_tasks), BATCH_SIZE):
+                        chunk = batch_tasks[i:i + BATCH_SIZE]
+                        multi_sample_futures.append(
+                            executor.submit(
+                                process_batch_single,
+                                shared_path, chunk, self._config)
+                        )
             else:
-                multi_sample_futures = [
-                    executor.submit(
-                        process_psm_pair_shared,
-                        psm1_dict, psm2_dict, shared1, shared2, self._config, label
-                    )
-                    for (psm1_dict, psm2_dict, shared1, shared2, label) in tasks
-                ]
+                for (shared1, shared2), batch_tasks in task_groups.items():
+                    for i in range(0, len(batch_tasks), BATCH_SIZE):
+                        chunk = batch_tasks[i:i + BATCH_SIZE]
+                        futures.append(
+                            executor.submit(
+                                process_batch_pair,
+                                shared1, shared2,
+                                chunk, self._config)
+                        )
 
             with Progress() as progress:
                 rich_task_progress = progress.add_task(
@@ -249,7 +271,7 @@ class PairFlow:
                     progress.update(rich_task_progress, advance=1)
                     try:
                         tot_results = future.result()
-                        ans.append(tot_results)  # 主线程合并，线程安全 ✅
+                        ans.extend(tot_results)  # 主线程合并，线程安全 ✅
                     except Exception as e:
                         # 建议记录日志，不要静默失败
                         logging.info(f"Error in group processing: {e}")
