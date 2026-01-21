@@ -197,6 +197,7 @@ def single_pair_work(
 
     heavy_in_raw = dia_data.check_in_raw(heavy_precursor_mz)
 
+    ion_data = []  # 存储每个离子的完整数据
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
 
@@ -243,6 +244,17 @@ def single_pair_work(
         pearsons_map[ions_type].append(pearson_corr)
         pearsons_map["all"].append(pearson_corr)
 
+        ion_data.append({
+            'ion_type': f"{ions_type}-{ions_num}",
+            'ion_num': ions_num,
+            'light_mass': light_mass,
+            'heavy_mass': heavy_mass,
+            'light_rts': light_ions_xic['rt'],
+            'light_intensities': light_ions_xic['intensity'],
+            'heavy_rts': heavy_ions_xic['rt'],
+            'heavy_intensities': heavy_ions_xic['intensity'],
+        })
+
         # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
 
         # plot_light_heavy_xic(light_ions_xic, heavy_ions_xic)
@@ -258,6 +270,7 @@ def single_pair_work(
         #          label=f"light_{ions_type} {ions_num}",
         #          linewidth=2, markersize=8)
 
+    # plot_light_heavy_contract(ion_data)
     features["valid_fragment_ions_num"] = len(pearsons_map["all"])
 
     # 分别提取出b离子，y离子，全部的三种特征
@@ -281,6 +294,120 @@ def single_pair_work(
         features["heavy_in_raw"] = 0
 
     return features
+
+
+def plot_light_heavy_contract(ion_data):
+    fig = plt.figure(figsize=(12, 9))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # 为不同的离子类型分配颜色
+    ion_types = list(set([data['ion_type'] for data in ion_data]))
+    colors = ['blue', 'green', 'red', 'purple', 'orange', 'cyan', 'magenta']
+    color_map = {ion_type: colors[i % len(colors)]
+                 for i, ion_type in enumerate(ion_types)}
+
+    # 绘制每个离子的XIC线
+    for data in ion_data:
+        ion_type = data['ion_type']
+        color = color_map[ion_type]
+
+        # 绘制轻标离子的XIC线
+        if len(data['light_rts']) > 0:
+            # 对RT进行排序，确保线是按顺序连接的
+            sorted_indices = np.argsort(data['light_rts'])
+            sorted_light_rts = data['light_rts'][sorted_indices]
+            sorted_light_intensities = data['light_intensities'][sorted_indices]
+
+            # 创建轻标点的3D坐标
+            light_points = np.column_stack([
+                sorted_light_rts,
+                np.full_like(sorted_light_rts, data['light_mass']),
+                sorted_light_intensities
+            ])
+
+            # 绘制轻标XIC线
+            ax.plot(
+                light_points[:, 0],
+                light_points[:, 1],
+                light_points[:, 2],
+                color=color,
+                linewidth=2,
+                alpha=0.7,
+                label=f'{ion_type} Light'
+            )
+
+            # 在XIC线的峰值点标注离子类型
+            max_intensity_idx = np.argmax(sorted_light_intensities)
+            ax.text(
+                light_points[max_intensity_idx, 0],
+                light_points[max_intensity_idx, 1],
+                light_points[max_intensity_idx, 2],
+                f'{ion_type}-L',
+                fontsize=9,
+                color=color,
+                fontweight='bold'
+            )
+
+        # 绘制重标离子的XIC线（使用虚线）
+        if len(data['heavy_rts']) > 0:
+            # 对RT进行排序，确保线是按顺序连接的
+            sorted_indices = np.argsort(data['heavy_rts'])
+            sorted_heavy_rts = data['heavy_rts'][sorted_indices]
+            sorted_heavy_intensities = data['heavy_intensities'][sorted_indices]
+
+            # 创建重标点的3D坐标
+            heavy_points = np.column_stack([
+                sorted_heavy_rts,
+                np.full_like(sorted_heavy_rts, data['heavy_mass']),
+                sorted_heavy_intensities
+            ])
+
+            # 绘制重标XIC线（使用虚线）
+            ax.plot(
+                heavy_points[:, 0],
+                heavy_points[:, 1],
+                heavy_points[:, 2],
+                color=color,
+                linestyle='--',
+                linewidth=2,
+                alpha=0.7,
+                label=f'{ion_type} Heavy'
+            )
+
+            # 在XIC线的峰值点标注离子类型
+            max_intensity_idx = np.argmax(sorted_heavy_intensities)
+            ax.text(
+                heavy_points[max_intensity_idx, 0],
+                heavy_points[max_intensity_idx, 1],
+                heavy_points[max_intensity_idx, 2],
+                f'{ion_type}-H',
+                fontsize=9,
+                color=color,
+                fontweight='bold',
+                style='italic'
+            )
+
+    # 设置标签
+    ax.set_xlabel('Retention Time (RT)', fontsize=12, labelpad=10)
+    ax.set_ylabel('m/z', fontsize=12, labelpad=10)
+    ax.set_zlabel('Intensity', fontsize=12, labelpad=10)
+    ax.set_title(
+        '3D Fragment Ions XIC: Light (solid) vs Heavy (dashed)',
+        fontsize=14,
+        pad=20
+    )
+
+    # 添加图例，但避免重复
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    ax.legend(by_label.values(), by_label.keys(),
+              loc='upper left', bbox_to_anchor=(0, 0.9))
+
+    # 调整视角
+    ax.view_init(elev=20, azim=45)
+
+    plt.tight_layout()
+    plt.show()
 
 
 def extract_ion_pearson_features(ions_pearsons: []) -> dict:

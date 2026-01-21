@@ -389,8 +389,17 @@ class DIAData:
 
         """ mz 范围信息 """
         # 计算 m/z 范围
-        self._max_mz_value = np.float32(np.max(self._precursor_upper_mz))
-        self._min_mz_value = np.float32(np.min(self._precursor_lower_mz))
+        if np.all(np.isnan(self._precursor_upper_mz)):
+            self._max_mz_value = np.float32(np.nan)
+        else:
+            self._max_mz_value = np.float32(
+                np.nanmax(self._precursor_upper_mz))
+
+        if np.all(np.isnan(self._precursor_lower_mz)):
+            self._min_mz_value = np.float32(np.nan)
+        else:
+            self._min_mz_value = np.float32(
+                np.nanmin(self._precursor_lower_mz))
 
         self.ms1_indexs = np.where(
             self.precursor_scan_ids == -1)[0].astype(np.int32)
@@ -416,6 +425,7 @@ class DIAData:
                 and precursor_mz >= self._min_mz_value - 0.1):
             return True
 
+        logging.warn(f" {self._max_mz_value} {self._min_mz_value}")
         logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
         logging.warn(f"precursor_mz: {precursor_mz}  left: {
             self._cycle_left_precursor}")
