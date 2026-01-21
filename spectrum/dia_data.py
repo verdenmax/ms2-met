@@ -425,9 +425,8 @@ class DIAData:
                 and precursor_mz >= self._min_mz_value - 0.1):
             return True
 
-        logging.warn(f" {self._max_mz_value} {self._min_mz_value}")
         logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
-        logging.warn(f"precursor_mz: {precursor_mz}  left: {
+        logging.warn(f"{self._max_mz_value} {self._min_mz_value} precursor_mz: {precursor_mz}  left: {
             self._cycle_left_precursor}")
         return False
 
@@ -518,12 +517,12 @@ class DIAData:
         # Step 1: 找到 _ms2_rt_values 中最接近 rt 的位置
         pos = np.searchsorted(self.ms2_indexs_rt, rt)
 
-        # 候选中心点：检查 pos-1 和 pos（二分查找的两个邻点）
+        # 候选中心点
         candidates = []
-        for i in range(1, 5):
+        for i in range(1, 6):
             if pos - i >= 0:
                 candidates.append(pos - i)
-        for i in range(0, 5):
+        for i in range(0, 6):
             if pos + i < len(self.ms2_indexs_rt):
                 candidates.append(pos + i)
 
@@ -531,8 +530,8 @@ class DIAData:
         min_diff = float('inf')
         for i in candidates:
             global_idx = self.ms2_indexs[i]
-            lower = self._precursor_lower_mz[global_idx]
-            upper = self._precursor_upper_mz[global_idx]
+            lower = self._precursor_lower_mz[global_idx] - 0.1
+            upper = self._precursor_upper_mz[global_idx] + 0.1
 
             if np.isnan(lower) or np.isnan(upper):
                 continue
@@ -548,6 +547,13 @@ class DIAData:
             logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
             logging.warn(f"precursor_mz: {precursor_mz}  left: {
                          self._cycle_left_precursor}")
+
+            for i in candidates:
+                gidx = self.ms2_indexs[i]
+                lower = self._precursor_lower_mz[gidx]
+                upper = self._precursor_upper_mz[gidx]
+                logging.warn(f"precursor_mz: {precursor_mz} candidate idx={i}, global={gidx}, rt={
+                             self.ms2_indexs_rt[i]:.3f}, window=[{lower:.3f}, {upper:.3f})")
             return np.array([], dtype=dtype), 0.0
 
         # Step 2: 向左收集 xic_cycle_window 个有效谱图
