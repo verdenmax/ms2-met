@@ -18,7 +18,9 @@ class LGBModel(BaseModel):
 
         # 验证集
         if X_val is not None and y_val is not None:
-            val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+            val_data = lgb.Dataset(
+                X_val, label=y_val,
+                reference=train_data)
             valid_sets = [val_data]
             valid_names = ['valid']
 

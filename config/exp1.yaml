@@ -1,9 +1,11 @@
 data:
   train_files:
-    - data/hela_2da_comm_features_all.csv
+    - data/hela_5da_mix_0_feature.csv
+    # - data/hela_2da_comm_features_all.csv
   test_files:
-    - data/hela_5da_comm_features_all.csv
     - data/mix_dinn_features_new.csv
+    # - data/hela_5da_comm_features_all.csv
+    # - data/mix_dinn_features_new.csv
   feature_cols:
     - precursor_mz
     - sequence_len
@@ -35,6 +37,7 @@ model:
     learning_rate: 0.05
     feature_fraction: 0.9
     bagging_fraction: 0.8
+    is_unbalance: True
     verbose: -1
 # NOTE: xgboost 参数
 # model:
