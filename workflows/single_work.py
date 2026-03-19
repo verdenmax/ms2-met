@@ -8,6 +8,7 @@ from numpy import interp
 
 from spectrum.psm_info import PSMInfo
 from spectrum.psm_info import HeavyType
+from spectrum.psm_info import get_SILAC_increase_mass
 from spectrum.dia_data import DIAData
 
 from constant.keys import ConfigKeys
@@ -47,9 +48,19 @@ def multi_batch_work(
     features = {}
     if len(light_xic) == 0 or len(heavy_xic) == 0:
         features["precursor_pearson"] = 0
+        features["precursor_apex_delta"] = 0.0
+        features["precursor_mz_avg_err"] = 0.0
+        features["precursor_light_max_int"] = 0.0
+        features["precursor_heavy_max_int"] = 0.0
+        features["precursor_intensity_ratio"] = 0.0
     else:
-        person_corr = calc_xic_score(light_xic, heavy_xic)
-        features["precursor_pearson"] = person_corr
+        precursor_score = calc_xic_score(light_xic, heavy_xic)
+        features["precursor_pearson"] = precursor_score["pearson"]
+        features["precursor_apex_delta"] = precursor_score["apex_delta"]
+        features["precursor_mz_avg_err"] = precursor_score["mz_avg_err"]
+        features["precursor_light_max_int"] = precursor_score["light_max_int"]
+        features["precursor_heavy_max_int"] = precursor_score["heavy_max_int"]
+        features["precursor_intensity_ratio"] = precursor_score["intensity_ratio"]
 
     pearsons_map = {
         "b": [],
@@ -62,6 +73,9 @@ def multi_batch_work(
         "y": 0,
         "all": 1,
     }
+
+    fragment_apex_deltas = []
+    fragment_mz_errs = []
 
     _, fragment_ions = psm1.get_heavy_info(HeavyType.SILAC)
     # 枚举所有的信息
@@ -100,10 +114,12 @@ def multi_batch_work(
             intensitys_map["all"] = light_all_intensity + \
                 heavy_all_intensity
 
-        pearson_corr = calc_xic_score(light_ions_xic, heavy_ions_xic)
+        ion_score = calc_xic_score(light_ions_xic, heavy_ions_xic)
 
-        pearsons_map[ions_type].append(pearson_corr)
-        pearsons_map["all"].append(pearson_corr)
+        pearsons_map[ions_type].append(ion_score["pearson"])
+        pearsons_map["all"].append(ion_score["pearson"])
+        fragment_apex_deltas.append(ion_score["apex_delta"])
+        fragment_mz_errs.append(ion_score["mz_avg_err"])
 
         # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
 
@@ -124,18 +140,28 @@ def multi_batch_work(
 
     # 分别提取出b离子，y离子，全部的三种特征
     for key, value_list in pearsons_map.items():
-        # logging.info(f"{key} {value_list}")
         stats = extract_ion_pearson_features(value_list)
-        # logging.info(stats)
-
         features[f"{key}_count"] = stats["count"]
         features[f"{key}_p25"] = stats["p25"]
-        features[f"{key}_p50"] = stats["p50"]  # 关键特征！
+        features[f"{key}_p50"] = stats["p50"]
         features[f"{key}_p75"] = stats["p75"]
         features[f"{key}_mean"] = stats["mean"]
 
     features["matched_intensity_percent"] = (
         (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
+
+    # 碎片级 apex_delta / mz_err 汇总
+    features.update(extract_ion_numeric_features(
+        fragment_apex_deltas, "all_apex_delta"))
+    features.update(extract_ion_numeric_features(
+        fragment_mz_errs, "all_mz_err"))
+
+    # 序列级特征
+    features["kr_count"] = psm1._sequence.count('K') + \
+        psm1._sequence.count('R')
+    features["modification_count"] = len(psm1._modify)
+    features["total_silac_shift"] = get_SILAC_increase_mass(psm1._sequence)
+
     return features
 
 
@@ -176,9 +202,19 @@ def single_pair_work(
     features = {}
     if len(light_xic) == 0 or len(heavy_xic) == 0:
         features["precursor_pearson"] = 0
+        features["precursor_apex_delta"] = 0.0
+        features["precursor_mz_avg_err"] = 0.0
+        features["precursor_light_max_int"] = 0.0
+        features["precursor_heavy_max_int"] = 0.0
+        features["precursor_intensity_ratio"] = 0.0
     else:
-        person_corr = calc_xic_score(light_xic, heavy_xic)
-        features["precursor_pearson"] = person_corr
+        precursor_score = calc_xic_score(light_xic, heavy_xic)
+        features["precursor_pearson"] = precursor_score["pearson"]
+        features["precursor_apex_delta"] = precursor_score["apex_delta"]
+        features["precursor_mz_avg_err"] = precursor_score["mz_avg_err"]
+        features["precursor_light_max_int"] = precursor_score["light_max_int"]
+        features["precursor_heavy_max_int"] = precursor_score["heavy_max_int"]
+        features["precursor_intensity_ratio"] = precursor_score["intensity_ratio"]
 
     is_same_ms2 = dia_data.check_in_same_ms2(
         psm._precursor_mz, heavy_precursor_mz)
@@ -197,6 +233,9 @@ def single_pair_work(
 
     heavy_in_raw = dia_data.check_in_raw(heavy_precursor_mz)
 
+    fragment_apex_deltas = []
+    fragment_mz_errs = []
+
     ion_data = []  # 存储每个离子的完整数据
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
@@ -204,10 +243,7 @@ def single_pair_work(
         if not heavy_in_raw:
             continue
 
-        # NOTE: 这里应该分情况
-        # 如果两个母离子在不同的区间，则均可
         # 如果在相同的区间，并且质量相同，说明重标不影响该碎片离子
-        # 说明这个碎片离子不受到重标的影响
         if np.abs(heavy_mass - light_mass) < 0.01 and is_same_ms2:
             continue
 
@@ -239,10 +275,12 @@ def single_pair_work(
             intensitys_map["all"] = light_all_intensity + \
                 heavy_all_intensity
 
-        pearson_corr = calc_xic_score(light_ions_xic, heavy_ions_xic)
+        ion_score = calc_xic_score(light_ions_xic, heavy_ions_xic)
 
-        pearsons_map[ions_type].append(pearson_corr)
-        pearsons_map["all"].append(pearson_corr)
+        pearsons_map[ions_type].append(ion_score["pearson"])
+        pearsons_map["all"].append(ion_score["pearson"])
+        fragment_apex_deltas.append(ion_score["apex_delta"])
+        fragment_mz_errs.append(ion_score["mz_avg_err"])
 
         ion_data.append({
             'ion_type': f"{ions_type}-{ions_num}",
@@ -255,38 +293,32 @@ def single_pair_work(
             'heavy_intensities': heavy_ions_xic['intensity'],
         })
 
-        # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
-
-        # plot_light_heavy_xic(light_ions_xic, heavy_ions_xic)
-
-        # rt_values = light_ions_xic["rt"]
-        # light_intensitys = light_ions_xic["intensity"]
-        # heavy_intensitys = heavy_ions_xic["intensity"]
-        #
-        # plt.plot(rt_values, light_intensitys, 'o-',
-        #          label=f"light_{ions_type} {ions_num}",
-        #          linewidth=2, markersize=8)
-        # plt.plot(rt_values, heavy_intensitys, 's--',
-        #          label=f"light_{ions_type} {ions_num}",
-        #          linewidth=2, markersize=8)
-
     # plot_light_heavy_contract(ion_data)
     features["valid_fragment_ions_num"] = len(pearsons_map["all"])
 
     # 分别提取出b离子，y离子，全部的三种特征
     for key, value_list in pearsons_map.items():
-        # logging.info(f"{key} {value_list}")
         stats = extract_ion_pearson_features(value_list)
-        # logging.info(stats)
-
         features[f"{key}_count"] = stats["count"]
         features[f"{key}_p25"] = stats["p25"]
-        features[f"{key}_p50"] = stats["p50"]  # 关键特征！
+        features[f"{key}_p50"] = stats["p50"]
         features[f"{key}_p75"] = stats["p75"]
         features[f"{key}_mean"] = stats["mean"]
 
     features["matched_intensity_percent"] = (
         (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
+
+    # 碎片级 apex_delta / mz_err 汇总
+    features.update(extract_ion_numeric_features(
+        fragment_apex_deltas, "all_apex_delta"))
+    features.update(extract_ion_numeric_features(
+        fragment_mz_errs, "all_mz_err"))
+
+    # 序列级特征
+    features["kr_count"] = psm._sequence.count('K') + \
+        psm._sequence.count('R')
+    features["modification_count"] = len(psm._modify)
+    features["total_silac_shift"] = get_SILAC_increase_mass(psm._sequence)
 
     if heavy_in_raw:
         features["heavy_in_raw"] = 1
@@ -441,31 +473,73 @@ def extract_ion_pearson_features(ions_pearsons: []) -> dict:
     }
 
 
+def extract_ion_numeric_features(values: list, prefix: str) -> dict:
+    """
+    对碎片级数值列表（如 apex_delta、mz_err）计算均值和中位数。
+    清除 NaN/Inf 值后统计。
+    """
+    clean_vals = [v for v in values if not np.isnan(v) and np.isfinite(v)]
+    if len(clean_vals) == 0:
+        return {
+            f"{prefix}_mean": 0.0,
+            f"{prefix}_p50": 0.0,
+        }
+    return {
+        f"{prefix}_mean": float(np.mean(clean_vals)),
+        f"{prefix}_p50": float(np.median(clean_vals)),
+    }
+
+
+def _default_xic_score() -> dict:
+    """calc_xic_score 的全零默认返回值"""
+    return {
+        "pearson": np.float32(0.0),
+        "mz_avg_err": 0.0,
+        "apex_delta": 0.0,
+        "light_max_int": 0.0,
+        "heavy_max_int": 0.0,
+        "intensity_ratio": 0.0,
+    }
+
+
 def calc_xic_score(
     light_xic: np.array, heavy_xic: np.array,
     intensity_threshold: float = 1e-10
-) -> np.float32:
-    """ 根据mono 的XIC 计算出相似度打分 """
+) -> dict:
+    """ 根据轻重标 XIC 计算综合特征，返回包含 pearson/mz_avg_err/apex_delta/强度信息的字典 """
 
     # 计算重标平均误差
     ppm_errors = heavy_xic["ppm_error"]
     if np.all(np.isnan(ppm_errors)):
         mz_avg_err = 0.0
     else:
-        mz_avg_err = np.nanmean(ppm_errors)
+        mz_avg_err = float(np.nanmean(ppm_errors))
 
     # 计算峰顶的时间差
     rt_apex_light = light_xic["rt"][np.argmax(light_xic["intensity"])]
     rt_apex_heavy = heavy_xic["rt"][np.argmax(heavy_xic["intensity"])]
-    apex_delta = abs(rt_apex_light - rt_apex_heavy)
+    apex_delta = float(abs(rt_apex_light - rt_apex_heavy))
 
-    # 计算峰相关形
+    # 计算强度信息
+    light_max_int = float(np.max(light_xic["intensity"]))
+    heavy_max_int = float(np.max(heavy_xic["intensity"]))
+    light_total = float(np.sum(light_xic["intensity"]))
+    heavy_total = float(np.sum(heavy_xic["intensity"]))
+    intensity_ratio = light_total / heavy_total if heavy_total > 0 else 0.0
+
+    # 计算峰相关性
     # 统一时间轴
     rt_start = max(light_xic["rt"].min(), heavy_xic["rt"].min())
     rt_end = min(light_xic["rt"].max(), heavy_xic["rt"].max())
 
     if rt_start >= rt_end:
-        return np.float32(0.0)
+        result = _default_xic_score()
+        result["mz_avg_err"] = mz_avg_err
+        result["apex_delta"] = apex_delta
+        result["light_max_int"] = light_max_int
+        result["heavy_max_int"] = heavy_max_int
+        result["intensity_ratio"] = intensity_ratio
+        return result
 
     common_rt = np.linspace(rt_start, rt_end, 100)
     inten1_interp = interp(common_rt, light_xic["rt"], light_xic["intensity"])
@@ -476,17 +550,11 @@ def calc_xic_score(
     heavy_near_zero = np.all(np.abs(inten2_interp) < intensity_threshold)
 
     if light_near_zero and heavy_near_zero:
-        # 两个强度都是0或接近0，返回默认值（根据你的需求，可能是0或1）
-        # 如果是空白区域，通常认为不相关，返回0
         corr = 0.0
     elif light_near_zero or heavy_near_zero:
-        # 只有一个接近0，另一个有信号，不相关
         corr = 0.0
     else:
-        # 正常计算相关系数，但需要处理可能的常数数组
-        # 先检查标准差是否为0
         if np.std(inten1_interp) < 1e-10 or np.std(inten2_interp) < 1e-10:
-            # 常数数组
             corr = 0.0
         else:
             try:
@@ -494,9 +562,14 @@ def calc_xic_score(
             except (ValueError, RuntimeWarning):
                 corr = 0.0
 
-    # logging.info(f"mz_avg_err : {mz_avg_err}, apex_delta:{
-    #              apex_delta}, corr:{corr}")
-    return np.float32(corr)
+    return {
+        "pearson": np.float32(corr),
+        "mz_avg_err": mz_avg_err,
+        "apex_delta": apex_delta,
+        "light_max_int": light_max_int,
+        "heavy_max_int": heavy_max_int,
+        "intensity_ratio": intensity_ratio,
+    }
 
 
 def plot_light_heavy_xic(light_xic, heavy_xic):
