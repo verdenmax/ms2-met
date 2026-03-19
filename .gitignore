@@ -9,5 +9,5 @@ __pycache__
 workspace
 
 # ai file
-./PLAN.md
-./PROJECT_INFO.md
+PLAN.md
+PROJECT_INFO.md
