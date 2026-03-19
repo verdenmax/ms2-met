@@ -7,3 +7,7 @@ __pycache__
 *.png
 *.log
 workspace
+
+# ai file
+./PLAN.md
+./PROJECT_INFO.md
