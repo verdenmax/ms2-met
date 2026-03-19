@@ -1,6 +1,6 @@
-
 import logging
 import numpy as np
+import random
 from enum import Enum
 from pyteomics import mass
 from typing import Tuple
@@ -211,3 +211,26 @@ def get_heavy_increase_mass(
         increase_mass += composition['N'] * 0.997036
 
     return increase_mass
+
+
+def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5):
+    """
+    anchor_len=1: 保留C端K/R（标准做法）
+    anchor_len=2: 保留C端"XK"或"XR"（保留y1+y2离子）
+    """
+    # 安全检查：anchor_len 不能超过肽段长度
+    anchor_len = min(anchor_len, len(peptide) - 1)  # 至少留1个字符用于shuffle
+
+    core = peptide[:-anchor_len]   # 可shuffle部分
+    anchor = peptide[-anchor_len:]  # C端锚定部分（通常是"K"或"R"）
+
+    # 部分shuffle核心区域
+    n_shuffle = max(1, int(len(core) * shuffle_ratio))
+    indices = random.sample(range(len(core)), n_shuffle)
+    chars = list(core)
+    shuffled_vals = [chars[i] for i in indices]
+    random.shuffle(shuffled_vals)
+    for idx, val in zip(indices, shuffled_vals):
+        chars[idx] = val
+
+    return ''.join(chars) + anchor

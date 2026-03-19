@@ -5,6 +5,7 @@ import logging
 
 from spectrum.dia_data import DIAData
 from spectrum.psm_info import PSMInfo
+from spectrum.psm_info import sequence_controlled_shuffle
 import manager.data_manager as data_manager
 from workflows.single_work import multi_batch_work, single_pair_work
 
@@ -130,6 +131,45 @@ def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
         psm2 = PSMInfo.from_dict(psm2_dict)
         if label == 0:
             psm2._rt += 10
+
+        # TODO: 计算出信息
+        tot_features = multi_batch_work(
+            psm1=psm1,
+            dia_data1=dia1,
+            psm2=psm2,
+            dia_data2=dia2,
+            config=config,
+        )
+
+        results.append({
+            "sequence": psm1._sequence,
+            "charge": psm1._charge,
+            "precursor_mz": psm1._precursor_mz,
+            "raw_title1": psm1._raw_title,
+            "raw_title2": psm2._raw_title,
+            "protein_names": psm1._protein_names,
+            "sequence_len": len(psm1._sequence),
+            "label": label,
+            ** tot_features
+        })
+    return results
+
+
+def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, config):
+    """ 使用shuffle 的模式处理所有负例 """
+    dia1 = DIAData.load_from_file(shared1, use_mmap=True)
+    dia2 = DIAData.load_from_file(shared2, use_mmap=True)
+    results = []
+    for psm1_dict, psm2_dict, label in batch_items:
+        psm1 = PSMInfo.from_dict(psm1_dict)
+        psm2 = PSMInfo.from_dict(psm2_dict)
+        if label == 0:
+            new_sequence = sequence_controlled_shuffle(
+                psm1._sequence,
+                anchor_len=2, shuffle_ratio=0.5
+            )
+            psm1._sequence = new_sequence
+            psm2._sequence = new_sequence
 
         # TODO: 计算出信息
         tot_features = multi_batch_work(

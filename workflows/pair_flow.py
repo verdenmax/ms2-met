@@ -1,7 +1,6 @@
 import configparser
 import logging
 import os
-import numpy as np
 import pandas as pd
 from collections import defaultdict
 from itertools import combinations
@@ -13,7 +12,8 @@ from rich.progress import Progress
 import workflows.flow_utils as flow_utils
 import manager.data_manager as data_manager
 
-from workflows.flow_utils import data_to_npz, process_psm_pair_shared, process_psm_single
+from workflows.flow_utils import data_to_npz
+from workflows.flow_utils import process_batch_pair_shuffle
 from workflows.flow_utils import process_batch_single, process_batch_pair
 from workflows.single_work import multi_batch_work
 from manager.light_result_manager import LightResultManager
@@ -191,10 +191,13 @@ class PairFlow:
 
         tasks = []
 
+        # 生成特征的模式,详细定义看 config 文件
+        feature_type = self._config.getint(
+            ConfigKeys.GENERAL, ConfigKeys.FEATURE_TYPE, fallback=0)
+
         # 不同的类型
-        if self._config.getint(
-                ConfigKeys.GENERAL,
-                ConfigKeys.FEATURE_TYPE, fallback=0) == 0:
+        if feature_type == 0:
+            # 真实的轻重标数据
 
             for group in psm_groups.values():
                 for a in group:
@@ -202,7 +205,9 @@ class PairFlow:
                         (a.to_dict(),
                          name_to_shared[a._raw_title]))
 
-        else:
+        elif feature_type == 1 or feature_type == 2:
+            # 重复样本之间直接进行构造数据，直接使用 RT 偏移来构造负例
+            # 或者使用shuffle 进行生成负例
             # 两两之间进行处理任务
             for group in psm_groups.values():
                 for a, b in combinations(group, 2):
@@ -220,15 +225,12 @@ class PairFlow:
                          name_to_shared[b._raw_title],
                          0))
 
-        feature_type = self._config.getint(
-            ConfigKeys.GENERAL, ConfigKeys.FEATURE_TYPE, fallback=0)
-
         if feature_type == 0:
             # 单文件：按 shared1 分组
             task_groups = defaultdict(list)
             for psm_dict, shared1 in tasks:
                 task_groups[shared1].append((psm_dict,))
-        else:
+        elif feature_type == 1 or feature_type == 2:
             # 双文件：按 (shared1, shared2) 分组（注意顺序？若无序可用 frozenset）
             task_groups = defaultdict(list)
             for psm1_dict, psm2_dict, shared1, shared2, label in tasks:
@@ -251,13 +253,23 @@ class PairFlow:
                                 process_batch_single,
                                 shared_path, chunk, self._config)
                         )
-            else:
+            elif feature_type == 1:
                 for (shared1, shared2), batch_tasks in task_groups.items():
                     for i in range(0, len(batch_tasks), BATCH_SIZE):
                         chunk = batch_tasks[i:i + BATCH_SIZE]
-                        futures.append(
+                        multi_sample_futures.append(
                             executor.submit(
                                 process_batch_pair,
+                                shared1, shared2,
+                                chunk, self._config)
+                        )
+            elif feature_type == 2:
+                for (shared1, shared2), batch_tasks in task_groups.items():
+                    for i in range(0, len(batch_tasks), BATCH_SIZE):
+                        chunk = batch_tasks[i:i + BATCH_SIZE]
+                        multi_sample_futures.append(
+                            executor.submit(
+                                process_batch_pair_shuffle,
                                 shared1, shared2,
                                 chunk, self._config)
                         )
