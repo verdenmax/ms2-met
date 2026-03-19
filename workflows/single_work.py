@@ -448,7 +448,11 @@ def calc_xic_score(
     """ 根据mono 的XIC 计算出相似度打分 """
 
     # 计算重标平均误差
-    mz_avg_err = np.average(heavy_xic["ppm_error"])
+    ppm_errors = heavy_xic["ppm_error"]
+    if np.all(np.isnan(ppm_errors)):
+        mz_avg_err = 0.0
+    else:
+        mz_avg_err = np.nanmean(ppm_errors)
 
     # 计算峰顶的时间差
     rt_apex_light = light_xic["rt"][np.argmax(light_xic["intensity"])]
@@ -457,10 +461,13 @@ def calc_xic_score(
 
     # 计算峰相关形
     # 统一时间轴
-    common_rt = np.linspace(
-        max(light_xic["rt"].min(), heavy_xic["rt"].min()),
-        min(light_xic["rt"].max(), heavy_xic["rt"].max()),
-        100)
+    rt_start = max(light_xic["rt"].min(), heavy_xic["rt"].min())
+    rt_end = min(light_xic["rt"].max(), heavy_xic["rt"].max())
+
+    if rt_start >= rt_end:
+        return np.float32(0.0)
+
+    common_rt = np.linspace(rt_start, rt_end, 100)
     inten1_interp = interp(common_rt, light_xic["rt"], light_xic["intensity"])
     inten2_interp = interp(common_rt, heavy_xic["rt"], heavy_xic["intensity"])
 

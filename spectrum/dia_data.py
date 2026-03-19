@@ -606,7 +606,7 @@ class DIAData:
 
             ans.append({
                 "rt": self.rt_values[global_idx],
-                "pmm_error": ppm_error,
+                "ppm_error": ppm_error,
                 "intensity": match_intensity
             })
 
@@ -655,12 +655,12 @@ class DIAData:
             # 当是 ms1 谱图的时候，取出这个precursor_mz 对应的信息
             (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
 
-            (pmm_error, match_intensity) = match_peak_ppm(
+            (ppm_error, match_intensity) = match_peak_ppm(
                 mz_arr, intensity_arr, precursor_mz, mass_tol_ppm)
 
             ans.append(
                 {"rt": self.rt_values[index],
-                 "pmm_error": pmm_error,
+                 "ppm_error": ppm_error,
                  "intensity": match_intensity})
 
         dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
