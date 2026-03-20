@@ -6,7 +6,7 @@ from collections import defaultdict
 from itertools import combinations
 
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, BrokenProcessPool, as_completed
 from rich.progress import Progress
 
 import workflows.flow_utils as flow_utils
@@ -239,7 +239,12 @@ class PairFlow:
 
         # 进行计算
         ans = []
-        with ProcessPoolExecutor(max_workers=25) as executor:
+        pool_workers = min(os.cpu_count() or 4, 25)
+        logging.info(f"启动进程池 workers={pool_workers}, batch_size={BATCH_SIZE}")
+
+        with ProcessPoolExecutor(
+                max_workers=pool_workers,
+                max_tasks_per_child=4) as executor:
 
             multi_sample_futures = []
 
@@ -283,10 +288,13 @@ class PairFlow:
                     progress.update(rich_task_progress, advance=1)
                     try:
                         tot_results = future.result()
-                        ans.extend(tot_results)  # 主线程合并，线程安全 ✅
+                        ans.extend(tot_results)
+                    except BrokenProcessPool:
+                        logging.error(
+                            "进程池崩溃（可能内存不足），尝试减少 workers 数量或数据量")
+                        break
                     except Exception as e:
-                        # 建议记录日志，不要静默失败
-                        logging.info(f"Error in group processing: {e}")
+                        logging.error(f"批次处理异常: {e}")
 
         # NOTE: 保存结果
         ans_df = pd.DataFrame(ans)
