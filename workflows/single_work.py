@@ -73,7 +73,10 @@ def multi_batch_work(
 
     # 同位素模式匹配 + 质量偏移验证
     isotope_spacing = 1.003355 / psm1._charge
-    if len(heavy_xic) > 0:
+    if len(heavy_xic) > 0 and np.max(heavy_xic["intensity"]) > 0:
+        apex_idx = np.argmax(heavy_xic["intensity"])
+        apex_rt = heavy_xic["rt"][apex_idx]
+
         heavy_m1_xic = dia_data2.xic_peaks_extreact(
             psm2._rt, xic_cycle_window,
             psm2._precursor_mz + isotope_spacing, mass_tol_ppm)
@@ -81,10 +84,13 @@ def multi_batch_work(
             psm2._rt, xic_cycle_window,
             psm2._precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
 
-        m0_int = float(np.max(heavy_xic["intensity"]))
-        m1_int = (float(np.max(heavy_m1_xic["intensity"]))
+        # 在 M0 apex RT 处统一取各同位素峰强度
+        m0_int = float(heavy_xic["intensity"][apex_idx])
+        m1_int = (float(interp(apex_rt, heavy_m1_xic["rt"],
+                                heavy_m1_xic["intensity"]))
                   if len(heavy_m1_xic) > 0 else 0.0)
-        m2_int = (float(np.max(heavy_m2_xic["intensity"]))
+        m2_int = (float(interp(apex_rt, heavy_m2_xic["rt"],
+                                heavy_m2_xic["intensity"]))
                   if len(heavy_m2_xic) > 0 else 0.0)
 
         obs = np.array([m0_int, m1_int, m2_int])
@@ -95,7 +101,6 @@ def multi_batch_work(
             float(np.dot(obs, theo) / (obs_n * theo_n))
             if obs_n > 0 and theo_n > 0 else 0.0)
 
-        apex_idx = np.argmax(heavy_xic["intensity"])
         features["mass_shift_error"] = float(
             heavy_xic["ppm_error"][apex_idx])
     else:
@@ -298,7 +303,10 @@ def single_pair_work(
 
     # 同位素模式匹配 + 质量偏移验证
     isotope_spacing = 1.003355 / psm._charge
-    if len(heavy_xic) > 0:
+    if len(heavy_xic) > 0 and np.max(heavy_xic["intensity"]) > 0:
+        apex_idx = np.argmax(heavy_xic["intensity"])
+        apex_rt = heavy_xic["rt"][apex_idx]
+
         heavy_m1_xic = dia_data.xic_peaks_extreact(
             psm._rt, xic_cycle_window,
             heavy_precursor_mz + isotope_spacing, mass_tol_ppm)
@@ -306,10 +314,13 @@ def single_pair_work(
             psm._rt, xic_cycle_window,
             heavy_precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
 
-        m0_int = float(np.max(heavy_xic["intensity"]))
-        m1_int = (float(np.max(heavy_m1_xic["intensity"]))
+        # 在 M0 apex RT 处统一取各同位素峰强度
+        m0_int = float(heavy_xic["intensity"][apex_idx])
+        m1_int = (float(interp(apex_rt, heavy_m1_xic["rt"],
+                                heavy_m1_xic["intensity"]))
                   if len(heavy_m1_xic) > 0 else 0.0)
-        m2_int = (float(np.max(heavy_m2_xic["intensity"]))
+        m2_int = (float(interp(apex_rt, heavy_m2_xic["rt"],
+                                heavy_m2_xic["intensity"]))
                   if len(heavy_m2_xic) > 0 else 0.0)
 
         obs = np.array([m0_int, m1_int, m2_int])
@@ -320,7 +331,6 @@ def single_pair_work(
             float(np.dot(obs, theo) / (obs_n * theo_n))
             if obs_n > 0 and theo_n > 0 else 0.0)
 
-        apex_idx = np.argmax(heavy_xic["intensity"])
         features["mass_shift_error"] = float(
             heavy_xic["ppm_error"][apex_idx])
     else:

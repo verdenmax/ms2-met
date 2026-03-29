@@ -448,8 +448,13 @@ class DIAData:
                 len(self.ms2_indexs) == 0):
             return {"width": 0.0, "centering": 0.5}
 
-        # 在 MS2 谱图中找到一个包含 precursor_mz 的窗口
-        for i in range(min(len(self.ms2_indexs), 50)):
+        # 搜索一个完整 DIA 循环的 MS2 谱图（循环长度 = 去重后的窗口数量）
+        cycle_len = (len(self._cycle_left_precursor)
+                     if self._cycle_left_precursor is not None
+                     else len(self.ms2_indexs))
+        search_range = min(len(self.ms2_indexs), max(cycle_len, 50))
+
+        for i in range(search_range):
             gidx = self.ms2_indexs[i]
             lower = self._precursor_lower_mz[gidx]
             upper = self._precursor_upper_mz[gidx]
