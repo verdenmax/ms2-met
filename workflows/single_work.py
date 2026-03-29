@@ -658,8 +658,8 @@ def _calc_fwhm(rt: np.ndarray, intensity: np.ndarray) -> float:
     """计算 XIC 的半高全宽 (FWHM)，返回 RT 单位的宽度"""
     if len(intensity) < 3:
         return 0.0
-    max_int = np.max(intensity)
-    if max_int <= 0:
+    max_int = float(np.nanmax(intensity))
+    if max_int <= 0 or np.isnan(max_int):
         return 0.0
     half_max = max_int * 0.5
     above = intensity >= half_max
@@ -673,25 +673,25 @@ def _calc_symmetry(intensity: np.ndarray) -> float:
     """计算峰对称性: |左半面积 - 右半面积| / 总面积，越接近 0 越对称"""
     if len(intensity) < 3:
         return 0.0
-    total = np.sum(intensity)
-    if total <= 0:
+    total = float(np.nansum(intensity))
+    if total <= 0 or np.isnan(total):
         return 0.0
-    apex_idx = np.argmax(intensity)
-    left_area = float(np.sum(intensity[:apex_idx + 1]))
-    right_area = float(np.sum(intensity[apex_idx + 1:]))
+    apex_idx = np.nanargmax(intensity)
+    left_area = float(np.nansum(intensity[:apex_idx + 1]))
+    right_area = float(np.nansum(intensity[apex_idx + 1:]))
     return abs(left_area - right_area) / total
 
 
 def _calc_snr(intensity: np.ndarray) -> float:
-    """计算信噪比: max / median，median 为 0 时用 max / 1e-10 截断"""
+    """计算信噪比: nanmax / nanmedian，处理 NaN 值"""
     if len(intensity) == 0:
         return 0.0
-    max_int = float(np.max(intensity))
-    if max_int <= 0:
+    max_int = float(np.nanmax(intensity))
+    if max_int <= 0 or np.isnan(max_int):
         return 0.0
-    med = float(np.median(intensity))
-    if med <= 0:
-        return max_int / 1e-10  # 极大值表示无噪声基线
+    med = float(np.nanmedian(intensity))
+    if med <= 0 or np.isnan(med):
+        return max_int / 1e-10
     return max_int / med
 
 
