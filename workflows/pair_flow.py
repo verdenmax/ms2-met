@@ -6,7 +6,8 @@ from collections import defaultdict
 from itertools import combinations
 
 
-from concurrent.futures import ProcessPoolExecutor, BrokenProcessPool, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from rich.progress import Progress
 
 import workflows.flow_utils as flow_utils
