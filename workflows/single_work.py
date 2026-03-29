@@ -9,6 +9,7 @@ from numpy import interp
 from spectrum.psm_info import PSMInfo
 from spectrum.psm_info import HeavyType
 from spectrum.psm_info import get_SILAC_increase_mass
+from spectrum.psm_info import get_theoretical_isotope_ratios
 from spectrum.dia_data import DIAData
 
 from constant.keys import ConfigKeys
@@ -53,6 +54,10 @@ def multi_batch_work(
         features["precursor_light_max_int"] = 0.0
         features["precursor_heavy_max_int"] = 0.0
         features["precursor_intensity_ratio"] = 0.0
+        features["precursor_cosine"] = 0.0
+        features["precursor_snr"] = 0.0
+        features["precursor_peak_width_ratio"] = 0.0
+        features["precursor_peak_symmetry"] = 0.0
     else:
         precursor_score = calc_xic_score(light_xic, heavy_xic)
         features["precursor_pearson"] = precursor_score["pearson"]
@@ -61,6 +66,41 @@ def multi_batch_work(
         features["precursor_light_max_int"] = precursor_score["light_max_int"]
         features["precursor_heavy_max_int"] = precursor_score["heavy_max_int"]
         features["precursor_intensity_ratio"] = precursor_score["intensity_ratio"]
+        features["precursor_cosine"] = precursor_score["cosine"]
+        features["precursor_snr"] = precursor_score["snr"]
+        features["precursor_peak_width_ratio"] = precursor_score["peak_width_ratio"]
+        features["precursor_peak_symmetry"] = precursor_score["peak_symmetry"]
+
+    # 同位素模式匹配 + 质量偏移验证
+    isotope_spacing = 1.003355 / psm1._charge
+    if len(heavy_xic) > 0:
+        heavy_m1_xic = dia_data2.xic_peaks_extreact(
+            psm2._rt, xic_cycle_window,
+            psm2._precursor_mz + isotope_spacing, mass_tol_ppm)
+        heavy_m2_xic = dia_data2.xic_peaks_extreact(
+            psm2._rt, xic_cycle_window,
+            psm2._precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
+
+        m0_int = float(np.max(heavy_xic["intensity"]))
+        m1_int = (float(np.max(heavy_m1_xic["intensity"]))
+                  if len(heavy_m1_xic) > 0 else 0.0)
+        m2_int = (float(np.max(heavy_m2_xic["intensity"]))
+                  if len(heavy_m2_xic) > 0 else 0.0)
+
+        obs = np.array([m0_int, m1_int, m2_int])
+        theo = np.array(get_theoretical_isotope_ratios(psm1._sequence))
+        obs_n = np.linalg.norm(obs)
+        theo_n = np.linalg.norm(theo)
+        features["isotope_correlation"] = (
+            float(np.dot(obs, theo) / (obs_n * theo_n))
+            if obs_n > 0 and theo_n > 0 else 0.0)
+
+        apex_idx = np.argmax(heavy_xic["intensity"])
+        features["mass_shift_error"] = float(
+            heavy_xic["ppm_error"][apex_idx])
+    else:
+        features["isotope_correlation"] = 0.0
+        features["mass_shift_error"] = 0.0
 
     pearsons_map = {
         "b": [],
@@ -76,6 +116,9 @@ def multi_batch_work(
 
     fragment_apex_deltas = []
     fragment_mz_errs = []
+    fragment_intensities = []  # per-ion max intensity for weighted correlation
+    fragment_cosines = []
+    fragment_snrs = []
 
     _, fragment_ions = psm1.get_heavy_info(HeavyType.SILAC)
     # 枚举所有的信息
@@ -105,6 +148,9 @@ def multi_batch_work(
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
             pearsons_map[ions_type].append(0)
             pearsons_map["all"].append(0)
+            fragment_intensities.append(0.0)
+            fragment_cosines.append(0.0)
+            fragment_snrs.append(0.0)
             continue
 
         if (np.max(light_ions_xic["intensity"]) > 0 and
@@ -120,6 +166,10 @@ def multi_batch_work(
         pearsons_map["all"].append(ion_score["pearson"])
         fragment_apex_deltas.append(ion_score["apex_delta"])
         fragment_mz_errs.append(ion_score["mz_avg_err"])
+        fragment_intensities.append(
+            max(ion_score["light_max_int"], ion_score["heavy_max_int"]))
+        fragment_cosines.append(ion_score["cosine"])
+        fragment_snrs.append(ion_score["snr"])
 
         # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
 
@@ -146,21 +196,43 @@ def multi_batch_work(
         features[f"{key}_p50"] = stats["p50"]
         features[f"{key}_p75"] = stats["p75"]
         features[f"{key}_mean"] = stats["mean"]
+        features[f"{key}_std"] = stats["std"]
+        features[f"{key}_min"] = stats["min"]
+        features[f"{key}_high_ratio"] = stats["high_ratio"]
+
+    # 强度加权碎片相关性
+    all_pearsons = pearsons_map["all"]
+    total_weight = sum(fragment_intensities)
+    if total_weight > 0:
+        features["frag_corr_weighted"] = sum(
+            p * w for p, w in zip(all_pearsons, fragment_intensities)
+        ) / total_weight
+    else:
+        features["frag_corr_weighted"] = 0.0
 
     features["matched_intensity_percent"] = (
         (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
 
-    # 碎片级 apex_delta / mz_err 汇总
+    # 碎片级 apex_delta / mz_err / cosine / snr 汇总
     features.update(extract_ion_numeric_features(
         fragment_apex_deltas, "all_apex_delta"))
     features.update(extract_ion_numeric_features(
         fragment_mz_errs, "all_mz_err"))
+    features.update(extract_ion_numeric_features(
+        fragment_cosines, "all_cosine"))
+    features.update(extract_ion_numeric_features(
+        fragment_snrs, "all_snr"))
 
     # 序列级特征
     features["kr_count"] = psm1._sequence.count('K') + \
         psm1._sequence.count('R')
     features["modification_count"] = len(psm1._modify)
     features["total_silac_shift"] = get_SILAC_increase_mass(psm1._sequence)
+
+    # DIA 窗口感知特征
+    win_info = dia_data1.get_window_info(psm1._precursor_mz)
+    features["window_width"] = win_info["width"]
+    features["precursor_centering"] = win_info["centering"]
 
     return features
 
@@ -207,6 +279,10 @@ def single_pair_work(
         features["precursor_light_max_int"] = 0.0
         features["precursor_heavy_max_int"] = 0.0
         features["precursor_intensity_ratio"] = 0.0
+        features["precursor_cosine"] = 0.0
+        features["precursor_snr"] = 0.0
+        features["precursor_peak_width_ratio"] = 0.0
+        features["precursor_peak_symmetry"] = 0.0
     else:
         precursor_score = calc_xic_score(light_xic, heavy_xic)
         features["precursor_pearson"] = precursor_score["pearson"]
@@ -215,6 +291,41 @@ def single_pair_work(
         features["precursor_light_max_int"] = precursor_score["light_max_int"]
         features["precursor_heavy_max_int"] = precursor_score["heavy_max_int"]
         features["precursor_intensity_ratio"] = precursor_score["intensity_ratio"]
+        features["precursor_cosine"] = precursor_score["cosine"]
+        features["precursor_snr"] = precursor_score["snr"]
+        features["precursor_peak_width_ratio"] = precursor_score["peak_width_ratio"]
+        features["precursor_peak_symmetry"] = precursor_score["peak_symmetry"]
+
+    # 同位素模式匹配 + 质量偏移验证
+    isotope_spacing = 1.003355 / psm._charge
+    if len(heavy_xic) > 0:
+        heavy_m1_xic = dia_data.xic_peaks_extreact(
+            psm._rt, xic_cycle_window,
+            heavy_precursor_mz + isotope_spacing, mass_tol_ppm)
+        heavy_m2_xic = dia_data.xic_peaks_extreact(
+            psm._rt, xic_cycle_window,
+            heavy_precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
+
+        m0_int = float(np.max(heavy_xic["intensity"]))
+        m1_int = (float(np.max(heavy_m1_xic["intensity"]))
+                  if len(heavy_m1_xic) > 0 else 0.0)
+        m2_int = (float(np.max(heavy_m2_xic["intensity"]))
+                  if len(heavy_m2_xic) > 0 else 0.0)
+
+        obs = np.array([m0_int, m1_int, m2_int])
+        theo = np.array(get_theoretical_isotope_ratios(psm._sequence))
+        obs_n = np.linalg.norm(obs)
+        theo_n = np.linalg.norm(theo)
+        features["isotope_correlation"] = (
+            float(np.dot(obs, theo) / (obs_n * theo_n))
+            if obs_n > 0 and theo_n > 0 else 0.0)
+
+        apex_idx = np.argmax(heavy_xic["intensity"])
+        features["mass_shift_error"] = float(
+            heavy_xic["ppm_error"][apex_idx])
+    else:
+        features["isotope_correlation"] = 0.0
+        features["mass_shift_error"] = 0.0
 
     is_same_ms2 = dia_data.check_in_same_ms2(
         psm._precursor_mz, heavy_precursor_mz)
@@ -235,6 +346,9 @@ def single_pair_work(
 
     fragment_apex_deltas = []
     fragment_mz_errs = []
+    fragment_intensities = []  # per-ion max intensity for weighted correlation
+    fragment_cosines = []
+    fragment_snrs = []
 
     ion_data = []  # 存储每个离子的完整数据
     # 枚举所有的信息
@@ -266,6 +380,9 @@ def single_pair_work(
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
             pearsons_map[ions_type].append(0)
             pearsons_map["all"].append(0)
+            fragment_intensities.append(0.0)
+            fragment_cosines.append(0.0)
+            fragment_snrs.append(0.0)
             continue
 
         if (np.max(light_ions_xic["intensity"]) > 0 and
@@ -281,6 +398,10 @@ def single_pair_work(
         pearsons_map["all"].append(ion_score["pearson"])
         fragment_apex_deltas.append(ion_score["apex_delta"])
         fragment_mz_errs.append(ion_score["mz_avg_err"])
+        fragment_intensities.append(
+            max(ion_score["light_max_int"], ion_score["heavy_max_int"]))
+        fragment_cosines.append(ion_score["cosine"])
+        fragment_snrs.append(ion_score["snr"])
 
         ion_data.append({
             'ion_type': f"{ions_type}-{ions_num}",
@@ -304,15 +425,32 @@ def single_pair_work(
         features[f"{key}_p50"] = stats["p50"]
         features[f"{key}_p75"] = stats["p75"]
         features[f"{key}_mean"] = stats["mean"]
+        features[f"{key}_std"] = stats["std"]
+        features[f"{key}_min"] = stats["min"]
+        features[f"{key}_high_ratio"] = stats["high_ratio"]
+
+    # 强度加权碎片相关性
+    all_pearsons = pearsons_map["all"]
+    total_weight = sum(fragment_intensities)
+    if total_weight > 0:
+        features["frag_corr_weighted"] = sum(
+            p * w for p, w in zip(all_pearsons, fragment_intensities)
+        ) / total_weight
+    else:
+        features["frag_corr_weighted"] = 0.0
 
     features["matched_intensity_percent"] = (
         (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
 
-    # 碎片级 apex_delta / mz_err 汇总
+    # 碎片级 apex_delta / mz_err / cosine / snr 汇总
     features.update(extract_ion_numeric_features(
         fragment_apex_deltas, "all_apex_delta"))
     features.update(extract_ion_numeric_features(
         fragment_mz_errs, "all_mz_err"))
+    features.update(extract_ion_numeric_features(
+        fragment_cosines, "all_cosine"))
+    features.update(extract_ion_numeric_features(
+        fragment_snrs, "all_snr"))
 
     # 序列级特征
     features["kr_count"] = psm._sequence.count('K') + \
@@ -324,6 +462,11 @@ def single_pair_work(
         features["heavy_in_raw"] = 1
     else:
         features["heavy_in_raw"] = 0
+
+    # DIA 窗口感知特征
+    win_info = dia_data.get_window_info(psm._precursor_mz)
+    features["window_width"] = win_info["width"]
+    features["precursor_centering"] = win_info["centering"]
 
     return features
 
@@ -444,7 +587,7 @@ def plot_light_heavy_contract(ion_data):
 
 def extract_ion_pearson_features(ions_pearsons: []) -> dict:
     """
-    计算出这个数组中的25%,50%,75% 分位数，和均值
+    计算出这个数组中的分位数、均值、标准差、最小值、高相关占比
     """
     clean_vals = [v for v in ions_pearsons if not np.isnan(
         v) and np.isfinite(v)]
@@ -457,12 +600,18 @@ def extract_ion_pearson_features(ions_pearsons: []) -> dict:
             "p50": 0,
             "p75": 0,
             "mean": 0,
+            "std": 0,
+            "min": 0,
+            "high_ratio": 0,
         }
 
     p25 = np.clip(np.percentile(clean_vals, 25), 0, 1)
     p50 = np.clip(np.percentile(clean_vals, 50), 0, 1)
     p75 = np.clip(np.percentile(clean_vals, 75), 0, 1)
     mean = np.mean(clean_vals)
+    std = float(np.std(clean_vals))
+    min_val = float(np.min(clean_vals))
+    high_ratio = sum(1 for v in clean_vals if v > 0.5) / count
 
     return {
         "count": count,
@@ -470,12 +619,15 @@ def extract_ion_pearson_features(ions_pearsons: []) -> dict:
         "p50": p50,
         "p75": p75,
         "mean": mean,
+        "std": std,
+        "min": min_val,
+        "high_ratio": high_ratio,
     }
 
 
 def extract_ion_numeric_features(values: list, prefix: str) -> dict:
     """
-    对碎片级数值列表（如 apex_delta、mz_err）计算均值和中位数。
+    对碎片级数值列表（如 apex_delta、mz_err）计算均值、中位数和标准差。
     清除 NaN/Inf 值后统计。
     """
     clean_vals = [v for v in values if not np.isnan(v) and np.isfinite(v)]
@@ -483,11 +635,54 @@ def extract_ion_numeric_features(values: list, prefix: str) -> dict:
         return {
             f"{prefix}_mean": 0.0,
             f"{prefix}_p50": 0.0,
+            f"{prefix}_std": 0.0,
         }
     return {
         f"{prefix}_mean": float(np.mean(clean_vals)),
         f"{prefix}_p50": float(np.median(clean_vals)),
+        f"{prefix}_std": float(np.std(clean_vals)),
     }
+
+
+def _calc_fwhm(rt: np.ndarray, intensity: np.ndarray) -> float:
+    """计算 XIC 的半高全宽 (FWHM)，返回 RT 单位的宽度"""
+    if len(intensity) < 3:
+        return 0.0
+    max_int = np.max(intensity)
+    if max_int <= 0:
+        return 0.0
+    half_max = max_int * 0.5
+    above = intensity >= half_max
+    indices = np.where(above)[0]
+    if len(indices) < 2:
+        return 0.0
+    return float(rt[indices[-1]] - rt[indices[0]])
+
+
+def _calc_symmetry(intensity: np.ndarray) -> float:
+    """计算峰对称性: |左半面积 - 右半面积| / 总面积，越接近 0 越对称"""
+    if len(intensity) < 3:
+        return 0.0
+    total = np.sum(intensity)
+    if total <= 0:
+        return 0.0
+    apex_idx = np.argmax(intensity)
+    left_area = float(np.sum(intensity[:apex_idx + 1]))
+    right_area = float(np.sum(intensity[apex_idx + 1:]))
+    return abs(left_area - right_area) / total
+
+
+def _calc_snr(intensity: np.ndarray) -> float:
+    """计算信噪比: max / median，median 为 0 时用 max / 1e-10 截断"""
+    if len(intensity) == 0:
+        return 0.0
+    max_int = float(np.max(intensity))
+    if max_int <= 0:
+        return 0.0
+    med = float(np.median(intensity))
+    if med <= 0:
+        return max_int / 1e-10  # 极大值表示无噪声基线
+    return max_int / med
 
 
 def _default_xic_score() -> dict:
@@ -499,6 +694,10 @@ def _default_xic_score() -> dict:
         "light_max_int": 0.0,
         "heavy_max_int": 0.0,
         "intensity_ratio": 0.0,
+        "cosine": 0.0,
+        "snr": 0.0,
+        "peak_width_ratio": 0.0,
+        "peak_symmetry": 0.0,
     }
 
 
@@ -527,6 +726,14 @@ def calc_xic_score(
     heavy_total = float(np.sum(heavy_xic["intensity"]))
     intensity_ratio = light_total / heavy_total if heavy_total > 0 else 0.0
 
+    # 峰形特征（在原始 XIC 上计算，不依赖插值）
+    snr = _calc_snr(heavy_xic["intensity"])
+    peak_symmetry = _calc_symmetry(heavy_xic["intensity"])
+    light_fwhm = _calc_fwhm(light_xic["rt"], light_xic["intensity"])
+    heavy_fwhm = _calc_fwhm(heavy_xic["rt"], heavy_xic["intensity"])
+    peak_width_ratio = (heavy_fwhm / light_fwhm
+                        if light_fwhm > 0 else 0.0)
+
     # 计算峰相关性
     # 统一时间轴
     rt_start = max(light_xic["rt"].min(), heavy_xic["rt"].min())
@@ -551,8 +758,10 @@ def calc_xic_score(
 
     if light_near_zero and heavy_near_zero:
         corr = 0.0
+        cosine = 0.0
     elif light_near_zero or heavy_near_zero:
         corr = 0.0
+        cosine = 0.0
     else:
         if np.std(inten1_interp) < 1e-10 or np.std(inten2_interp) < 1e-10:
             corr = 0.0
@@ -561,6 +770,14 @@ def calc_xic_score(
                 corr, _ = pearsonr(inten1_interp, inten2_interp)
             except (ValueError, RuntimeWarning):
                 corr = 0.0
+        # cosine similarity
+        norm1 = np.linalg.norm(inten1_interp)
+        norm2 = np.linalg.norm(inten2_interp)
+        if norm1 > 0 and norm2 > 0:
+            cosine = float(np.dot(inten1_interp, inten2_interp)
+                           / (norm1 * norm2))
+        else:
+            cosine = 0.0
 
     return {
         "pearson": np.float32(corr),
@@ -569,6 +786,10 @@ def calc_xic_score(
         "light_max_int": light_max_int,
         "heavy_max_int": heavy_max_int,
         "intensity_ratio": intensity_ratio,
+        "cosine": cosine,
+        "snr": snr,
+        "peak_width_ratio": peak_width_ratio,
+        "peak_symmetry": peak_symmetry,
     }
 
 

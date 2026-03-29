@@ -213,6 +213,21 @@ def get_heavy_increase_mass(
     return increase_mass
 
 
+def get_theoretical_isotope_ratios(sequence: str) -> list:
+    """计算肽段的理论同位素分布比例 [M0, M1, M2]（Poisson 近似）。
+    基于各元素的重同位素天然丰度，用 Poisson 模型估算 M+1/M+2 相对于 M0 的比值。
+    """
+    comp = mass.Composition(sequence)
+    # 各元素对 M+1 峰的贡献（主要重同位素天然丰度）
+    lam = (comp.get('C', 0) * 0.01109 +   # 13C
+           comp.get('H', 0) * 0.000115 +  # 2H
+           comp.get('N', 0) * 0.00364 +   # 15N
+           comp.get('O', 0) * 0.00038 +   # 17O
+           comp.get('S', 0) * 0.0079)     # 33S
+    # Poisson 近似: P(k) ∝ λ^k / k!
+    return [1.0, lam, lam * lam / 2.0]
+
+
 def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5):
     """
     anchor_len=1: 保留C端K/R（标准做法）

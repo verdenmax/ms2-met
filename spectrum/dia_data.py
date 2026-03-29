@@ -438,6 +438,31 @@ class DIAData:
 
         return idx1 == idx2
 
+    def get_window_info(self, precursor_mz: float) -> dict:
+        """获取包含该 precursor_mz 的 DIA 窗口信息。
+        返回 {"width": 窗口宽度Da, "centering": 前体在窗口中的相对位置 0-1}
+        """
+        if (self._precursor_lower_mz is None or
+                self._precursor_upper_mz is None or
+                self.ms2_indexs is None or
+                len(self.ms2_indexs) == 0):
+            return {"width": 0.0, "centering": 0.5}
+
+        # 在 MS2 谱图中找到一个包含 precursor_mz 的窗口
+        for i in range(min(len(self.ms2_indexs), 50)):
+            gidx = self.ms2_indexs[i]
+            lower = self._precursor_lower_mz[gidx]
+            upper = self._precursor_upper_mz[gidx]
+            if np.isnan(lower) or np.isnan(upper):
+                continue
+            if lower - 0.1 <= precursor_mz <= upper + 0.1:
+                width = float(upper - lower)
+                centering = (float(precursor_mz - lower) / width
+                             if width > 0 else 0.5)
+                return {"width": width, "centering": centering}
+
+        return {"width": 0.0, "centering": 0.5}
+
     def _check_is_ms1(self, index: int) -> bool:
         """ 检查这个下标对应的谱图是不是一个ms1"""
         if index < 0 or index >= len(self.precursor_scan_ids):
