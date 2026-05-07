@@ -8,6 +8,28 @@ import logging
 from spectrum.psm_info import PSMInfo
 
 
+ALPHADIA_MOD_TO_UNIMOD = {
+    "carbamidomethyl": 4,        # UniMod:4 - Carbamidomethyl
+    "oxidation": 35,            # UniMod:35 - Oxidation
+    "phospho": 21,              # UniMod:21 - Phospho
+    "acetyl": 1,                # UniMod:1 - Acetyl
+    "methyl": 34,               # UniMod:34 - Methyl
+    "dimethyl": 36,             # UniMod:36 - Dimethyl
+    "trimethyl": 37,            # UniMod:37 - Trimethyl
+    "deamidated": 7,            # UniMod:7 - Deamidated
+    "pyro-carbamidomethyl": 26,  # UniMod:26 - Pyro-carbamidomethyl
+    "gln->pyro-glu": 28,        # UniMod:28 - Gln->pyro-Glu
+    "glu->pyro-glu": 27,        # UniMod:27 - Glu->pyro-Glu
+    "tmt": 739,                 # UniMod:739 - Native TMT
+    "tmt6plex": 737,            # UniMod:737 - TMT6/TMT10plex
+    "tmt10plex": 737,           # UniMod:737 - TMT6/TMT10plex
+    "tmtpro": 2016,             # UniMod:2016 - TMTpro 16/18plex
+    "tmtpro16plex": 2016,       # UniMod:2016 - TMTpro 16/18plex
+    "tmtpro18plex": 2016,       # UniMod:2016 - TMTpro 16/18plex
+    "tmtprozero": 2017,         # UniMod:2017 - Native TMTpro
+}
+
+
 class LightResult:
     """ 存储各种搜索引擎搜索得到的轻标结果 """
 
@@ -146,28 +168,21 @@ def parse_alphadia_peptide_modify(modify_str: str, site_str: str):
         logging.warning("修饰数量不匹配")
         return modifications
 
-    mod_to_unimod = {
-        "Carbamidomethyl": 4,      # UniMod:4 - Carbamidomethyl
-        "Oxidation": 35,           # UniMod:35 - Oxidation
-        "Phospho": 21,             # UniMod:21 - Phospho
-        "Acetyl": 1,               # UniMod:1 - Acetyl
-        "Methyl": 34,              # UniMod:34 - Methyl
-        "Dimethyl": 36,            # UniMod:36 - Dimethyl
-        "Trimethyl": 37,           # UniMod:37 - Trimethyl
-        "Deamidated": 7,           # UniMod:7 - Deamidated
-        "Pyro-carbamidomethyl": 26,  # UniMod:26 - Pyro-carbamidomethyl
-        "Gln->pyro-Glu": 28,       # UniMod:28 - Gln->pyro-Glu
-        "Glu->pyro-Glu": 27,       # UniMod:27 - Glu->pyro-Glu
-    }
-
     for mod_type, site_str in zip(mods_list, mod_sites_list):
         if '@' in mod_type:
-            mod_name, target_aa = mod_type.split('@')
+            mod_name, _ = mod_type.split('@')
         else:
             mod_name = mod_type
-            target_aa = None
 
-        unimod_id = mod_to_unimod.get(mod_name)
+        normalized_mod_name = (
+            mod_name.strip().lower().replace(" ", "").replace("-", "")
+            .replace("_", "")
+        )
+
+        unimod_id = ALPHADIA_MOD_TO_UNIMOD.get(normalized_mod_name)
+        if unimod_id is None:
+            logging.warning(f"未支持的 Alphadia 修饰类型: {mod_name}")
+            continue
 
         site_index = int(site_str) - 1
 
