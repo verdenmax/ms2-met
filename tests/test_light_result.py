@@ -21,7 +21,7 @@ class ParseAlphaDiaPeptideModifyTests(unittest.TestCase):
 
         self.assertEqual(modifications, [(3, 737)])
 
-    def test_tmt_modifications_contribute_to_fragment_mass(self):
+    def test_tmt_modifications_increase_modification_mass(self):
         modifications = parse_alphadia_peptide_modify(
             "TMTpro@Any N-term;TMT6plex@K",
             "1;4",

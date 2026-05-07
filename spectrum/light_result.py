@@ -20,7 +20,7 @@ ALPHADIA_MOD_TO_UNIMOD = {
     "pyro-carbamidomethyl": 26,  # UniMod:26 - Pyro-carbamidomethyl
     "gln->pyro-glu": 28,        # UniMod:28 - Gln->pyro-Glu
     "glu->pyro-glu": 27,        # UniMod:27 - Glu->pyro-Glu
-    "tmt": 739,                 # UniMod:739 - Native TMT
+    "tmt": 739,                 # UniMod:739 - TMT zero (reporter-less)
     "tmt6plex": 737,            # UniMod:737 - TMT6/TMT10plex
     "tmt10plex": 737,           # UniMod:737 - TMT6/TMT10plex
     "tmtpro": 2016,             # UniMod:2016 - TMTpro 16/18plex
@@ -174,10 +174,7 @@ def parse_alphadia_peptide_modify(modify_str: str, site_str: str):
         else:
             mod_name = mod_type
 
-        normalized_mod_name = (
-            mod_name.strip().lower().replace(" ", "").replace("-", "")
-            .replace("_", "")
-        )
+        normalized_mod_name = re.sub(r'[\s\-_]', '', mod_name.strip().lower())
 
         unimod_id = ALPHADIA_MOD_TO_UNIMOD.get(normalized_mod_name)
         if unimod_id is None:
