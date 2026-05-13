@@ -2,7 +2,7 @@
 
 > 编写日期：2026-05-13
 > 项目：ms2-met
-> 文档版本：0.5（Q1a 扩展为"可分离碎片"，分窗口下不平移碎片亦参与配对）
+> 文档版本：0.6（Q1b 细化为含 K/R 拆分与软分版）
 > 状态：待评审
 
 ---
@@ -431,53 +431,97 @@ def is_separable(fragment_i, W_L, W_H):
 
 ##### 计算流程
 
+**第一阶段简化**：仅从 W_L 窗口扫描查陷阱位置（即 `precursor_mz = mz_prec_L`）。覆盖 PSM 主要的干扰来源。
+
 ```
 对每个不含 K/R 的理论 b/y 离子 j:
     # 第一步：确认 light 位置有信号（共窗口下天然成立，仅作为参与统计的入门条件）
-    XIC_L_j = 提取 (mz_L_j, ...)
-    light_present = 三条件判定(XIC_L_j)
-    if NOT light_present:  不参与统计
+    XIC_L_j = extract(precursor_mz=mz_prec_L, ions_mass=mz_b_j)
+    if NOT 三条件判定(XIC_L_j): 跳过该碎片
 
-    # 第二步：在两个陷阱位置查信号
+    # 第二步：对两个陷阱位置（+Δ_K, +Δ_R）独立检测
     for shift in [Δ_K, Δ_R]:
-        trap_mz = mz_L_j + shift / z_j
+        trap_mz = mz_b_j + shift / z_b_j
 
         # 撞车排除：陷阱位置不能与 L 的任何其他理论离子 m/z 接近
-        if 任一 L 的理论离子在 (trap_mz ± ppm_tol) 内: 跳过该陷阱
+        if 存在某 L 理论离子 i' 使得 |mz_i' - trap_mz| < q1b_collision_tol_ppm × trap_mz:
+            跳过该陷阱位置
 
-        XIC_trap = 提取 (trap_mz, ...)
+        XIC_trap = extract(precursor_mz=mz_prec_L, ions_mass=trap_mz)
         trap_present = 三条件判定(XIC_trap)
 
-        if trap_present:  state = FP（陷阱命中）
+        if trap_present:  state = FP（陷阱命中），按 shift 类型记录到 K 或 R 子集
         else:  state = TN（陷阱干净）
 ```
 
+**第二阶段扩展**（未来）：分窗口下额外用 `precursor_mz=mz_prec_H` 在 W_H 中查同一陷阱位置——提供"L 周围"与"H 周围"两个独立的干扰密度视角。
+
 ##### 衍生特征
+
+**主特征**：
 
 | 特征名 | 公式 | 含义 |
 |--------|------|------|
 | `q1b_TN_count` | TN 数 | 干净陷阱位置数 |
 | `q1b_FP_count` | FP 数 | 命中陷阱位置数 |
 | `q1b_specificity_unshifted` | TN / (TN + FP) | **核心特征**：陷阱位置干净度 |
-| `q1b_FP_rate` | FP / (TN + FP) | 陷阱命中率（与上互补） |
-| `q1b_total_traps` | TN + FP | 有效陷阱位置数 |
+| `q1b_FP_rate` | FP / (TN + FP) | 陷阱命中率（与 specificity 互补） |
+| `q1b_total_traps` | TN + FP | 有效陷阱位置数（< 3 视为 q1b_valid = False） |
+
+**按陷阱类型拆分**（K vs R 漏算诊断）：
+
+| 特征名 | 计算范围 | 说明 |
+|--------|---------|------|
+| `q1b_TN_count_K` / `q1b_FP_count_K` / `q1b_specificity_K` | 仅 +Δ_K 陷阱 | "K 陷阱"干净度——漏算 K 时此值显著低于 R 陷阱 |
+| `q1b_TN_count_R` / `q1b_FP_count_R` / `q1b_specificity_R` | 仅 +Δ_R 陷阱 | "R 陷阱"干净度——漏算 R 时此值显著低于 K 陷阱 |
+
+**强度类软分**（区分弱干扰与强污染）：
+
+| 特征名 | 公式 | 含义 |
+|--------|------|------|
+| `q1b_max_FP_intensity_ratio` | max(I_trap_hit / I_light_b_at_same_position)，限于 FP | 最强陷阱命中的相对强度 |
+| `q1b_mean_FP_intensity_ratio` | mean(...)，限于 FP | 平均陷阱命中相对强度 |
+
+强度类特征仅在 FP_count > 0 时有意义；FP_count = 0 时为 NaN。
+
+##### 超参
+
+| 超参 | 默认值 | 含义 |
+|------|--------|------|
+| `q1b_collision_tol_ppm` | 10 ppm | 陷阱位置与 L 其他理论离子的撞车排除阈值 |
+
+其他超参（`ppm_tol`, `xic_window`, `coflow_tolerance`, `noise_factor`, `min_peak_cycles`）与 Q1a 共享。
 
 ##### 真值期望
 
-`q1b_specificity_unshifted` → 1.0（绝大多数陷阱位置干净）
+- `q1b_specificity_unshifted` → 1.0（绝大多数陷阱位置干净）
+- `q1b_specificity_K` 与 `q1b_specificity_R` 应**对称**接近 1.0（不对称暗示特定残基漏算）
+- `q1b_max_FP_intensity_ratio` 小（FP 通常是弱 isobaric 残留）
 
 ##### 鉴别力来源
 
-这是**独立于 Q1a 的负向证据**：
+Q1b 提供**独立于 Q1a 的负向证据**：
 
-- 陷阱位置被填满 = PSM 周围有强干扰（环境复杂，其他特征鉴别力下降）
-- 或 = L 的 K/R 数被搜索引擎算错（特定情形的 L-错证据）
+- **环境密度评估**：specificity 低 = PSM 周围 m/z 空间挤满干扰 → 提示其他特征的 TP 可能被高估，整体可信度下降
+- **K vs R 漏算诊断**：specificity_K 与 specificity_R 的不对称是 L 漏算特定残基的信号
+- **作为 Q1a 的置信度调节器**：q1b 干净 → 信赖 Q1a；q1b 脏 → Q1a 结果需打折
 
-需注意：q1b 的鉴别力**没有 Q1a 强**。它主要价值是作为环境/置信度的调节因子。
+需注意：q1b 的鉴别力**没有 Q1a 强**，主要价值是辅助评估而非独立判定。
 
 ##### 重要警告
 
 不平移碎片的 light 位置存在性**不构成 L 对的独立证据**——它在共窗口下天然成立，且搜索引擎已经用过这个证据。因此 Q1b **不**输出 "light 存在数" 类特征。
+
+##### 与 Q1a 的联合解读
+
+| Q1a recall | Q1b specificity | 综合解读 |
+|-----------|----------------|---------|
+| 高 | 高 | **强支持 L** |
+| 高 | 低 | Q1a 可能被环境干扰高估（谨慎） |
+| 低 | 高 | Q1a 暗示 L 错（环境干净，结论可信） |
+| 低 | 低 | 整体可疑（可能 L 错 + 环境差） |
+
+这是"q1_MCC 不作为单值综合度量"的根本原因——两个子族提供**正交信息**，应交由模型独立学习权重。
 
 #### Q1 综合特征（弱，不作为主特征）
 
