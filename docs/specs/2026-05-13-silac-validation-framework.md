@@ -2,7 +2,7 @@
 
 > 编写日期：2026-05-13
 > 项目：ms2-met
-> 文档版本：0.6（Q1b 细化为含 K/R 拆分与软分版）
+> 文档版本：0.7（M3 细化为三类预测、双度量包络相似度、共流出对均值/最小值）
 > 状态：待评审
 
 ---
@@ -571,35 +571,86 @@ Q1b 提供**独立于 Q1a 的负向证据**：
 5. 单元测试覆盖：纯 K 肽段、纯 R 肽段、不含 K/R 的肽段、含修饰的边界情况、陷阱位置撞车场景
 
 
-### 4.3 Priority 2：同位素包络一致性
+### 4.3 Priority 2：同位素包络一致性（M3）
 
 #### 理论基础
 
-L 的元素组成由其序列+修饰精确决定，可计算理论同位素分布（如使用 averagine 模型或精确同位素计算）。重标候选位置必须满足此预测。
+L 的元素组成（由序列 + 修饰精确决定）唯一决定其同位素包络：
+
+$$\text{envelope}_{\text{pred}} = [I_M, I_{M+1}, I_{M+2}, I_{M+3}, ...]$$
+
+H 是 L 的重标版本，元素组成几乎相同（仅 ¹²C → ¹³C 和 ¹⁴N → ¹⁵N 替换在 K/R 上），因此 H 的包络与 L 形状相同，整体平移 Δm。
+
+三类独立可观测预测：
+
+1. **包络比例**：M:M+1:M+2:M+3 的相对强度——由元素组成决定
+2. **多通道共流出**：各通道 XIC 在 RT 维度同步——同肽段必同步
+3. **绝对位置**：各通道精确 m/z（与 Δm 的可观测一致）
+
+关键性质：
+
+- **基于 MS1 全扫描**——不进 DIA 隔离窗口 → **5Da 下不退化**
+- **包络由元素组成唯一决定**——干扰肽段的包络几乎必然不同
+- **独立于 Q1a/Q1b**——MS1 端、前体级；Q1a/b 是 MS2 端、碎片级
 
 #### 计算流程
 
 ```
 对每个 PSM L:
-  1. 由 L 序列计算理论同位素分布 envelope_pred = [I_M, I_M+1, I_M+2, I_M+3]
-  2. 在重标候选 RT 处，对 M、M+1、M+2、M+3 各提取一段 XIC
-  3. 取每条 XIC 的峰高（或积分），构成 envelope_obs
-  4. 计算 envelope_obs 与 envelope_pred 的偏差度量
+  1. 由 L 序列 + 修饰计算理论包络（pyteomics 精确卷积）：
+     envelope_pred = [I_M_pred, I_M+1_pred, I_M+2_pred, I_M+3_pred]
+     归一化（max = 1 或 sum = 1）
+
+  2. 在 H 候选位置提取 max_iso_peaks 个 MS1 XIC：
+     for k in [0, ..., max_iso_peaks-1]:
+         mz_iso_k_H = mz_M_H + k * 1.00335 / charge
+         XIC_iso_k = extract_ms1_xic(mz_iso_k_H, apex_rt_L ± window)
+
+  3. 取各通道强度构成 envelope_obs：
+     I_obs_k = AUC(XIC_iso_k)
+     envelope_obs = [I_obs_0, ..., I_obs_K-1]（同样归一化）
+
+  4. 计算包络相似度、单点比例、共流出度等特征
 ```
 
 #### 衍生特征
 
-| 特征名 | 定义 |
-|--------|------|
-| `iso_envelope_corr` | Pearson(envelope_obs, envelope_pred) |
-| `iso_envelope_chi2` | 卡方距离（归一化后） |
-| `iso_xic_coherence` | M / M+1 / M+2 三条 XIC 之间的相互 Pearson 均值 |
-| `iso_apex_consistency` | 三条 XIC 的 apex 时刻最大偏差 |
+**包络形状相似度**（保留 Pearson 和 chi2，cosine/KL 高度相关，先不做）：
 
-#### 鲁棒性分析
+| 特征名 | 公式 | 真值期望 | 说明 |
+|--------|------|---------|------|
+| `m3_envelope_pearson` | Pearson(envelope_obs, envelope_pred) | → 1.0 | 标准形状度量 |
+| `m3_envelope_chi2` | Σ (I_obs_k − I_pred_k)² / I_pred_k | 小 | 卡方距离，可转 p 值 |
 
-- 干扰肽段元素组成不同 → 同位素分布不同。即使 M 通道偶然匹配，M+1 / M+2 比例几乎必然偏离
-- 该特征基于 MS1 → 不受 DIA 窗口宽度影响 → 5Da 下不退化
+**单点比例约束**：
+
+| 特征名 | 公式 | 真值期望 | 说明 |
+|--------|------|---------|------|
+| `m3_first_ratio_dev` | \|(I_M+1/I_M)_obs − (I_M+1/I_M)_pred\| | 小 | M/M+1 是最稳通道对 |
+| `m3_argmax_match` | argmax(obs) == argmax(pred) ? 1 : 0 | 1 | 大肽段独立鉴别 |
+
+**多通道共流出**（独立维度，最强）：
+
+| 特征名 | 公式 | 真值期望 | 说明 |
+|--------|------|---------|------|
+| `m3_xic_pairwise_corr_mean` | mean(Pearson(XIC_k, XIC_j)) for k≠j | → 1.0 | ⭐核心：各通道共流出度均值 |
+| `m3_xic_pairwise_corr_min` | min(Pearson(XIC_k, XIC_j)) | → 1.0 | 最弱通道对——单点污染检测 |
+| `m3_apex_max_dev` | max(apex(XIC_k)) − min(apex(XIC_k)) | 小（< 1 cycle） | 单点形式的共流出度量 |
+
+**数据充分性**：
+
+| 特征名 | 公式 | 说明 |
+|--------|------|------|
+| `m3_observed_count` | 通过显著性判定的同位素峰数 | 实测可见通道数 |
+| `m3_predicted_visible_count` | envelope_pred 中预测可见的通道数 | 用作对照 |
+| `m3_valid` | observed_count >= 2 | 是否有足够数据 |
+
+**与 Q1a 的关键区分**：
+
+- `m3_envelope_pearson` 比较的是包络比例的形状相似 → 受单通道污染影响
+- `m3_xic_pairwise_corr_mean` 比较的是各通道随 RT 的同步 → **独立**于包络比例。即使某通道被 isobaric 干扰污染（envelope 比例失真），共流出度仍能识别（污染通道与其他不同步）
+
+这是 M3 最强的鉴别力来源。
 
 #### 同位素重叠风险与校正
 
@@ -616,7 +667,7 @@ $$k \approx \frac{\Delta m \cdot z}{1.00335}$$
 | K6 | 6.0201 | 6 | ~ 1% | 建议校正 |
 | K4 | 4.0251 | 4 | ~ 5% | **必须校正** |
 
-**K8R10 下 M3 实际不受重叠污染**（高阶同位素峰强度极弱）。但代码框架应预留校正接口，以适配其他标记体系。校正逻辑：
+**K8R10 下 M3 第一阶段不需要校正**，代码框架预留校正接口适配其他标记体系：
 
 ```
 对每个 H 同位素通道 m:
@@ -625,9 +676,43 @@ $$k \approx \frac{\Delta m \cdot z}{1.00335}$$
         envelope_obs_H[m] -= L_M_intensity_observed × L_pred[overlap_k]
 ```
 
+#### 鲁棒性分析
+
+**M3 的两道防线**：
+
+1. **envelope 比例**——由 L 的元素组成决定，干扰肽段几乎必然不同。弱点：低信号下高阶通道不可见，退化为只看 M/M+1。
+2. **多通道共流出**（`m3_xic_pairwise_corr_mean`）——同肽段必同步。干扰需"恰好在 4 个 m/z 位置都同时共流出于同一 RT"，概率极低。
+
+**与其他特征族的独立性**：
+
+- 与 Q1a/Q1b 独立：MS1 端 vs MS2 端
+- 与 5Da 现象独立：基于 MS1 全扫描，不受 DIA 窗口宽度影响 → **不退化**
+- M3 是补 Q1a 在共窗口下"可用碎片数减半"不足的关键特征族
+
+#### 失败模式
+
+| 失败模式 | 表现 | 处理 |
+|---------|------|------|
+| 极弱信号 | observed_count 低，envelope 噪声大 | m3_valid = False |
+| 大肽段（>2500 Da） | argmax 应为 M+2 或 M+3 | argmax_match 仍正确判定（预测也为 M+2/M+3） |
+| 单通道被 isobaric 污染 | envelope 失真 | `m3_xic_pairwise_corr_mean` 识别（污染通道与其他不同步） |
+| K4/K6 等小标记 | 同位素重叠 | 启用校正接口 |
+
+#### 超参
+
+| 超参 | 默认值 | 含义 |
+|------|--------|------|
+| `m3_max_iso_peaks` | 4 | 提取的最大同位素通道数 |
+| `m3_iso_method` | "exact" | "exact"（pyteomics 精确）/ "averagine"（近似） |
+| `m3_intensity_method` | "auc" | "auc" / "max" |
+| `m3_min_observed_count` | 2 | m3_valid 阈值 |
+| `m3_enable_overlap_correction` | false | K8R10 下默认关闭 |
+| `m3_overlap_correction_threshold` | 0.01 | 仅当 L_pred[overlap_k] > 此阈值时校正 |
+
 #### 实现复杂度
 
-中。可调用 pyteomics 的同位素计算函数。
+中。可调用 pyteomics.mass.isotopic_composition 计算精确同位素分布；重用现有 MS1 XIC 提取管线。
+
 
 ### 4.4 Priority 3：跨碎片强度比一致性
 
