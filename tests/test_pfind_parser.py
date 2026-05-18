@@ -46,6 +46,25 @@ def test_parse_pfind_modify_oxidation():
     assert result == [(4, 35)]
 
 
+def test_parse_pfind_modify_nan_returns_empty():
+    """pandas NaN (float) 应安全返回空列表，不抛异常。"""
+    import math
+    result = parse_pfind_modify(math.nan)
+    assert result == []
+
+
+def test_parse_pfind_modify_none_returns_empty():
+    """None 应安全返回空列表。"""
+    result = parse_pfind_modify(None)
+    assert result == []
+
+
+def test_parse_pfind_modify_non_string_int_returns_empty():
+    """非字符串数字应安全返回空列表。"""
+    result = parse_pfind_modify(42)
+    assert result == []
+
+
 # === mhp_to_mz ===
 
 def test_mhp_to_mz_z1():

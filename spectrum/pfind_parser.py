@@ -89,23 +89,29 @@ def resolve_pfind_mod_name(name: str) -> int | None:
         record = db.by_title(base_name)
         if record is not None:
             return int(record.get("record_id"))
-    except (KeyError, Exception) as e:
+    except Exception as e:
         logging.debug(f"UniMod 查询失败 name={name} base={base_name}: {e}")
     return None
 
 
-def parse_pfind_modify(modify_str: str) -> list[tuple[int, int]]:
+def parse_pfind_modify(modify_str) -> list[tuple[int, int]]:
     """解析 pfind Modifications 字段。
 
     输入格式（pfind 输出）："3,Carbamidomethyl[C];10,Carbamidomethyl[C];"
       - 位置是 1-based
       - 多个修饰用 ";" 分隔，末尾可能有 ";"
 
+    输入容错：
+      - None / 非字符串（包括 pandas 的 float NaN）→ 返回 []
+      - 空字符串 / 纯空白 → 返回 []
+
     输出：list of (0-based position, unimod_id)。
 
     未知修饰会被跳过并 log warning。
     """
-    if not modify_str or not modify_str.strip():
+    if not isinstance(modify_str, str):
+        return []
+    if not modify_str.strip():
         return []
 
     modifications: list[tuple[int, int]] = []
