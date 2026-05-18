@@ -60,20 +60,46 @@ def extract_n_engines_from_psms(
 
     Args:
         engine_psms: dict[engine_name -> list[PSMInfo]]
-        engine_order: list[engine_name]，决定权威 PSM 来源顺序
+        engine_order: list[engine_name]，引擎列表（指定参与交并集的引擎集合）
         positive_marker: 物种 marker 字符串；为 None 则仅取交集，不打 label
+
+    Note:
+        权威 PSM 选择规则：
+          - 若 'diann' 在 engine_order 中 → diann 的 PSM 作为权威源（优先）
+          - 否则按 engine_order 顺序，先到先得
+        marker 检查（positive_marker in protein_names）只看权威 PSM。
+        极少数多引擎对同一肽段蛋白归属不一致的情况，以权威引擎为准。
 
     Returns:
         list[PSMInfo]，每条 PSM 的 label_type 字段已被设置（或保持 None）
     """
+    # 防止 stale state：清空所有输入 PSM 的 label_type，避免重复调用时残留
+    for psms in engine_psms.values():
+        for psm in psms:
+            psm._label_type = None
+
     key_sets = {name: {p.get_key() for p in psms}
                 for name, psms in engine_psms.items()}
 
     intersection_keys = set.intersection(*key_sets.values()) if key_sets else set()
     union_keys = set.union(*key_sets.values()) if key_sets else set()
 
+    # 2. 构建 key → PSM 映射
+    #
+    # 选择"权威 PSM"的优先级：
+    #   1. 如果 "diann" 在 engine_order 中，diann 的 PSM 优先（DIANN 蛋白归属更可靠）
+    #   2. 否则按 engine_order 顺序，先到先得
+    #
+    # 注：此函数的 marker 检查（positive_marker in protein_names）只看权威 PSM。
+    # 极少数情况下多引擎对同一肽段（同 sequence+charge+modify）的蛋白归属可能
+    # 不一致；此简化以权威引擎为准。
+    if "diann" in engine_order:
+        authoritative_order = ["diann"] + [e for e in engine_order if e != "diann"]
+    else:
+        authoritative_order = list(engine_order)
+
     key_to_psm = {}
-    for engine_name in engine_order:
+    for engine_name in authoritative_order:
         for psm in engine_psms.get(engine_name, []):
             key = psm.get_key()
             if key not in key_to_psm:

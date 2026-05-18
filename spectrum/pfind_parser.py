@@ -194,6 +194,13 @@ def load_pfind_file(
     if 'Modifications' in df.columns:
         df['Modifications'] = df['Modifications'].fillna('')
 
+    # 重命名特殊字符列名为合法 Python identifier，以便 itertuples 直接属性访问
+    # MH+ → MHPlus, DeltaRT(Min) → DeltaRTMin
+    df = df.rename(columns={
+        'MH+': 'MHPlus',
+        'DeltaRT(Min)': 'DeltaRTMin',
+    })
+
     raw_title = extract_raw_title_from_pfind_path(file_path)
     psms: list[PSMInfo] = []
 
@@ -203,10 +210,11 @@ def load_pfind_file(
     n_filtered_invalid = 0
     n_parse_error = 0
 
-    for row_dict in df.to_dict(orient='records'):
+    # 用 itertuples（比 to_dict(orient='records') 快 3-5x、省内存 3-5x）
+    for row in df.itertuples(index=False):
         try:
-            qvalue = float(row_dict['QValue'])
-        except (KeyError, ValueError, TypeError):
+            qvalue = float(row.QValue)
+        except (ValueError, TypeError):
             n_parse_error += 1
             continue
 
@@ -214,22 +222,22 @@ def load_pfind_file(
             n_filtered_fdr += 1
             continue
 
-        proteins = str(row_dict.get('Proteins', ''))
+        proteins = str(row.Proteins)
         if proteins.startswith(PFIND_DECOY_PREFIX):
             n_filtered_decoy += 1
             continue
 
         try:
-            modifications = parse_pfind_modify(row_dict.get('Modifications', ''))
-            charge = int(row_dict['Charge'])
-            mhp_value = float(row_dict['MH+'])
+            modifications = parse_pfind_modify(row.Modifications)
+            charge = int(row.Charge)
+            mhp_value = float(row.MHPlus)
             precursor_mz = mhp_to_mz(mhp_value, charge)
-            pred_rt = float(row_dict['PredRT'])
-            delta_rt = float(row_dict.get('DeltaRT(Min)', 0.0))
+            pred_rt = float(row.PredRT)
+            delta_rt = float(row.DeltaRTMin)
             rt = pred_rt + delta_rt
-            score = float(row_dict['FinalScore'])
-            sequence = str(row_dict['PeptideSequence'])
-        except (KeyError, ValueError, TypeError) as e:
+            score = float(row.FinalScore)
+            sequence = str(row.PeptideSequence)
+        except (AttributeError, ValueError, TypeError) as e:
             n_parse_error += 1
             logging.warning(f"pfind 行解析失败 file={raw_title}: {e}")
             continue
