@@ -1,0 +1,28 @@
+# extract_common 工具配置示例
+#
+# 用法：python tools/extract_common.py --configpath extract_common_config.ini
+
+[extract]
+# 引擎列表，用逗号分隔，可任意顺序、任意数量
+# 支持的引擎：pfind, diann, alphadia
+engines = pfind, diann
+
+# 物种 marker（可选）。给出时启用"正负例"模式：
+#   正例 = 所有引擎都识别为含 marker 的肽段（交集）
+#   负例 = 任一引擎识别为不含 marker 的肽段（并集）
+# 留空时仅取所有引擎的交集，不分正负例
+positive_species_marker = HUMAN
+
+# 输出 JSON 路径（ms2-met 单引擎模式 search_engine_type=0 可直接读取）
+result_file = ./datasets/hela-2da-pfind-diann.json
+
+[engine.pfind]
+path = ./pfind-dia/2th/
+qvalue_threshold = 0.01
+
+[engine.diann]
+path = ./hela-mix-2da_report.parquet
+
+[engine.alphadia]
+# 如需启用 alphadia 引擎，把 engines 改为 "pfind, diann, alphadia" 并取消下面注释
+# path = ./precursors.parquet
