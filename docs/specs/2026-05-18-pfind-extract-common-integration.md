@@ -2,7 +2,7 @@
 
 > 编写日期：2026-05-18
 > 项目：ms2-met
-> 文档版本：0.1（初稿）
+> 文档版本：0.2（PredRT 与 QValue 语义已在真实数据验证）
 > 状态：待评审
 
 ---
@@ -55,7 +55,7 @@ pfind 是另一类主流蛋白质组学搜索引擎，输出格式为 TSV `.qry.
 - 移除 AlphaDIA 支持（保留代码，不主动使用）
 - 负例细分（`negative_no_signal` vs `negative_interference`）的判定逻辑实现——该逻辑必须基于特征提取后的结果（如 `q1a_total_count`），属于下游分析；本 spec 仅保留字段空间
 - 不平衡类别在训练分类器时的处理（属于分类器训练阶段，非本 spec 范围）
-- pfind PredRT 语义验证——本 spec 暂定"实测 RT = PredRT + DeltaRT"，需用户后续 check
+- ~~pfind PredRT 语义验证——本 spec 暂定"实测 RT = PredRT + DeltaRT"，需用户后续 check~~ → 已于 2026-05-18 在 normal/Rep1 数据上验证（见 §8.3）
 
 ---
 
@@ -100,7 +100,7 @@ ms2-met/
 | PeptideSequence | sequence | 直接 |
 | Modifications | modify | `parse_pfind_modify` 转 [(0-based pos, unimod_id), ...] |
 | Charge | charge | 直接 |
-| PredRT + DeltaRT(Min) | rt | **暂定** rt = PredRT + DeltaRT |
+| PredRT + DeltaRT(Min) | rt | **rt = PredRT + DeltaRT(Min)**（已验证，见 §8.3） |
 | MH+ + Charge | precursor_mz | `mhp_to_mz(MH+, charge)` |
 | Proteins | protein_names | 直接保留全字符串 |
 | QValue | q_value | 直接 |
@@ -138,7 +138,7 @@ def mhp_to_mz(mhp: float, charge: int) -> float:
 rt = pred_rt + delta_rt  # PredRT + DeltaRT(Min)
 ```
 
-**未决问题**：DeltaRT(Min) 的符号约定（实测-预测 还是 预测-实测）未确认。spec 落实时需要用户验证。如确认为后者，公式改为 `rt = pred_rt - delta_rt`。
+**已验证（2026-05-18）**：实测 RT 由公式 `rt = pred_rt + delta_rt` 给出，即 `PredRT + DeltaRT(Min)`。详见 §8.3。验证 MAE = 0.0004 min（≈0.024 秒），最大误差 0.0008 min。
 
 ### 3.3 修饰解析
 
@@ -492,16 +492,50 @@ alphadia ───┘ JSON  (含 label_type)
 
 ### 8.1 已识别风险
 
-1. **PredRT 语义未确认**——暂定 `rt = PredRT + DeltaRT`。若错误，所有 RT 相关特征会偏 ~1min。**M1 实施前必须验证**。
-2. **pfind QValue 列含义**——暂定为 q-value（FDR 估计）。若实际是 PEP，阈值含义变化。**M1 实施时通过日志验证 QValue 分布**。
-3. **大文件性能**——normal/ 单文件 10w+ 行，FDR 过滤后预计 ~5w PSM/raw。Pandas read_csv 应能处理但需性能测试。
+1. ~~**PredRT 语义未确认**——暂定 `rt = PredRT + DeltaRT`。若错误，所有 RT 相关特征会偏 ~1min。**M1 实施前必须验证**。~~ → **已于 2026-05-18 在 normal/Rep1 数据上验证**（见 §8.3）
+2. ~~**pfind QValue 列含义**——暂定为 q-value（FDR 估计）。若实际是 PEP，阈值含义变化。**M1 实施时通过日志验证 QValue 分布**。~~ → **已于 2026-05-18 在 normal/Rep1 数据上验证**（见 §8.3）
+3. **大文件性能**——normal/ 单文件 10w+ 行，FDR 过滤后预计 ~5w PSM/raw。Pandas read_csv 应能处理但需性能测试。**实测：10.8w 行加载 0.6 秒**（已优化为 `itertuples`，参见 follow-up commit `00334d6`）。
 4. **shared peptide / 蛋白群**——pfind 用 `/` 分隔多个蛋白。物种 marker 匹配采用 `in` 语义（任一蛋白含 HUMAN 即视为人源）。与 extract_com 现有行为一致。
 5. **未知修饰名称**——硬编码字典覆盖有限，unimod.xml 兜底也可能不命中。未知修饰 → 跳过该 PSM 并 log warning。可能丢失数据但不影响正确性。
 
-### 8.2 未决问题（需用户后续确认）
+### 8.2 未决问题
 
-1. **PredRT 语义**：实测 RT 是否真的是 PredRT + DeltaRT？符号方向？
-2. **pfind QValue vs PEP**：QValue 列严格为 q-value，还是某些 pfind 配置下输出 PEP？
+无。原列出的两个问题已在 §8.3 中验证。
+
+### 8.3 验证记录（2026-05-18）
+
+#### 8.3.1 PredRT 语义 — 已确认为 `rt = PredRT + DeltaRT(Min)`
+
+**验证方法**：从 pfind `.qry.res` 选 10 条 PSM（DeltaRT 覆盖范围 -3.41 ~ -1.06 min），用 mzML 文件按 ScanNo 查实测 RT，对比三种候选公式的误差。
+
+**验证数据**：normal/20190830_HF_ZHW_hela_SILAC_DIA_350_1000_Rep1.qry.res + 对应 mzML。
+
+| 公式 | MAE | 最大误差 | 判定 |
+|------|-----|---------|------|
+| **`rt = PredRT + DeltaRT(Min)`** | **0.00040 min（≈0.024 秒）** | 0.00083 min | ✅ 正确 |
+| `rt = PredRT - DeltaRT(Min)` | 5.64 min | 6.82 min | ❌ 错误 |
+
+减号公式比加号公式误差大 ~14000 倍。剩余的 0.0004 min 微小偏差是 pfind PredRT 字段三位小数取整造成的不可避免误差。
+
+**物理解释**：pfind 中 `DeltaRT(Min) = Observed - Predicted`，所以 `Observed RT = PredRT + DeltaRT(Min)`。
+
+代码位置：`spectrum/pfind_parser.py::load_pfind_file` 中 `rt = pred_rt + delta_rt`。无需修改。
+
+#### 8.3.2 pfind QValue 含义 — 已确认为 q-value
+
+**验证方法**：观察 0.01 阈值的过滤比例和 QValue 分布形态。
+
+**验证数据**：同上。
+
+| 指标 | 实测值 | 判定 |
+|------|--------|------|
+| FDR 过滤比例（0.01 阈值） | 36%（10.8w 行 → 6.9w 行通过） | 符合 q-value 预期 |
+| Decoy 过滤数 | 214 个 REV_ 前缀 | 符合 |
+| QValue 分布 | 大部分集中在低值（中位 ~1e-5），max ≤ 0.01 | 符合 q-value 形态 |
+
+若为 PEP（PSM error probability）则过滤比例会显著更大、分布严重左偏。实测分布与 q-value 标准 FDR 估计一致。
+
+代码位置：`config.ini` 的 `pfind_qvalue_threshold = 0.01` 含义为 q-value 阈值，正确。
 
 ---
 
