@@ -78,7 +78,7 @@ def extract_n_engines_from_psms(
         for psm in psms:
             psm._label_type = None
 
-    key_sets = {name: {p.get_key() for p in psms}
+    key_sets = {name: {p.get_key_with_raw() for p in psms}
                 for name, psms in engine_psms.items()}
 
     intersection_keys = set.intersection(*key_sets.values()) if key_sets else set()
@@ -101,7 +101,7 @@ def extract_n_engines_from_psms(
     key_to_psm = {}
     for engine_name in authoritative_order:
         for psm in engine_psms.get(engine_name, []):
-            key = psm.get_key()
+            key = psm.get_key_with_raw()
             if key not in key_to_psm:
                 key_to_psm[key] = psm
 

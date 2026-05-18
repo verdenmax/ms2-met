@@ -96,6 +96,15 @@ class PSMInfo:
         mod_tuple = tuple(tuple(pair) for pair in self._modify)
         return (self._sequence, self._charge, mod_tuple)
 
+    def get_key_with_raw(self) -> Tuple[str, int, Tuple[Tuple[int, int], ...], str]:
+        """ 返回包含 raw_title 的 key。
+
+        与 get_key() 不同，此 key 区分同一肽段在不同 raw 文件中的观测。
+        用于 extract_common 等需要保留跨 raw 独立观测的场景。
+        """
+        mod_tuple = tuple(tuple(pair) for pair in self._modify)
+        return (self._sequence, self._charge, mod_tuple, self._raw_title)
+
     def valid(self) -> bool:
         """
         检查自己是否合法，或者说受当前代码支持

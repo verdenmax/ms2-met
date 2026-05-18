@@ -190,3 +190,52 @@ def test_no_stale_label_on_repeated_call():
             if psm._sequence not in snap2:
                 assert psm._label_type is None, (
                     f"stale label on {psm._sequence}: {psm._label_type}")
+
+
+def test_extract_preserves_cross_raw_observations():
+    """同一肽段在不同 raw 出现时应作为独立观测保留（不合并）。"""
+    from tools.extract_common import extract_n_engines_from_psms
+
+    engine_psms = {
+        "pfind": [
+            _make_psm("PEPTIDE_K", 2, "sp|X|TEST_HUMAN/", raw="rep1"),
+            _make_psm("PEPTIDE_K", 2, "sp|X|TEST_HUMAN/", raw="rep2"),
+            _make_psm("PEPTIDE_K", 2, "sp|X|TEST_HUMAN/", raw="rep3"),
+        ],
+        "diann": [
+            _make_psm("PEPTIDE_K", 2, "sp|X|TEST_HUMAN/", raw="rep1"),
+            _make_psm("PEPTIDE_K", 2, "sp|X|TEST_HUMAN/", raw="rep2"),
+            _make_psm("PEPTIDE_K", 2, "sp|X|TEST_HUMAN/", raw="rep3"),
+        ],
+    }
+    result = extract_n_engines_from_psms(
+        engine_psms, engine_order=["pfind", "diann"],
+        positive_marker="HUMAN")
+
+    assert len(result) == 3
+    raw_titles = {p._raw_title for p in result}
+    assert raw_titles == {"rep1", "rep2", "rep3"}, f"Got: {raw_titles}"
+    assert all(p._label_type == "positive" for p in result)
+
+
+def test_extract_cross_raw_only_in_one_engine_keeps_independently():
+    """跨 raw 观测 + 一个引擎单独有 → 各自独立."""
+    from tools.extract_common import extract_n_engines_from_psms
+
+    engine_psms = {
+        "pfind": [
+            _make_psm("PEP", 2, "sp|X|H_HUMAN/", raw="rep1"),
+            _make_psm("PEP", 2, "sp|X|H_HUMAN/", raw="rep2"),
+        ],
+        "diann": [
+            _make_psm("PEP", 2, "sp|X|H_HUMAN/", raw="rep1"),
+            _make_psm("PEP", 2, "sp|X|H_HUMAN/", raw="rep3"),
+        ],
+    }
+    result = extract_n_engines_from_psms(
+        engine_psms, engine_order=["pfind", "diann"],
+        positive_marker="HUMAN")
+
+    positives = sorted([p._raw_title for p in result if p._label_type == "positive"])
+    assert positives == ["rep1"]
+    assert len(result) == 1

@@ -94,3 +94,25 @@ def test_psminfo_get_key_unchanged_by_new_fields():
     psm1 = _make_basic_psm()
     psm2 = _make_basic_psm(q_value=0.01, score=15.0, label_type="positive")
     assert psm1.get_key() == psm2.get_key()
+
+
+def test_psminfo_get_key_with_raw_includes_raw_title():
+    """get_key_with_raw 应包含 raw_title。"""
+    psm1 = _make_basic_psm()
+    psm2 = _make_basic_psm()
+    psm3 = _make_basic_psm(raw_title="different_raw")
+
+    assert psm1.get_key_with_raw() == psm2.get_key_with_raw()
+    assert psm1.get_key_with_raw() != psm3.get_key_with_raw()
+    assert psm1.get_key() == psm3.get_key()
+
+
+def test_psminfo_get_key_with_raw_structure():
+    """get_key_with_raw 返回 4-tuple: (seq, charge, mod_tuple, raw_title)."""
+    psm = _make_basic_psm()
+    key = psm.get_key_with_raw()
+    assert len(key) == 4
+    assert key[0] == "AGFAGDDAPK"
+    assert key[1] == 2
+    assert key[2] == ()
+    assert key[3] == "test_raw"
