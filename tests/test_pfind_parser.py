@@ -132,3 +132,61 @@ def test_extract_raw_title_complex_name():
             "/path/20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1.qry.res")
         == "20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1"
     )
+
+
+import numpy as np
+from spectrum.pfind_parser import load_pfind_file
+
+
+# === load_pfind_file ===
+
+def test_load_pfind_file_basic(sample_pfind_file):
+    """加载单文件，确认 FDR/decoy/合法性过滤都生效。"""
+    psms = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
+    assert len(psms) == 3
+
+
+def test_load_pfind_file_qvalue_filter(sample_pfind_file):
+    psms = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
+    for psm in psms:
+        assert psm._q_value <= 0.01
+
+
+def test_load_pfind_file_no_decoy(sample_pfind_file):
+    psms = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
+    for psm in psms:
+        assert not psm._protein_names.startswith("REV_")
+
+
+def test_load_pfind_file_raw_title_extracted(sample_pfind_file):
+    psms = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
+    for psm in psms:
+        assert psm._raw_title == "sample_pfind"
+
+
+def test_load_pfind_file_precursor_mz_computed(sample_pfind_file):
+    from spectrum.pfind_parser import mhp_to_mz
+    psms = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
+    target = next(p for p in psms if p._sequence == "TGVHHYSGNNIELGTACGK")
+    expected_mz = mhp_to_mz(2014.941562, 2)
+    # PSMInfo stores precursor_mz as np.float32; tolerance loosened for float32 precision.
+    assert abs(float(target._precursor_mz) - expected_mz) < 1e-3
+
+
+def test_load_pfind_file_modify_parsed(sample_pfind_file):
+    psms = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
+    target = next(p for p in psms if p._sequence == "TGVHHYSGNNIELGTACGK")
+    assert target._modify == [(16, 4)]
+
+
+def test_load_pfind_file_qvalue_and_score_set(sample_pfind_file):
+    psms = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
+    for psm in psms:
+        assert psm._q_value is not None
+        assert psm._score is not None
+
+
+def test_load_pfind_file_strict_qvalue(sample_pfind_file):
+    relaxed = load_pfind_file(sample_pfind_file, qvalue_threshold=0.1)
+    strict = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
+    assert len(relaxed) == len(strict) + 1

@@ -157,3 +157,104 @@ def extract_raw_title_from_pfind_path(path: str) -> str:
     if basename.endswith(".qry.res"):
         return basename[: -len(".qry.res")]
     return basename
+
+
+import numpy as np
+import pandas as pd
+
+from spectrum.psm_info import PSMInfo
+
+
+# pfind .qry.res 文件中标识 decoy 的蛋白前缀
+PFIND_DECOY_PREFIX = "REV_"
+
+
+def load_pfind_file(
+    file_path: str,
+    qvalue_threshold: float = 0.01,
+) -> list:
+    """加载单个 pfind .qry.res 文件并应用过滤。
+
+    过滤顺序：
+      1. QValue > qvalue_threshold → 丢弃（FDR 过滤）
+      2. Proteins 以 "REV_" 开头 → 丢弃（decoy 过滤）
+      3. PSMInfo.valid() 为 False → 丢弃（含 X 等）
+
+    Returns:
+        list[PSMInfo]
+    """
+    if not os.path.exists(file_path):
+        logging.error(f"pfind 文件不存在: {file_path}")
+        return []
+
+    logging.info(f"正在加载 pfind 文件: {file_path}")
+    df = pd.read_csv(file_path, sep="\t")
+
+    if 'Modifications' in df.columns:
+        df['Modifications'] = df['Modifications'].fillna('')
+
+    raw_title = extract_raw_title_from_pfind_path(file_path)
+    psms: list[PSMInfo] = []
+
+    n_total = len(df)
+    n_filtered_fdr = 0
+    n_filtered_decoy = 0
+    n_filtered_invalid = 0
+    n_parse_error = 0
+
+    for row_dict in df.to_dict(orient='records'):
+        try:
+            qvalue = float(row_dict['QValue'])
+        except (KeyError, ValueError, TypeError):
+            n_parse_error += 1
+            continue
+
+        if qvalue > qvalue_threshold:
+            n_filtered_fdr += 1
+            continue
+
+        proteins = str(row_dict.get('Proteins', ''))
+        if proteins.startswith(PFIND_DECOY_PREFIX):
+            n_filtered_decoy += 1
+            continue
+
+        try:
+            modifications = parse_pfind_modify(row_dict.get('Modifications', ''))
+            charge = int(row_dict['Charge'])
+            mhp_value = float(row_dict['MH+'])
+            precursor_mz = mhp_to_mz(mhp_value, charge)
+            pred_rt = float(row_dict['PredRT'])
+            delta_rt = float(row_dict.get('DeltaRT(Min)', 0.0))
+            rt = pred_rt + delta_rt
+            score = float(row_dict['FinalScore'])
+            sequence = str(row_dict['PeptideSequence'])
+        except (KeyError, ValueError, TypeError) as e:
+            n_parse_error += 1
+            logging.warning(f"pfind 行解析失败 file={raw_title}: {e}")
+            continue
+
+        psm = PSMInfo(
+            sequence=sequence,
+            charge=charge,
+            modify=modifications,
+            rt=np.float32(rt),
+            precursor_mz=np.float32(precursor_mz),
+            raw_title=raw_title,
+            protein_names=proteins,
+            q_value=qvalue,
+            score=score,
+        )
+
+        if not psm.valid():
+            n_filtered_invalid += 1
+            continue
+
+        psms.append(psm)
+
+    logging.info(
+        f"pfind 加载完成 {raw_title}: total={n_total}, "
+        f"kept={len(psms)}, fdr_filtered={n_filtered_fdr}, "
+        f"decoy_filtered={n_filtered_decoy}, "
+        f"invalid={n_filtered_invalid}, parse_error={n_parse_error}"
+    )
+    return psms
