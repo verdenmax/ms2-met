@@ -192,6 +192,11 @@ def main():
         "--logpath", default="./extract_common.log", help="日志文件路径")
     args = parser.parse_args()
 
+    # 确保 log 父目录存在（避免 FileHandler 因目录不存在而失败）
+    log_dir = os.path.dirname(args.logpath)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+
     file_handler = logging.FileHandler(args.logpath, encoding="utf-8")
     file_handler.setFormatter(logging.Formatter(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
