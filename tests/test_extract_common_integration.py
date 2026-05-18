@@ -64,3 +64,30 @@ def test_extract_to_json_roundtrip(tmp_path, sample_pfind_file):
     for p in reconstructed:
         assert p._label_type in ("positive", "negative")
         assert p._q_value is not None
+
+
+FIXTURE_CONFIG = "tests/fixtures/sample_extract_config.ini"
+
+
+def test_load_fixture_config_file(tmp_path):
+    """从磁盘加载 fixture 配置文件并运行完整流程。
+
+    覆盖 `tests/fixtures/sample_extract_config.ini` 中 `result_file` 占位为 tmp_path。
+    """
+    config = configparser.ConfigParser()
+    config.read(FIXTURE_CONFIG)
+    assert "extract" in config, "fixture 缺少 [extract] 段"
+    assert config["extract"].get("engines") == "pfind"
+
+    output = str(tmp_path / "fixture_out.json")
+    config["extract"]["result_file"] = output
+
+    psms = extract_n_engines(config)
+    write_psms_to_json(psms, output)
+
+    assert os.path.exists(output)
+    with open(output) as f:
+        data = json.load(f)
+    assert len(data) == 3
+    labels = {d.get("label_type") for d in data}
+    assert labels == {"positive", "negative"}
