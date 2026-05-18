@@ -190,3 +190,39 @@ def test_load_pfind_file_strict_qvalue(sample_pfind_file):
     relaxed = load_pfind_file(sample_pfind_file, qvalue_threshold=0.1)
     strict = load_pfind_file(sample_pfind_file, qvalue_threshold=0.01)
     assert len(relaxed) == len(strict) + 1
+
+
+from spectrum.pfind_parser import load_pfind_path
+
+
+def test_load_pfind_path_directory(sample_pfind_dir):
+    """目录扫描应加载目录下所有 .qry.res 文件。"""
+    psms = load_pfind_path(sample_pfind_dir, qvalue_threshold=0.01)
+    assert len(psms) == 3
+
+
+def test_load_pfind_path_directory_raw_titles(sample_pfind_dir):
+    """目录扫描出的 PSM 应携带正确的 raw_title。"""
+    psms = load_pfind_path(sample_pfind_dir, qvalue_threshold=0.01)
+    raw_titles = {p._raw_title for p in psms}
+    assert raw_titles == {"raw1", "raw2"}
+
+
+def test_load_pfind_path_single_file(sample_pfind_file):
+    """传单文件路径应仅加载该文件。"""
+    psms = load_pfind_path(sample_pfind_file, qvalue_threshold=0.01)
+    assert len(psms) == 3
+    raw_titles = {p._raw_title for p in psms}
+    assert raw_titles == {"sample_pfind"}
+
+
+def test_load_pfind_path_empty_directory(tmp_path):
+    """空目录应返回空列表，不报错。"""
+    psms = load_pfind_path(str(tmp_path), qvalue_threshold=0.01)
+    assert psms == []
+
+
+def test_load_pfind_path_nonexistent(tmp_path):
+    """不存在的路径应返回空列表并 log error。"""
+    psms = load_pfind_path(str(tmp_path / "nonexistent"), qvalue_threshold=0.01)
+    assert psms == []

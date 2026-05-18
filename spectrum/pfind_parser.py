@@ -3,6 +3,7 @@
 提供修饰名称解析、MH+ → m/z 转换、raw_title 提取等工具。
 """
 import os
+import glob
 import logging
 from functools import lru_cache
 
@@ -258,3 +259,34 @@ def load_pfind_file(
         f"invalid={n_filtered_invalid}, parse_error={n_parse_error}"
     )
     return psms
+
+
+def load_pfind_path(
+    path: str,
+    qvalue_threshold: float = 0.01,
+) -> list:
+    """加载 pfind 路径——目录则扫描所有 .qry.res 文件，单文件则只加载该文件。
+
+    Args:
+        path: 目录或单个 .qry.res 文件路径
+        qvalue_threshold: FDR 阈值
+
+    Returns:
+        list[PSMInfo]
+    """
+    if not os.path.exists(path):
+        logging.error(f"pfind 路径不存在: {path}")
+        return []
+
+    if os.path.isdir(path):
+        files = sorted(glob.glob(os.path.join(path, "*.qry.res")))
+        logging.info(f"pfind 目录扫描: {path}，找到 {len(files)} 个 .qry.res 文件")
+    else:
+        files = [path]
+
+    all_psms = []
+    for file_path in files:
+        all_psms.extend(load_pfind_file(file_path, qvalue_threshold))
+
+    logging.info(f"pfind 路径加载完毕: {path}，共 {len(all_psms)} 条 PSM")
+    return all_psms
