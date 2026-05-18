@@ -1,5 +1,6 @@
 import argparse
 import configparser
+import os
 from banner import banner
 
 import logging
@@ -23,6 +24,11 @@ def main():
     # 解析配置文件
     config = configparser.ConfigParser()
     config.read(args.configpath)
+
+    # 确保日志文件父目录存在，避免 FileHandler 失败
+    log_dir = os.path.dirname(args.logpath)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
 
     # 设置日志文件handle
     file_handler = logging.FileHandler(args.logpath, encoding="utf-8")

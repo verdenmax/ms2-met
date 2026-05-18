@@ -304,6 +304,10 @@ class PairFlow:
             ConfigKeys.GENERAL, ConfigKeys.RESULT_FILE,
             fallback="result.csv")
 
+        result_dir = os.path.dirname(result_file)
+        if result_dir:
+            os.makedirs(result_dir, exist_ok=True)
+
         logging.info(f"保存结果文件 {result_file}")
         ans_df.to_csv(result_file, sep=',', index=False)
 
