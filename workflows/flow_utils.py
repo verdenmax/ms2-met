@@ -68,6 +68,7 @@ def process_psm_pair_shared(
         "protein_names": psm1._protein_names,
         "sequence_len": len(psm1._sequence),
         "label": label,
+        "label_type": "positive" if label == 1 else "negative",
         ** tot_features
     }
 
@@ -98,6 +99,7 @@ def process_psm_single(
         "protein_names": psm1._protein_names,
         "sequence_len": len(psm1._sequence),
         "label": psm1._protein_names,
+        "label_type": psm1._label_type,
         ** tot_features
     }
 
@@ -118,6 +120,7 @@ def process_batch_single(shared_path: str, batch_psm_dicts: list, config):
                 "protein_names": psm._protein_names,
                 "sequence_len": len(psm._sequence),
                 "label": psm._protein_names,
+                "label_type": psm._label_type,
                 **features
             })
         except Exception:
@@ -156,6 +159,7 @@ def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
                 "protein_names": psm1._protein_names,
                 "sequence_len": len(psm1._sequence),
                 "label": label,
+                "label_type": "positive" if label == 1 else "negative",
                 ** tot_features
             })
         except Exception:
@@ -199,6 +203,7 @@ def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, co
                 "protein_names": psm1._protein_names,
                 "sequence_len": len(psm1._sequence),
                 "label": label,
+                "label_type": "positive" if label == 1 else "negative",
                 ** tot_features
             })
         except Exception:

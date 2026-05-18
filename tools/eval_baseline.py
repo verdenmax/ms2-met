@@ -35,9 +35,51 @@ logger = logging.getLogger(__name__)
 
 
 META_COLUMNS = {
-    "sequence", "charge", "raw_title1", "protein_names", "label",
+    "sequence", "charge", "raw_title1", "raw_title2",
+    "protein_names", "label", "label_type",
     "precursor_mz", "sequence_len",
 }
+
+
+def derive_binary_label(df: pd.DataFrame) -> pd.Series:
+    """从 features.csv 中提取二分类标签。
+
+    优先级:
+      1. 新 schema 的 ``label_type`` 列（"positive"/"negative" 字符串）
+      2. 老 schema 中 ``label`` 列已经是 0/1（兼容 pair flow 路径）
+      3. 从 ``protein_names`` 列派生（"HUMAN" 子串 → 正例），匹配
+         tools/extract_common.py 的 marker 检查规则
+    """
+    if "label_type" in df.columns:
+        label_type = df["label_type"]
+        non_null = label_type.dropna()
+        if len(non_null) > 0:
+            mapping = {"positive": 1, "negative": 0}
+            mapped = label_type.map(mapping)
+            if mapped.notna().sum() > 0:
+                logger.info("Using 'label_type' column (positive/negative).")
+                return mapped.fillna(-1).astype(int)
+
+    if "label" in df.columns:
+        label_col = df["label"]
+        try:
+            numeric = pd.to_numeric(label_col, errors="raise")
+            uniq = set(numeric.dropna().unique().tolist())
+            if uniq.issubset({0, 1}):
+                logger.info("Using 'label' column (already 0/1).")
+                return numeric.astype(int)
+        except (ValueError, TypeError):
+            pass
+
+    if "protein_names" in df.columns:
+        logger.info(
+            "Deriving binary label from 'protein_names' via 'HUMAN' substring "
+            "(matches tools/extract_common.py marker rule).")
+        return df["protein_names"].fillna("").str.contains(
+            "HUMAN", regex=False).astype(int)
+
+    raise ValueError(
+        "无法确定二分类 label: 缺少 label_type / 数值 label / protein_names 任一列")
 
 
 def load_features(path: Path) -> tuple[pd.DataFrame, pd.Series, list[str]]:
@@ -45,8 +87,7 @@ def load_features(path: Path) -> tuple[pd.DataFrame, pd.Series, list[str]]:
     logger.info("Loaded %d rows, %d columns from %s",
                 len(df), df.shape[1], path)
 
-    if "label" not in df.columns:
-        raise ValueError("features.csv 缺少 label 列")
+    y = derive_binary_label(df)
 
     feature_cols = [c for c in df.columns if c not in META_COLUMNS]
     logger.info("Using %d feature columns", len(feature_cols))
@@ -54,11 +95,18 @@ def load_features(path: Path) -> tuple[pd.DataFrame, pd.Series, list[str]]:
     X = df[feature_cols].copy()
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
-    y = df["label"].astype(int)
     pos = int((y == 1).sum())
     neg = int((y == 0).sum())
-    logger.info("Positive (HUMAN/correct): %d, Negative (trap/wrong): %d, ratio %.1f:1",
-                pos, neg, pos / max(neg, 1))
+    other = int(((y != 0) & (y != 1)).sum())
+    logger.info("Positive (HUMAN/correct): %d, Negative (trap/wrong): %d, "
+                "Unknown: %d, ratio %.1f:1",
+                pos, neg, other, pos / max(neg, 1))
+    if other > 0:
+        logger.warning("有 %d 条 PSM 的 label 既不是 positive 也不是 negative，"
+                       "已被过滤", other)
+        mask = (y == 0) | (y == 1)
+        X = X[mask].reset_index(drop=True)
+        y = y[mask].reset_index(drop=True)
 
     return X, y, feature_cols
 
