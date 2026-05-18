@@ -29,6 +29,9 @@ class PSMInfo:
         precursor_mz: np.float32,
         raw_title: str,
         protein_names: str,
+        q_value: float | None = None,
+        score: float | None = None,
+        label_type: str | None = None,
     ):
 
         self._sequence = sequence
@@ -38,10 +41,13 @@ class PSMInfo:
         self._precursor_mz = precursor_mz
         self._raw_title = raw_title
         self._protein_names = protein_names
+        self._q_value = q_value
+        self._score = score
+        self._label_type = label_type
 
     def to_dict(self):
         """将对象转为 JSON 兼容的字典"""
-        return {
+        d = {
             "sequence": self._sequence,
             "charge": self._charge,
             "modify": [list(pair) for pair in self._modify],  # tuple -> list
@@ -51,10 +57,17 @@ class PSMInfo:
             "raw_title": self._raw_title,
             "protein_names": self._protein_names,
         }
+        if self._q_value is not None:
+            d["q_value"] = float(self._q_value)
+        if self._score is not None:
+            d["score"] = float(self._score)
+        if self._label_type is not None:
+            d["label_type"] = self._label_type
+        return d
 
     @classmethod
     def from_dict(cls, data: dict):
-        """从字典重建 PSMInfo 对象"""
+        """从字典重建 PSMInfo 对象，对新字段做 None 兜底以兼容老 JSON"""
         return cls(
             sequence=data["sequence"],
             charge=data["charge"],
@@ -64,6 +77,9 @@ class PSMInfo:
             precursor_mz=np.float32(data["precursor_mz"]),
             raw_title=data["raw_title"],
             protein_names=data["protein_names"],
+            q_value=data.get("q_value"),
+            score=data.get("score"),
+            label_type=data.get("label_type"),
         )
 
     def __repr__(self):
