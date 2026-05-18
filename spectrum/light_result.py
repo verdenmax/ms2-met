@@ -7,6 +7,7 @@ import pandas as pd
 import logging
 
 from spectrum.psm_info import PSMInfo
+from spectrum.pfind_parser import load_pfind_path
 
 
 class LightResult:
@@ -105,6 +106,16 @@ class LightResult:
 
             self.psm_info.append(tot_psminfo)
 
+        self.peptide_len = len(self.psm_info)
+
+    def _load_from_pfind_input(
+        self,
+        light_result_path: str,
+        qvalue_threshold: float = 0.01,
+    ):
+        """加载 pfind 搜索结果（.qry.res 单文件或目录）。"""
+        self.psm_info = load_pfind_path(
+            light_result_path, qvalue_threshold=qvalue_threshold)
         self.peptide_len = len(self.psm_info)
 
     def filtered_by_raw_title(

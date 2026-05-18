@@ -21,6 +21,9 @@ class ConfigKeys(metaclass=ConstantsClass):
     LIGHT_RESULT_PATH = "light_result_file"
     SEARCH_ENGINE_TYPE = "search_engine_type"
 
+    # pfind 特有配置
+    PFIND_QVALUE_THRESHOLD = "pfind_qvalue_threshold"
+
     GENERAL = "general"
     WORK_DIRECTORY = "work_directory"
     MASS_TOL_PPM = "mass_tol_ppm"
