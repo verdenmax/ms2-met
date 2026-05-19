@@ -138,3 +138,127 @@ def is_separable_fragment(
     """
     is_shifted = (heavy_mass - light_mass) > shift_epsilon
     return bool(is_shifted or split_window)
+
+
+class Q1aAccumulator:
+    """Per-PSM accumulator for Q1a features.
+
+    Usage:
+        acc = Q1aAccumulator(split_window=is_split_window(w_L, w_H))
+        for ion_type, position, light_mass, heavy_mass in fragments:
+            light_xic = dia.xic_ms2_peaks_extract(...)
+            heavy_xic = dia.xic_ms2_peaks_extract(...)
+            acc.add(ion_type, light_mass, heavy_mass, light_xic, heavy_xic)
+        features.update(acc.compute_features())
+
+    All 11 output features are produced by compute_features().
+    """
+
+    MIN_VALID_TOTAL = 3  # spec §4.2: q1a_valid = (total >= 3)
+
+    def __init__(
+        self,
+        split_window: bool,
+        intensity_floor: float = DEFAULT_INTENSITY_FLOOR,
+        apex_delta_fraction: float = DEFAULT_APEX_DELTA_FRACTION,
+        pearson_min: float = DEFAULT_PEARSON_MIN,
+    ):
+        self.split_window = split_window
+        self.intensity_floor = intensity_floor
+        self.apex_delta_fraction = apex_delta_fraction
+        self.pearson_min = pearson_min
+        # Bucket counters: keys are (mechanism, ion_type, outcome)
+        # mechanism ∈ {"shifted", "unshifted_separable"}
+        # ion_type ∈ {"b", "y"}
+        # outcome ∈ {"TP", "FN"}
+        self._counts: dict[tuple, int] = {}
+
+    def add(self, ion_type: str, light_mass: float, heavy_mass: float,
+            light_xic, heavy_xic) -> None:
+        """Process one theoretical fragment.
+
+        Side effects: increments internal counters. Has no return value.
+        Fragments that are not separable OR have no light signal are
+        silently dropped from Q1a statistics.
+        """
+        if not is_separable_fragment(light_mass, heavy_mass, self.split_window):
+            return
+        is_shifted = (heavy_mass - light_mass) > SHIFT_EPSILON
+        mechanism = "shifted" if is_shifted else "unshifted_separable"
+
+        if not is_signal_present_light(light_xic, self.intensity_floor):
+            return
+
+        heavy_present = is_signal_present_heavy(
+            light_xic, heavy_xic,
+            intensity_floor=self.intensity_floor,
+            apex_delta_fraction=self.apex_delta_fraction,
+            pearson_min=self.pearson_min,
+        )
+        outcome = "TP" if heavy_present else "FN"
+
+        key = (mechanism, ion_type, outcome)
+        self._counts[key] = self._counts.get(key, 0) + 1
+
+    def _sum(self, mechanism=None, ion_type=None, outcome=None) -> int:
+        """Sum counters filtered by mechanism/ion_type/outcome (None means wildcard)."""
+        total = 0
+        for (m, i, o), n in self._counts.items():
+            if mechanism is not None and m != mechanism:
+                continue
+            if ion_type is not None and i != ion_type:
+                continue
+            if outcome is not None and o != outcome:
+                continue
+            total += n
+        return total
+
+    def _recall(self, mechanism=None, ion_type=None) -> float:
+        tp = self._sum(mechanism=mechanism, ion_type=ion_type, outcome="TP")
+        fn = self._sum(mechanism=mechanism, ion_type=ion_type, outcome="FN")
+        total = tp + fn
+        # MIN_VALID_TOTAL only applies to overall + per-mechanism recall.
+        # Per-ion-type recall (q1a_y_recall / q1a_b_recall) is reported
+        # whenever the bucket is non-empty.
+        if ion_type is None:
+            if total < self.MIN_VALID_TOTAL:
+                return float("nan")
+        else:
+            if total == 0:
+                return float("nan")
+        return tp / total
+
+    def compute_features(self) -> dict:
+        """Return the 11-field Q1a feature dict.
+
+        Conventions:
+          - recall is NaN when its bucket has < MIN_VALID_TOTAL (3) entries.
+          - q1a_recall_unshifted_separable is additionally NaN under
+            co-isolation (where unshifted_separable count is always 0).
+          - count features are always integers.
+        """
+        tp_total = self._sum(outcome="TP")
+        fn_total = self._sum(outcome="FN")
+        total = tp_total + fn_total
+        tp_shifted = self._sum(mechanism="shifted", outcome="TP")
+        tp_unsh = self._sum(mechanism="unshifted_separable", outcome="TP")
+
+        # In co-iso, unshifted_separable bucket is by construction empty.
+        if not self.split_window:
+            recall_unsh = float("nan")
+        else:
+            recall_unsh = self._recall(mechanism="unshifted_separable")
+
+        return {
+            "q1a_recall": self._recall(),
+            "q1a_recall_shifted": self._recall(mechanism="shifted"),
+            "q1a_recall_unshifted_separable": recall_unsh,
+            "q1a_y_recall": self._recall(ion_type="y"),
+            "q1a_b_recall": self._recall(ion_type="b"),
+            "q1a_TP_count": tp_total,
+            "q1a_FN_count": fn_total,
+            "q1a_TP_shifted": tp_shifted,
+            "q1a_TP_unshifted_separable": tp_unsh,
+            "q1a_total_count": total,
+            "q1a_valid": 1 if total >= self.MIN_VALID_TOTAL else 0,
+        }

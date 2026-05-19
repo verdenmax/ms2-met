@@ -148,3 +148,147 @@ def test_unshifted_fragment_separable_only_in_split_window():
         light_mass=300.0, heavy_mass=300.0, split_window=True) is True
     assert is_separable_fragment(
         light_mass=300.0, heavy_mass=300.0, split_window=False) is False
+
+
+# ----------------------------------------------------------------------
+# Q1aAccumulator (per-PSM, builds the 11 output features)
+# ----------------------------------------------------------------------
+
+def _silac_pair(light_int, heavy_int, n=5):
+    """Build a (light_xic, heavy_xic) pair with given peak intensities,
+    aligned apex, gaussian-ish shape."""
+    rts = np.linspace(10, 14, n)
+    factor_l = light_int / 500.0
+    factor_h = heavy_int / 500.0
+    light = _xic(rts, [50 * factor_l, 200 * factor_l, 500 * factor_l,
+                       200 * factor_l, 50 * factor_l])
+    heavy = _xic(rts, [50 * factor_h, 200 * factor_h, 500 * factor_h,
+                       200 * factor_h, 50 * factor_h])
+    return light, heavy
+
+
+def _empty_xic():
+    return _xic([], [])
+
+
+def test_q1a_accumulator_perfect_silac_recall_1():
+    """5 shifted fragments all paired → q1a_recall = 1, valid = 1."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=False)
+    for ion_type in ("y", "y", "y", "y", "b"):
+        light, heavy = _silac_pair(500, 400)
+        acc.add(ion_type=ion_type,
+                light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+    feats = acc.compute_features()
+    assert feats["q1a_TP_count"] == 5
+    assert feats["q1a_FN_count"] == 0
+    assert feats["q1a_recall"] == 1.0
+    assert feats["q1a_valid"] == 1
+    assert feats["q1a_total_count"] == 5
+    assert feats["q1a_recall_shifted"] == 1.0
+    # No unshifted_separable contributions
+    assert np.isnan(feats["q1a_recall_unshifted_separable"])
+
+
+def test_q1a_accumulator_trap_no_heavy_recall_0():
+    """5 shifted fragments where heavy XIC is empty → FN, recall=0."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=False)
+    for _ in range(5):
+        light, _ = _silac_pair(500, 0)
+        acc.add(ion_type="y",
+                light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=_empty_xic())
+    feats = acc.compute_features()
+    assert feats["q1a_TP_count"] == 0
+    assert feats["q1a_FN_count"] == 5
+    assert feats["q1a_recall"] == 0.0
+    assert feats["q1a_valid"] == 1
+
+
+def test_q1a_accumulator_total_lt_3_recall_nan_valid_0():
+    """Only 2 separable fragments → q1a_valid=0, q1a_recall=NaN."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=False)
+    for _ in range(2):
+        light, heavy = _silac_pair(500, 400)
+        acc.add(ion_type="y",
+                light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+    feats = acc.compute_features()
+    assert feats["q1a_total_count"] == 2
+    assert feats["q1a_valid"] == 0
+    assert np.isnan(feats["q1a_recall"])
+    assert np.isnan(feats["q1a_recall_shifted"])
+
+
+def test_q1a_accumulator_unshifted_skipped_under_co_iso():
+    """Co-isolation + unshifted (b ion no K/R) fragments → not added."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=False)
+    for _ in range(5):
+        light, heavy = _silac_pair(500, 400)
+        acc.add(ion_type="b",
+                light_mass=300.0, heavy_mass=300.0,
+                light_xic=light, heavy_xic=heavy)
+    feats = acc.compute_features()
+    assert feats["q1a_total_count"] == 0
+    assert feats["q1a_valid"] == 0
+    assert np.isnan(feats["q1a_recall"])
+
+
+def test_q1a_accumulator_unshifted_separable_under_split_iso():
+    """Split window + unshifted fragment → counts under
+    q1a_recall_unshifted_separable."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=True)
+    for _ in range(5):
+        light, heavy = _silac_pair(500, 400)
+        acc.add(ion_type="b",
+                light_mass=300.0, heavy_mass=300.0,
+                light_xic=light, heavy_xic=heavy)
+    feats = acc.compute_features()
+    assert feats["q1a_total_count"] == 5
+    assert feats["q1a_TP_unshifted_separable"] == 5
+    assert feats["q1a_recall_unshifted_separable"] == 1.0
+    # And the *_shifted slice is empty here → NaN
+    assert np.isnan(feats["q1a_recall_shifted"])
+
+
+def test_q1a_accumulator_light_invalid_excluded():
+    """Fragments where light signal is below floor → neither TP nor FN."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=False, intensity_floor=100)
+    # Light intensity 50 < floor 100 → fragment excluded
+    light = _xic([10, 11, 12], [10, 30, 50])
+    heavy = _xic([10, 11, 12], [10, 30, 50])
+    for _ in range(5):
+        acc.add(ion_type="y",
+                light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+    feats = acc.compute_features()
+    assert feats["q1a_total_count"] == 0
+    assert np.isnan(feats["q1a_recall"])
+
+
+def test_q1a_accumulator_y_b_split():
+    """y and b counts are tracked separately."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=False)
+    # 3 y TP, 2 b TP
+    for _ in range(3):
+        light, heavy = _silac_pair(500, 400)
+        acc.add(ion_type="y",
+                light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+    for _ in range(2):
+        light, heavy = _silac_pair(500, 400)
+        acc.add(ion_type="b",
+                light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+    feats = acc.compute_features()
+    assert feats["q1a_y_recall"] == 1.0
+    assert feats["q1a_b_recall"] == 1.0
+    assert feats["q1a_TP_count"] == 5
+    assert feats["q1a_total_count"] == 5
