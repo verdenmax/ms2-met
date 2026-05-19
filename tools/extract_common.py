@@ -34,6 +34,12 @@ SUPPORTED_ENGINES = {"pfind", "diann", "alphadia"}
 # entrapment 默认剔除的级别：质谱不可分级
 DEFAULT_DROP_LEVELS = frozenset({"L0", "L1"})
 
+# proteinCopilot entrapment 分级合法值
+VALID_ENTRAPMENT_LEVELS = frozenset({"L0", "L1", "L2", "L3", "L4"})
+
+# 严重程度优先级：collision 时保留更严重的（数字越小越严重）
+_LEVEL_SEVERITY = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4}
+
 
 def load_engine_psms(engine_name: str, config: configparser.ConfigParser) -> list:
     """根据引擎名加载对应 PSM 列表。"""
@@ -171,12 +177,24 @@ def load_entrapment_classifications(tsv_path: str) -> dict:
 
     Returns:
         dict[(sequence, charge, raw_title) -> level]。
-        缺少 level 字段的行会被跳过（不计入索引）。
+        - 缺少 level 字段的行会被跳过
+        - group != "trap" 的行（如 target 行）会被跳过
+        - 非法 level（不在 L0-L4 中）的行会被跳过并 warn
+        - charge 写成 "2.0" 浮点字符串可正确解析
+        - 同 key 多行（不同 modify variant）合并：
+          * 若 level 一致 → 静默合并
+          * 若 level 不一致 → warn，保留严重性最高的（L0 > L1 > L2 > L3 > L4）
 
     Note:
         匹配键忽略 modify：L0/L1 是序列层判定（stripped sequence），
         同 (seq, charge, raw) 不同修饰的 PSM 共享 level。
     """
+    # 不存在路径 → 抛带路径上下文的异常
+    if not os.path.exists(tsv_path):
+        raise FileNotFoundError(
+            f"classified.tsv 路径不存在: '{tsv_path}'")
+
+    # keep_default_na=False 重要：避免肽段 "NA"、"NaN" 被 pandas 解析为 NaN
     df = pd.read_csv(tsv_path, sep="\t", dtype=str, keep_default_na=False)
 
     required = {"peptide", "charge", "spectrum_file", "level"}
@@ -185,23 +203,81 @@ def load_entrapment_classifications(tsv_path: str) -> dict:
         raise ValueError(
             f"classified.tsv 缺少列 {sorted(missing)}（已有 {sorted(df.columns)}）")
 
+    has_group_col = "group" in df.columns
+
+    total_rows = len(df)
+    skipped_empty_level = 0
+    skipped_bad_charge = 0
+    skipped_non_trap = 0
+    skipped_empty_field = 0
+    skipped_invalid_level = 0
+    collisions = 0
+    conflicts = 0
+
     result: dict = {}
     for row in df.itertuples(index=False):
+        if has_group_col:
+            group_val = (getattr(row, "group", "") or "").strip().lower()
+            if group_val and group_val != "trap":
+                skipped_non_trap += 1
+                continue
+
         level = (row.level or "").strip()
         if not level:
+            skipped_empty_level += 1
             continue
+
+        # 标准化 + 白名单
+        level_upper = level.upper()
+        if level_upper not in VALID_ENTRAPMENT_LEVELS:
+            logging.warning(
+                f"classified.tsv 含非法 level={level!r}（合法: "
+                f"{sorted(VALID_ENTRAPMENT_LEVELS)}），跳过该行")
+            skipped_invalid_level += 1
+            continue
+        level = level_upper
+
+        # charge 解析：兼容 "2", "2.0", "  3 " 等
+        charge_raw = (row.charge or "").strip()
         try:
-            charge = int(row.charge)
+            charge = int(float(charge_raw))
         except (ValueError, TypeError):
+            skipped_bad_charge += 1
             continue
+
         peptide = (row.peptide or "").strip()
         raw_title = (row.spectrum_file or "").strip()
         if not peptide or not raw_title:
+            skipped_empty_field += 1
             continue
-        result[(peptide, charge, raw_title)] = level
+
+        key = (peptide, charge, raw_title)
+        if key in result:
+            collisions += 1
+            existing = result[key]
+            if existing != level:
+                conflicts += 1
+                # 取更严重的 level（数值小者）
+                new_level = (existing if _LEVEL_SEVERITY[existing]
+                             <= _LEVEL_SEVERITY[level] else level)
+                logging.warning(
+                    f"classified.tsv 同 key={key} 出现冲突 level: "
+                    f"existing={existing}, new={level} → 保留更严重的 {new_level}")
+                result[key] = new_level
+            # else: 同 level 静默合并
+        else:
+            result[key] = level
 
     logging.info(
-        f"加载 entrapment 分类: {len(result)} 条 PSM 来自 {tsv_path}")
+        f"加载 entrapment 分类: total_rows={total_rows}, loaded={len(result)}, "
+        f"skipped_empty_level={skipped_empty_level}, "
+        f"skipped_bad_charge={skipped_bad_charge}, "
+        f"skipped_non_trap={skipped_non_trap}, "
+        f"skipped_invalid_level={skipped_invalid_level}, "
+        f"skipped_empty_field={skipped_empty_field}, "
+        f"collisions={collisions} (conflicts={conflicts}) "
+        f"来自 {tsv_path}"
+    )
     return result
 
 
@@ -215,18 +291,20 @@ def filter_by_entrapment(
     Args:
         psms: PSMInfo 列表（已设置 label_type）
         classifications: load_entrapment_classifications 的输出
-        drop_levels: 要剔除的 level 集合，默认 {"L0", "L1"}（质谱不可分）
+        drop_levels: 要剔除的 level 集合，默认 {"L0", "L1"}（质谱不可分）。
+            支持小写输入（内部 normalize 为大写）。
 
     Returns:
         过滤后的 PSMInfo 列表。规则：
           - label_type == "negative" 且 (seq, charge, raw_title) 命中 drop_levels → 剔除
           - 其他 negative（不在 classifications 中或 level 不在 drop_levels） → 保留
           - positive PSM 一律不动（即使误进 classified.tsv）
+          - label_type 为其他值（None 等）也一律不动
 
         匹配只看 (sequence, charge, raw_title)，忽略 modify；被保留的 PSM 自身
         modify 字段不变。
     """
-    drop_levels = set(drop_levels)
+    drop_levels = {lvl.strip().upper() for lvl in drop_levels}
     if not classifications or not drop_levels:
         return list(psms)
 

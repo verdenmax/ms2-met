@@ -399,3 +399,277 @@ def test_filter_by_entrapment_custom_drop_levels():
 
     seqs = {p._sequence for p in result}
     assert seqs == {"L4PEP"}
+
+
+# ------------------------------------------------------------------
+# 加固 / 边界 case 测试（review 后补齐）
+# ------------------------------------------------------------------
+
+
+def _write_classified_tsv_with_group(path, rows):
+    """带 group 列 + 任意额外字段的 TSV，rows 是 dict 列表"""
+    header = ["peptide", "charge", "precursor_mz", "retention_time",
+              "scan_number", "spectrum_file", "protein_ids", "q_value",
+              "group", "level"]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\t".join(header) + "\n")
+        for r in rows:
+            f.write("\t".join([
+                str(r.get("peptide", "")),
+                str(r.get("charge", "")),
+                str(r.get("precursor_mz", "0")),
+                str(r.get("retention_time", "0")),
+                str(r.get("scan_number", "")),
+                str(r.get("spectrum_file", "")),
+                str(r.get("protein_ids", "")),
+                str(r.get("q_value", "")),
+                str(r.get("group", "trap")),
+                str(r.get("level", "")),
+            ]) + "\n")
+
+
+def test_load_handles_float_like_charge(tmp_path):
+    """charge='2.0' 应被解析为 2（防 pandas 上游 NaN 污染导致的字符串变形）"""
+    from tools.extract_common import load_entrapment_classifications
+
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv_with_group(tsv, [
+        {"peptide": "AAAK", "charge": "2.0", "spectrum_file": "raw1", "level": "L0"},
+        {"peptide": "BBBR", "charge": "3.0", "spectrum_file": "raw1", "level": "L1"},
+    ])
+    cls = load_entrapment_classifications(str(tsv))
+    assert cls.get(("AAAK", 2, "raw1")) == "L0"
+    assert cls.get(("BBBR", 3, "raw1")) == "L1"
+
+
+def test_load_logs_skipped_counts(tmp_path, caplog):
+    """log 应包含 total_rows / loaded / skipped_empty_level / skipped_bad_charge / collisions"""
+    import logging
+    from tools.extract_common import load_entrapment_classifications
+
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv_with_group(tsv, [
+        {"peptide": "AAAK", "charge": "2", "spectrum_file": "raw1", "level": "L0"},
+        {"peptide": "EMPTY", "charge": "2", "spectrum_file": "raw1", "level": ""},
+        {"peptide": "BADCHG", "charge": "abc", "spectrum_file": "raw1", "level": "L0"},
+        {"peptide": "AAAK", "charge": "2", "spectrum_file": "raw1", "level": "L0"},  # dup
+    ])
+
+    with caplog.at_level(logging.INFO, logger=""):
+        cls = load_entrapment_classifications(str(tsv))
+
+    assert len(cls) == 1  # AAAK 一个 key
+    log_text = "\n".join(r.message for r in caplog.records)
+    assert "total_rows=4" in log_text
+    assert "loaded=1" in log_text
+    assert "skipped_empty_level=1" in log_text
+    assert "skipped_bad_charge=1" in log_text
+    assert "collisions=1" in log_text
+
+
+def test_load_collision_same_level_ok(tmp_path, caplog):
+    """同 (seq, charge, raw) 不同 modify 但 level 一致 → 不 warn"""
+    import logging
+    from tools.extract_common import load_entrapment_classifications
+
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv_with_group(tsv, [
+        {"peptide": "AAAK", "charge": "2", "spectrum_file": "raw1", "level": "L0"},
+        {"peptide": "AAAK", "charge": "2", "spectrum_file": "raw1", "level": "L0"},
+    ])
+    with caplog.at_level(logging.WARNING, logger=""):
+        cls = load_entrapment_classifications(str(tsv))
+
+    assert cls[("AAAK", 2, "raw1")] == "L0"
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    # 同 level 合并不应触发 warning
+    inconsistency_warnings = [
+        w for w in warnings if "conflict" in w.message.lower()
+        or "不一致" in w.message]
+    assert len(inconsistency_warnings) == 0
+
+
+def test_load_collision_different_level_warns(tmp_path, caplog):
+    """同 key 不同 level → logging.warning，保留 most-severe (L0 > L1 > L2 > L3 > L4)"""
+    import logging
+    from tools.extract_common import load_entrapment_classifications
+
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv_with_group(tsv, [
+        {"peptide": "AAAK", "charge": "2", "spectrum_file": "raw1", "level": "L4"},
+        {"peptide": "AAAK", "charge": "2", "spectrum_file": "raw1", "level": "L0"},  # 更严重
+        {"peptide": "BBBR", "charge": "2", "spectrum_file": "raw1", "level": "L2"},
+        {"peptide": "BBBR", "charge": "2", "spectrum_file": "raw1", "level": "L3"},  # 较轻
+    ])
+    with caplog.at_level(logging.WARNING, logger=""):
+        cls = load_entrapment_classifications(str(tsv))
+
+    # L0 是最严重，应保留
+    assert cls[("AAAK", 2, "raw1")] == "L0"
+    # L2 比 L3 严重
+    assert cls[("BBBR", 2, "raw1")] == "L2"
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    # 至少有一条 warning 提到 conflict / 不一致 / 冲突
+    assert any("conflict" in w.message.lower() or "不一致" in w.message
+               or "冲突" in w.message
+               for w in warnings)
+
+
+def test_load_filters_non_trap_rows(tmp_path):
+    """group='target' 行不应进 dict"""
+    from tools.extract_common import load_entrapment_classifications
+
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv_with_group(tsv, [
+        {"peptide": "TRAP1", "charge": "2", "spectrum_file": "raw1",
+         "group": "trap", "level": "L0"},
+        {"peptide": "TARGET1", "charge": "2", "spectrum_file": "raw1",
+         "group": "target", "level": "L0"},
+        {"peptide": "TRAP_CAPS", "charge": "2", "spectrum_file": "raw1",
+         "group": "TRAP", "level": "L1"},  # case-insensitive
+    ])
+    cls = load_entrapment_classifications(str(tsv))
+
+    assert ("TRAP1", 2, "raw1") in cls
+    assert ("TARGET1", 2, "raw1") not in cls
+    assert ("TRAP_CAPS", 2, "raw1") in cls
+
+
+def test_load_validates_level_values(tmp_path, caplog):
+    """L5 等非法 level 应跳过并 warn；l0 lowercase 应被 normalize 为 L0 (友好)"""
+    import logging
+    from tools.extract_common import load_entrapment_classifications
+
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv_with_group(tsv, [
+        {"peptide": "GOOD", "charge": "2", "spectrum_file": "raw1", "level": "L0"},
+        {"peptide": "WRONG_L5", "charge": "2", "spectrum_file": "raw1", "level": "L5"},
+        {"peptide": "LOWERCASE", "charge": "2", "spectrum_file": "raw1", "level": "l0"},
+    ])
+    with caplog.at_level(logging.WARNING, logger=""):
+        cls = load_entrapment_classifications(str(tsv))
+
+    assert cls[("GOOD", 2, "raw1")] == "L0"
+    # L5 是真非法 → 拒绝
+    assert ("WRONG_L5", 2, "raw1") not in cls
+    # l0 应被 normalize 为 L0（友好处理大小写错误）
+    assert cls.get(("LOWERCASE", 2, "raw1")) == "L0"
+    # 仍应有 warning 提到 L5
+    assert any("L5" in r.message for r in caplog.records
+               if r.levelno >= logging.WARNING)
+
+
+def test_filter_case_insensitive_drop_levels():
+    """drop_levels={'l0'} 小写应等价于大写"""
+    from tools.extract_common import filter_by_entrapment
+
+    psm = _make_psm("X", 2, "TRAP", raw="r1")
+    psm._label_type = "negative"
+    classifications = {("X", 2, "r1"): "L0"}
+
+    result = filter_by_entrapment([psm], classifications, drop_levels={"l0"})
+    assert len(result) == 0  # 应被剔除
+
+
+def test_load_missing_file_helpful_error(tmp_path):
+    """文件不存在 → 异常 message 含路径"""
+    from tools.extract_common import load_entrapment_classifications
+
+    bad_path = str(tmp_path / "nope.tsv")
+    with pytest.raises(FileNotFoundError) as excinfo:
+        load_entrapment_classifications(bad_path)
+    assert bad_path in str(excinfo.value) or "nope.tsv" in str(excinfo.value)
+
+
+def test_extract_n_engines_with_entrapment_section_e2e(tmp_path, monkeypatch):
+    """完整 extract_n_engines() 走 [entrapment] 段"""
+    import configparser
+    from tools import extract_common
+
+    # 准备：3 个 negative，其中 L0/L1 应被剔除
+    psm_l0_neg = _make_psm("L0X", 2, "TRAP", raw="r1")
+    psm_l0_neg._label_type = "negative"
+    psm_l4_neg = _make_psm("L4X", 2, "TRAP", raw="r1")
+    psm_l4_neg._label_type = "negative"
+    psm_pos = _make_psm("HUM", 2, "X_HUMAN", raw="r1")
+    psm_pos._label_type = "positive"
+
+    # monkey-patch extract_n_engines_from_psms 不执行真引擎加载
+    def fake_load_engine_psms(engine_name, config):
+        return []  # 不用真引擎
+    def fake_extract(engine_psms, engine_order, marker):
+        return [psm_l0_neg, psm_l4_neg, psm_pos]
+
+    monkeypatch.setattr(extract_common, "load_engine_psms",
+                        fake_load_engine_psms)
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+                        fake_extract)
+
+    # 构造 classified.tsv
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv_with_group(tsv, [
+        {"peptide": "L0X", "charge": "2", "spectrum_file": "r1", "level": "L0"},
+        {"peptide": "L4X", "charge": "2", "spectrum_file": "r1", "level": "L4"},
+    ])
+
+    cfg = configparser.ConfigParser()
+    cfg["extract"] = {
+        "engines": "pfind",
+        "positive_species_marker": "HUMAN",
+    }
+    cfg["engine.pfind"] = {"path": "/dev/null"}
+    cfg["entrapment"] = {
+        "classified_tsv": str(tsv),
+        "drop_levels": "L0,L1",
+    }
+
+    result = extract_common.extract_n_engines(cfg)
+    seqs = {p._sequence for p in result}
+    assert "L0X" not in seqs
+    assert "L4X" in seqs
+    assert "HUM" in seqs
+
+
+def test_extract_n_engines_no_entrapment_section_skips(tmp_path, monkeypatch):
+    """没有 [entrapment] 段 → 不调用 filter"""
+    import configparser
+    from tools import extract_common
+
+    psm_neg = _make_psm("L0X", 2, "TRAP", raw="r1")
+    psm_neg._label_type = "negative"
+
+    monkeypatch.setattr(extract_common, "load_engine_psms",
+                        lambda n, c: [])
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+                        lambda ep, eo, m: [psm_neg])
+
+    cfg = configparser.ConfigParser()
+    cfg["extract"] = {"engines": "pfind", "positive_species_marker": "HUMAN"}
+    cfg["engine.pfind"] = {"path": "/dev/null"}
+    # 注意：故意不加 [entrapment]
+
+    result = extract_common.extract_n_engines(cfg)
+    assert len(result) == 1
+
+
+def test_extract_n_engines_empty_classified_tsv_path(tmp_path, monkeypatch):
+    """[entrapment] 段存在但 classified_tsv 为空 → 跳过过滤，不报错"""
+    import configparser
+    from tools import extract_common
+
+    psm_neg = _make_psm("X", 2, "TRAP", raw="r1")
+    psm_neg._label_type = "negative"
+
+    monkeypatch.setattr(extract_common, "load_engine_psms",
+                        lambda n, c: [])
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+                        lambda ep, eo, m: [psm_neg])
+
+    cfg = configparser.ConfigParser()
+    cfg["extract"] = {"engines": "pfind", "positive_species_marker": "HUMAN"}
+    cfg["engine.pfind"] = {"path": "/dev/null"}
+    cfg["entrapment"] = {"classified_tsv": ""}
+
+    result = extract_common.extract_n_engines(cfg)
+    assert len(result) == 1
