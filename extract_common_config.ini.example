@@ -30,15 +30,29 @@ path = ./hela-mix-2da_report.parquet
 # ----------------------------------------------------------------------
 # [entrapment]（可选）：用 entrapment 分类剔除质谱不可分级的"伪负例"。
 #
-# 你可以用 ms2-met 自带的 classifier 生成 classified_tsv：
+# 两种使用方式（**二选一**，TSV 优先于 FASTA）：
 #
+# 【方式 A】一步式：内联 FASTA 分类（推荐 — 新数据集首次使用时）
+#   ms2-met 自动用 substring 算法（含 L↔I normalize）对 negatives
+#   做 L0/L1 分类，单次 extract_common 命令完成全部步骤。
+#
+#   [entrapment]
+#   target_fasta = /path/to/human_swissprot.fasta
+#   drop_levels = L0, L1
+#
+# 【方式 B】两步式：用预先生成的 classified.tsv
+#   适用于已经在 proteinCopilot 跑过 entrapment 分析、或想固定一份
+#   classification 跨多次 extract 使用：
+#
+#   # Step 1: 先生成 classified.tsv
 #   python -m tools.entrapment_classify \
 #     --negatives datasets/hela_2da_pfind_diann.json \
 #     --target-fasta /path/to/human_swissprot.fasta \
 #     --output datasets/entrapment_classified.tsv
-#
-# 也兼容 proteinCopilot 的 classified.tsv 输出。匹配键为
-# (sequence, charge, raw_title)，忽略 modify。
+#   # Step 2: 在 extract config 中引用
+#   [entrapment]
+#   classified_tsv = ./datasets/entrapment_classified.tsv
+#   drop_levels = L0, L1
 #
 # Level 含义：
 #   L0  razor-error      序列在 target 库中精确存在 → 质谱不可分
@@ -51,5 +65,5 @@ path = ./hela-mix-2da_report.parquet
 # negative 中 (seq, charge, raw) 未在 classified.tsv 出现 → 保守保留。
 # ----------------------------------------------------------------------
 # [entrapment]
-# classified_tsv = ./datasets/entrapment_classified.tsv
+# target_fasta = /path/to/human_swissprot.fasta
 # drop_levels = L0, L1

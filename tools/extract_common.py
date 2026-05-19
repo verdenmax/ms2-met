@@ -373,14 +373,44 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
 
     if "entrapment" in config:
         classified_tsv = config["entrapment"].get("classified_tsv", "").strip()
+        target_fasta = config["entrapment"].get("target_fasta", "").strip()
+        drop_levels_str = config["entrapment"].get(
+            "drop_levels", "L0,L1").strip()
+        drop_levels = {
+            lvl.strip().upper() for lvl in drop_levels_str.split(",")
+            if lvl.strip()
+        }
+
+        classifications = None
         if classified_tsv:
-            drop_levels_str = config["entrapment"].get(
-                "drop_levels", "L0,L1").strip()
-            drop_levels = {
-                lvl.strip().upper() for lvl in drop_levels_str.split(",")
-                if lvl.strip()
-            }
+            # Explicit TSV wins (precomputed by proteinCopilot or earlier run)
             classifications = load_entrapment_classifications(classified_tsv)
+            if target_fasta:
+                logging.info(
+                    "[entrapment] 同时指定了 classified_tsv 和 target_fasta；"
+                    "使用 classified_tsv（显式 > 派生）")
+        elif target_fasta:
+            # In-memory classification: run classifier on the negatives we
+            # just constructed. Saves a round-trip through disk TSV.
+            from spectrum.entrapment_classifier import (
+                classify_peptide, load_target_fasta,
+            )
+            target = load_target_fasta(target_fasta)
+            classifications = {}
+            n_negative_classified = 0
+            for psm in psms:
+                if psm._label_type != "negative":
+                    continue
+                level = classify_peptide(psm._sequence, target)
+                key = (psm._sequence, psm._charge, psm._raw_title)
+                classifications[key] = level
+                n_negative_classified += 1
+            logging.info(
+                f"[entrapment] 内联分类完成: target={target_fasta}, "
+                f"n_proteins={target.n_proteins}, "
+                f"classified={n_negative_classified} negatives")
+
+        if classifications is not None:
             psms = filter_by_entrapment(
                 psms, classifications, drop_levels=drop_levels)
 

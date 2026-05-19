@@ -673,3 +673,104 @@ def test_extract_n_engines_empty_classified_tsv_path(tmp_path, monkeypatch):
 
     result = extract_common.extract_n_engines(cfg)
     assert len(result) == 1
+
+
+# ----------------------------------------------------------------------
+# Inline FASTA entrapment classification (one-step mode)
+# ----------------------------------------------------------------------
+
+def test_extract_with_target_fasta_runs_classifier_inline(tmp_path, monkeypatch):
+    """[entrapment] target_fasta → extract_common runs the classifier
+    in-memory and applies the L0/L1 filter in one command, without
+    requiring a pre-built classified.tsv."""
+    import configparser
+    from tools import extract_common
+
+    psm_l0_neg = _make_psm("HUMANSEQ", 2, "TRAP", raw="r1")
+    psm_l0_neg._label_type = "negative"
+    psm_l4_neg = _make_psm("WWWWWW", 2, "TRAP", raw="r1")
+    psm_l4_neg._label_type = "negative"
+    psm_pos = _make_psm("HUM", 2, "X_HUMAN", raw="r1")
+    psm_pos._label_type = "positive"
+
+    monkeypatch.setattr(extract_common, "load_engine_psms",
+                        lambda n, c: [])
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+                        lambda ep, eo, m: [psm_l0_neg, psm_l4_neg, psm_pos])
+
+    fasta = tmp_path / "tiny.fasta"
+    fasta.write_text(">p1\nMKHUMANSEQAAAR\n")
+
+    cfg = configparser.ConfigParser()
+    cfg["extract"] = {"engines": "pfind", "positive_species_marker": "HUMAN"}
+    cfg["engine.pfind"] = {"path": "/dev/null"}
+    cfg["entrapment"] = {
+        "target_fasta": str(fasta),
+        "drop_levels": "L0, L1",
+    }
+
+    result = extract_common.extract_n_engines(cfg)
+    seqs = {p._sequence for p in result}
+    assert "HUMANSEQ" not in seqs
+    assert "WWWWWW" in seqs
+    assert "HUM" in seqs
+
+
+def test_extract_with_both_classified_tsv_and_fasta_prefers_tsv(tmp_path, monkeypatch):
+    """If both classified_tsv and target_fasta are configured, prefer
+    classified_tsv (explicit > derived)."""
+    import configparser
+    from tools import extract_common
+
+    psm_neg = _make_psm("SEQONE", 2, "TRAP", raw="r1")
+    psm_neg._label_type = "negative"
+    psm_l4 = _make_psm("L4PEP", 2, "TRAP", raw="r1")
+    psm_l4._label_type = "negative"
+
+    monkeypatch.setattr(extract_common, "load_engine_psms",
+                        lambda n, c: [])
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+                        lambda ep, eo, m: [psm_neg, psm_l4])
+
+    # FASTA says SEQONE is L0; TSV says it's L4 — TSV wins
+    fasta = tmp_path / "tiny.fasta"
+    fasta.write_text(">p1\nMKSEQONEAAAR\n")
+    tsv = tmp_path / "classified.tsv"
+    tsv.write_text("peptide\tcharge\tprecursor_mz\tretention_time\tscan_number\t"
+                   "spectrum_file\tprotein_ids\tq_value\tgroup\tlevel\n"
+                   "SEQONE\t2\t500\t0\t\tr1\tp\t0\ttrap\tL4\n")
+
+    cfg = configparser.ConfigParser()
+    cfg["extract"] = {"engines": "pfind", "positive_species_marker": "HUMAN"}
+    cfg["engine.pfind"] = {"path": "/dev/null"}
+    cfg["entrapment"] = {
+        "classified_tsv": str(tsv),
+        "target_fasta": str(fasta),
+        "drop_levels": "L0, L1",
+    }
+
+    result = extract_common.extract_n_engines(cfg)
+    seqs = {p._sequence for p in result}
+    # TSV says SEQONE is L4 → should be KEPT (not dropped)
+    assert "SEQONE" in seqs
+
+
+def test_extract_with_neither_classified_tsv_nor_fasta_skips_filter(monkeypatch):
+    """Empty [entrapment] section → no filter applied (no error)."""
+    import configparser
+    from tools import extract_common
+
+    psm = _make_psm("ANY", 2, "X", raw="r1")
+    psm._label_type = "negative"
+    monkeypatch.setattr(extract_common, "load_engine_psms",
+                        lambda n, c: [])
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+                        lambda ep, eo, m: [psm])
+
+    cfg = configparser.ConfigParser()
+    cfg["extract"] = {"engines": "pfind", "positive_species_marker": "HUMAN"}
+    cfg["engine.pfind"] = {"path": "/dev/null"}
+    cfg["entrapment"] = {}  # no tsv, no fasta
+
+    result = extract_common.extract_n_engines(cfg)
+    assert len(result) == 1
