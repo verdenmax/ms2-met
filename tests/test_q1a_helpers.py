@@ -384,3 +384,28 @@ def test_light_present_no_warning_on_all_nan(recwarn):
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
         assert is_signal_present_light(xic) is False
+
+
+def test_heavy_present_handles_all_nan_light_intensity():
+    """is_signal_present_heavy must not raise on all-NaN light."""
+    from workflows.q1a_helpers import is_signal_present_heavy
+    light = _xic([10, 11, 12], [np.nan, np.nan, np.nan])
+    heavy = _xic([10, 11, 12], [100, 500, 100])
+    assert is_signal_present_heavy(light, heavy) is False
+
+
+def test_heavy_present_handles_all_nan_heavy_intensity():
+    """And mirror for heavy."""
+    from workflows.q1a_helpers import is_signal_present_heavy
+    light = _xic([10, 11, 12], [100, 500, 100])
+    heavy = _xic([10, 11, 12], [np.nan, np.nan, np.nan])
+    assert is_signal_present_heavy(light, heavy) is False
+
+
+def test_heavy_present_fails_when_light_peak_width_zero():
+    """Single-point light XIC has no peak shape → can't judge apex
+    coelution → must return False (not silently skip the check)."""
+    from workflows.q1a_helpers import is_signal_present_heavy
+    light = _xic([10.0], [500])
+    heavy = _xic([10.0, 11.0, 12.0], [100, 500, 100])
+    assert is_signal_present_heavy(light, heavy) is False

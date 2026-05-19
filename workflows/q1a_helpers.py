@@ -80,6 +80,11 @@ def is_signal_present_heavy(
     if light_xic is None or len(light_xic) == 0:
         return False
 
+    if not np.any(np.isfinite(light_xic["intensity"])):
+        return False
+    if not np.any(np.isfinite(heavy_xic["intensity"])):
+        return False
+
     heavy_max = float(np.nanmax(heavy_xic["intensity"]))
     if not np.isfinite(heavy_max) or heavy_max <= intensity_floor:
         return False
@@ -88,7 +93,9 @@ def is_signal_present_heavy(
     heavy_apex_rt = float(heavy_xic["rt"][np.nanargmax(heavy_xic["intensity"])])
     apex_delta = abs(heavy_apex_rt - light_apex_rt)
     light_pw = _peak_width(light_xic)
-    if light_pw > 0 and apex_delta >= apex_delta_fraction * light_pw:
+    if light_pw <= 0:
+        return False  # No peak shape; can't validate coelution
+    if apex_delta >= apex_delta_fraction * light_pw:
         return False
 
     # Pearson correlation on shared rt grid (defensive sort first, mirrors calc_xic_score)
@@ -98,7 +105,10 @@ def is_signal_present_heavy(
     rt_end = min(light_sorted["rt"].max(), heavy_sorted["rt"].max())
     if rt_start >= rt_end:
         return False
-    common_rt = np.linspace(rt_start, rt_end, 100)
+    # Cap interpolation grid to avoid oversampling narrow peaks
+    # (which would bias pearson upward).
+    n_points = min(100, max(len(light_sorted), len(heavy_sorted), 10))
+    common_rt = np.linspace(rt_start, rt_end, n_points)
     l_int = np.interp(common_rt, light_sorted["rt"], light_sorted["intensity"])
     h_int = np.interp(common_rt, heavy_sorted["rt"], heavy_sorted["intensity"])
     if np.std(l_int) < 1e-10 or np.std(h_int) < 1e-10:
