@@ -6,6 +6,12 @@ from pyteomics import mass
 from typing import Tuple
 
 
+# UniMod-canonical heavy-isotope mass deltas
+MASS_DELTA_C13_C12 = 1.003355   # ¹³C − ¹²C
+MASS_DELTA_N15_N14 = 0.997035   # ¹⁵N − ¹⁴N
+PROTON_MASS = 1.00727646677
+
+
 # 定义在全局，就不用频繁初始化了
 with open('./unimod.xml', 'rb') as f:
     unimods = mass.Unimod(source=f)
@@ -231,9 +237,9 @@ def get_heavy_increase_mass(
     composition = mass.Composition(sequence)
 
     if heavy_type == HeavyType.CHEAVY:
-        increase_mass += composition['C'] * 1.00727646677
+        increase_mass += composition['C'] * MASS_DELTA_C13_C12
     elif heavy_type == HeavyType.NHEAVY:
-        increase_mass += composition['N'] * 0.997036
+        increase_mass += composition['N'] * MASS_DELTA_N15_N14
 
     return increase_mass
 
