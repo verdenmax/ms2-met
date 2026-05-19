@@ -427,11 +427,33 @@ def is_separable(fragment_i, W_L, W_H):
 - 分窗口：可用证据多（含不平移碎片的窗口分离配对），共流出略宽松
 - 二者各有优势，应由 W1 特征显式编码情形供模型学习
 
+##### 实施决议（2026-05-19 锁定）
+
+第一轮实施由 brainstorming 会话确定的细节：
+
+1. **输出特征集（11 个）**：q1a_recall, q1a_recall_shifted, q1a_recall_unshifted_separable, q1a_y_recall, q1a_b_recall, q1a_TP_count, q1a_FN_count, q1a_TP_shifted, q1a_TP_unshifted_separable, q1a_total_count, q1a_valid
+
+2. **三条件 AND 判定**（一个碎片的 heavy_present）：
+   - 强度：`heavy_max_intensity > 100`（绝对 floor，第一轮使用，后续可调）
+   - 共流出：`|heavy_apex_rt − light_apex_rt| < 0.3 × light_peak_width`
+   - 峰形：`pearsonr(light_xic, heavy_xic) > 0.5`
+
+3. **light_present 前置判定**：仅检查 `light_max_intensity > 100`。light 信号不可信的碎片不进 q1a 统计（既不算 TP 也不算 FN）。
+
+4. **共/分窗口判定**：通过 `dia_data.get_window_info` 扩充返回 `(lower, upper)` 后比较；当且仅当 light 和 heavy 前体 m/z 落入**同一 (lower, upper) 边界对**才视为共窗口。
+
+5. **`q1a_valid` 语义**：`q1a_total_count >= 3` → 1，否则 0；recall 类特征此时输出 `NaN`（HistGradientBoosting 原生 NaN 处理）。
+
+6. **`q1a_recall_unshifted_separable`**：仅在分窗口下有效，共窗口下永远 NaN。
+
+7. **集成点**：在 `workflows/single_work.py` 的 `multi_batch_work` 和 `single_pair_work` 内部以累加器方式实现，复用已有 XIC 提取避免重复读取。
+
 #### Q1b：不平移碎片陷阱位置干净度（负向证据）
 
 ##### 计算流程
 
 **第一阶段简化**：仅从 W_L 窗口扫描查陷阱位置（即 `precursor_mz = mz_prec_L`）。覆盖 PSM 主要的干扰来源。
+
 
 ```
 对每个不含 K/R 的理论 b/y 离子 j:
