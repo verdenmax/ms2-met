@@ -3,6 +3,7 @@
 提供修饰名称解析、MH+ → m/z 转换、raw_title 提取等工具。
 """
 import os
+import re
 import glob
 import logging
 from functools import lru_cache
@@ -223,7 +224,12 @@ def load_pfind_file(
             continue
 
         proteins = str(row.Proteins)
-        if proteins.startswith(PFIND_DECOY_PREFIX):
+        # pfind 多蛋白用 "/" 或 ";" 分隔；当且仅当所有 token 都是 decoy
+        # 前缀时才视为 decoy（避免把混合命中的真 target 也丢掉）
+        protein_tokens = [t.strip() for t in re.split(r"[;/]", proteins)
+                          if t.strip()]
+        if protein_tokens and all(
+                t.startswith(PFIND_DECOY_PREFIX) for t in protein_tokens):
             n_filtered_decoy += 1
             continue
 

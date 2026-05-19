@@ -247,3 +247,28 @@ def test_pfind_load_rejects_nan_rt(tmp_path):
     assert "GOODPEP" in seqs
     assert "NANDELTART" not in seqs
     assert "NANPREDRT" not in seqs
+
+
+def test_pfind_decoy_filter_requires_all_proteins_decoy(tmp_path):
+    """A multi-protein PSM is decoy only if ALL proteins are REV_."""
+    from spectrum.pfind_parser import load_pfind_file
+    tsv = tmp_path / "test.qry.res"
+    header = ("File\tPeptideSequence\tCharge\tMH+\tDeltaRT(Min)\tPredRT\t"
+              "Modifications\tProteins\tQValue\tFinalScore\n")
+    rows = [
+        "r1\tMFIRST\t2\t900\t0\t30\t\tREV_X/P12345\t0.001\t1e-5\n",
+        "r1\tMLAST\t2\t900\t0\t30\t\tP12345/REV_X\t0.001\t1e-5\n",
+        "r1\tFULLDECOY\t2\t900\t0\t30\t\tREV_X/REV_Y\t0.001\t1e-5\n",
+        "r1\tTGT\t2\t900\t0\t30\t\tP12345\t0.001\t1e-5\n",
+        "r1\tSDEC\t2\t900\t0\t30\t\tREV_X\t0.001\t1e-5\n",
+        "r1\tMSEMI\t2\t900\t0\t30\t\tREV_X;P12345\t0.001\t1e-5\n",
+    ]
+    tsv.write_text(header + "".join(rows))
+    psms = load_pfind_file(str(tsv), qvalue_threshold=0.01)
+    seqs = {p._sequence for p in psms}
+    assert "MFIRST" in seqs
+    assert "MLAST" in seqs
+    assert "MSEMI" in seqs
+    assert "FULLDECOY" not in seqs
+    assert "TGT" in seqs
+    assert "SDEC" not in seqs
