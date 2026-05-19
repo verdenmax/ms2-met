@@ -86,6 +86,9 @@ class BaseManager:
                         f"Loaded {self.__class__.__name__} from {self.path}"
                     )
                 else:
-                    logging.warn("错误的版本")
-        except Exception:
-            logging.error("加载错误")
+                    logging.warning("错误的版本")
+        except Exception as e:
+            logging.exception(
+                f"无法加载 {self.__class__.__name__} pickle from "
+                f"{self.path}: {e}"
+            )
