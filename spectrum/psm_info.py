@@ -1,4 +1,5 @@
 import logging
+import os
 import numpy as np
 import random
 from enum import Enum
@@ -13,7 +14,11 @@ PROTON_MASS = 1.00727646677
 
 
 # 定义在全局，就不用频繁初始化了
-with open('./unimod.xml', 'rb') as f:
+_UNIMOD_XML_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "unimod.xml",
+)
+with open(_UNIMOD_XML_PATH, 'rb') as f:
     unimods = mass.Unimod(source=f)
 
 

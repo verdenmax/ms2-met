@@ -87,3 +87,15 @@ def test_fragment_ions_store_neutral_mass_not_mz():
     wrong_mz = mass.fast_mass("PEP", ion_type="b", charge=1)
     assert abs(light_mass - wrong_mz) > 0.5, (
         "Fragment mass equals +1 m/z — would indicate unexpected charge=1 usage")
+
+
+def test_psm_info_imports_from_any_cwd(tmp_path, monkeypatch):
+    """spectrum.psm_info must import successfully from a non-repo cwd
+    (unimod.xml path is resolved relative to __file__, not os.getcwd())."""
+    import sys
+
+    monkeypatch.chdir(tmp_path)
+    for m in list(sys.modules):
+        if m.startswith("spectrum.psm_info"):
+            del sys.modules[m]
+    import spectrum.psm_info  # noqa: F401  — must not raise FileNotFoundError
