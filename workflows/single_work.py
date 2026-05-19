@@ -15,6 +15,8 @@ from spectrum.psm_info import get_SILAC_increase_mass
 from spectrum.psm_info import get_theoretical_isotope_ratios
 from spectrum.dia_data import DIAData
 
+from workflows.q1a_helpers import Q1aAccumulator, is_split_window
+
 from constant.keys import ConfigKeys
 from configparser import ConfigParser
 
@@ -136,9 +138,16 @@ def multi_batch_work(
     fragment_cosines = []
     fragment_snrs = []
 
+    # --- Q1a setup: classify co/split-isolation for accumulator ---
+    w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
+    heavy_precursor_mz_q1a, _ = psm1.get_heavy_info(HeavyType.SILAC)
+    w_heavy_for_q1a = dia_data2.get_window_info(heavy_precursor_mz_q1a)
+    q1a_acc = Q1aAccumulator(
+        split_window=is_split_window(w_light_for_q1a, w_heavy_for_q1a))
+
     _, fragment_ions = psm1.get_heavy_info(HeavyType.SILAC)
     # 枚举所有的信息
-    for ions_type, ions_num, light_mass, _ in fragment_ions:
+    for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
 
         # NOTE: 这里应该分情况
         # 如果两个母离子在不同的区间，则均可
@@ -159,6 +168,13 @@ def multi_batch_work(
             precursor_mz=psm2._precursor_mz,
             ions_mass=light_mass,
             mass_tol_ppm=mass_tol_ppm
+        )
+
+        # --- Q1a: accumulate fragment evidence for SILAC pairing recall ---
+        q1a_acc.add(
+            ion_type=ions_type,
+            light_mass=light_mass, heavy_mass=heavy_mass,
+            light_xic=light_ions_xic, heavy_xic=heavy_ions_xic,
         )
 
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
@@ -250,6 +266,9 @@ def multi_batch_work(
     features["window_width"] = win_info["width"]
     features["precursor_centering"] = win_info["centering"]
 
+    # --- Q1a: finalize and merge features ---
+    features.update(q1a_acc.compute_features())
+
     return features
 
 
@@ -275,6 +294,13 @@ def single_pair_work(
     light_xic = dia_data.xic_peaks_extreact(
         psm._rt, xic_cycle_window,
         psm._precursor_mz, mass_tol_ppm)
+
+    # --- Q1a setup ---
+    w_light_for_q1a = dia_data.get_window_info(psm._precursor_mz)
+    heavy_precursor_mz_q1a, _ = psm.get_heavy_info(HeavyType.SILAC)
+    w_heavy_for_q1a = dia_data.get_window_info(heavy_precursor_mz_q1a)
+    q1a_acc = Q1aAccumulator(
+        split_window=is_split_window(w_light_for_q1a, w_heavy_for_q1a))
 
     heavy_precursor_mz, fragment_ions = psm.get_heavy_info(HeavyType.SILAC)
 
@@ -406,6 +432,12 @@ def single_pair_work(
             mass_tol_ppm=mass_tol_ppm
         )
 
+        q1a_acc.add(
+            ion_type=ions_type,
+            light_mass=light_mass, heavy_mass=heavy_mass,
+            light_xic=light_ions_xic, heavy_xic=heavy_ions_xic,
+        )
+
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
             pearsons_map[ions_type].append(0)
             pearsons_map["all"].append(0)
@@ -496,6 +528,8 @@ def single_pair_work(
     win_info = dia_data.get_window_info(psm._precursor_mz)
     features["window_width"] = win_info["width"]
     features["precursor_centering"] = win_info["centering"]
+
+    features.update(q1a_acc.compute_features())
 
     return features
 
