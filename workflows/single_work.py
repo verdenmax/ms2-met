@@ -1,7 +1,10 @@
 
 import logging
 import numpy as np
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt
+except ModuleNotFoundError:  # plotting helpers are optional at runtime
+    plt = None
 
 from scipy.stats import pearsonr
 from numpy import interp

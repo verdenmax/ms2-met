@@ -73,6 +73,32 @@ def process_psm_pair_shared(
     }
 
 
+def _make_result_row_single(psm, features: dict) -> dict:
+    """Build the result dict for a single-flow PSM.
+
+    Maps psm._label_type ("positive"/"negative"/None) to label int (1/0/None)
+    so the CSV's `label` column is numeric — matching the pair-flow convention.
+    """
+    label_type = psm._label_type
+    if label_type == "positive":
+        label = 1
+    elif label_type == "negative":
+        label = 0
+    else:
+        label = None
+    return {
+        "sequence": psm._sequence,
+        "charge": psm._charge,
+        "precursor_mz": psm._precursor_mz,
+        "raw_title1": psm._raw_title,
+        "protein_names": psm._protein_names,
+        "sequence_len": len(psm._sequence),
+        "label": label,
+        "label_type": label_type,
+        **features,
+    }
+
+
 def process_psm_single(
         psm1_dict: dict,
         shared1_file: str,
@@ -91,17 +117,7 @@ def process_psm_single(
         config=config,
     )
 
-    return {
-        "sequence": psm1._sequence,
-        "charge": psm1._charge,
-        "precursor_mz": psm1._precursor_mz,
-        "raw_title1": psm1._raw_title,
-        "protein_names": psm1._protein_names,
-        "sequence_len": len(psm1._sequence),
-        "label": psm1._protein_names,
-        "label_type": psm1._label_type,
-        ** tot_features
-    }
+    return _make_result_row_single(psm1, tot_features)
 
 
 def process_batch_single(shared_path: str, batch_psm_dicts: list, config):
@@ -112,17 +128,7 @@ def process_batch_single(shared_path: str, batch_psm_dicts: list, config):
         try:
             psm = PSMInfo.from_dict(psm_dict)
             features = single_pair_work(psm=psm, dia_data=dia_data, config=config)
-            results.append({
-                "sequence": psm._sequence,
-                "charge": psm._charge,
-                "precursor_mz": psm._precursor_mz,
-                "raw_title1": psm._raw_title,
-                "protein_names": psm._protein_names,
-                "sequence_len": len(psm._sequence),
-                "label": psm._protein_names,
-                "label_type": psm._label_type,
-                **features
-            })
+            results.append(_make_result_row_single(psm, features))
         except Exception:
             logging.error(f"PSM处理失败 seq={psm_dict.get('sequence','?')} "
                           f"charge={psm_dict.get('charge','?')}: "
