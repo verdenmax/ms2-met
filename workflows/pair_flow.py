@@ -287,6 +287,7 @@ class PairFlow:
                 # 收集结果（as_completed 可尽早获取已完成任务）
                 n_total_errors = 0
                 n_total_attempted = 0
+                pool_broken = False
                 for future in as_completed(multi_sample_futures):
                     progress.update(rich_task_progress, advance=1)
                     try:
@@ -304,6 +305,7 @@ class PairFlow:
                     except BrokenProcessPool:
                         logging.error(
                             "进程池崩溃（可能内存不足），尝试减少 workers 数量或数据量")
+                        pool_broken = True
                         break
                     except Exception as e:
                         logging.error(f"批次处理异常: {e}")
@@ -336,6 +338,29 @@ class PairFlow:
 
         logging.info(f"保存结果文件 {result_file}")
         ans_df.to_csv(result_file, sep=',', index=False)
+
+        # Bug #14/H2: 进程池崩溃时写一个 sidecar 标记，
+        # 让下游工具能检测到 CSV 是不完整的部分结果
+        if pool_broken:
+            marker = result_file + ".PARTIAL_INCOMPLETE"
+            try:
+                with open(marker, "w") as f:
+                    f.write(
+                        "WARNING: distribute() exited early due to "
+                        "BrokenProcessPool.\n"
+                        "This CSV contains only the batches that completed "
+                        "before the crash.\n"
+                        f"completed_psms={len(ans)}\n"
+                        f"attempted_psms={n_total_attempted}\n"
+                        f"errors_within_completed_batches={n_total_errors}\n"
+                    )
+                logging.error(
+                    f"!!! 结果不完整 — sidecar 标记已写入 {marker} "
+                    f"(完成 {len(ans)} / 尝试 {n_total_attempted} PSM)"
+                )
+            except Exception as e:
+                logging.error(
+                    f"无法写入 PARTIAL_INCOMPLETE 标记 {marker}: {e}")
 
     def run(self) -> None:
         logging.info(f"运行任务 {self.workname}")

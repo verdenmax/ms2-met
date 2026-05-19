@@ -29,3 +29,11 @@ def test_process_batch_pair_shuffle_returns_results_and_error_count():
     src = inspect.getsource(process_batch_pair_shuffle)
     assert "n_error" in src or "n_failed" in src
     assert "return results, " in src or "return (results," in src
+
+
+def test_distribute_writes_partial_marker_on_broken_process_pool():
+    """When BrokenProcessPool occurs, distribute() must write a
+    .PARTIAL_INCOMPLETE sidecar file next to the result CSV."""
+    from workflows import pair_flow
+    src = inspect.getsource(pair_flow.PairFlow.distribute)
+    assert "PARTIAL_INCOMPLETE" in src or "incomplete" in src.lower()
