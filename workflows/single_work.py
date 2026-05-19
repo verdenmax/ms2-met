@@ -140,12 +140,11 @@ def multi_batch_work(
 
     # --- Q1a setup: classify co/split-isolation for accumulator ---
     w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
-    heavy_precursor_mz_q1a, _ = psm1.get_heavy_info(HeavyType.SILAC)
-    w_heavy_for_q1a = dia_data2.get_window_info(heavy_precursor_mz_q1a)
+    heavy_precursor_mz, fragment_ions = psm1.get_heavy_info(HeavyType.SILAC)
+    w_heavy_for_q1a = dia_data2.get_window_info(heavy_precursor_mz)
     q1a_acc = Q1aAccumulator(
         split_window=is_split_window(w_light_for_q1a, w_heavy_for_q1a))
 
-    _, fragment_ions = psm1.get_heavy_info(HeavyType.SILAC)
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
 
@@ -295,14 +294,12 @@ def single_pair_work(
         psm._rt, xic_cycle_window,
         psm._precursor_mz, mass_tol_ppm)
 
-    # --- Q1a setup ---
+    # --- Q1a setup (single get_heavy_info call shared with fragment loop) ---
     w_light_for_q1a = dia_data.get_window_info(psm._precursor_mz)
-    heavy_precursor_mz_q1a, _ = psm.get_heavy_info(HeavyType.SILAC)
-    w_heavy_for_q1a = dia_data.get_window_info(heavy_precursor_mz_q1a)
+    heavy_precursor_mz, fragment_ions = psm.get_heavy_info(HeavyType.SILAC)
+    w_heavy_for_q1a = dia_data.get_window_info(heavy_precursor_mz)
     q1a_acc = Q1aAccumulator(
         split_window=is_split_window(w_light_for_q1a, w_heavy_for_q1a))
-
-    heavy_precursor_mz, fragment_ions = psm.get_heavy_info(HeavyType.SILAC)
 
     heavy_xic = dia_data.xic_peaks_extreact(
         psm._rt, xic_cycle_window,
