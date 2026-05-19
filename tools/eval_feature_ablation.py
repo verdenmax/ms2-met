@@ -130,7 +130,7 @@ def main():
     for name, feats in groups.items():
         if not feats:
             continue
-        X = df[feats].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        X = df[feats].replace([np.inf, -np.inf], np.nan)
         logger.info("Running CV for group '%s' (%d features)...",
                     name, len(feats))
         res = cv_one(X, y, name)

@@ -25,3 +25,23 @@ def test_ablation_cv_one_does_not_pass_sample_weight_to_fit():
         return
     src = inspect.getsource(eval_feature_ablation.cv_one)
     assert "sample_weight=" not in src
+
+
+def test_load_features_does_not_fillna_zero():
+    """fillna(0.0) conflates 'no data' with 'value=0'.
+    HistGBT handles NaN natively; preserve it."""
+    import inspect
+    from tools import eval_baseline
+    src = inspect.getsource(eval_baseline.load_features)
+    assert ".fillna(0" not in src and ".fillna(0.0)" not in src, (
+        "fillna(0) destroys 'no data' signal — let HistGBT handle NaN natively")
+    assert "replace([np.inf, -np.inf]" in src or "inf" in src.lower()
+
+
+def test_ablation_main_does_not_fillna_zero():
+    """Same for tools/eval_feature_ablation.py."""
+    import inspect
+    from tools import eval_feature_ablation
+    src = inspect.getsource(eval_feature_ablation)
+    assert ".fillna(0" not in src and ".fillna(0.0)" not in src
+

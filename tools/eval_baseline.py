@@ -90,7 +90,9 @@ def load_features(
     logger.info("Using %d feature columns", len(feature_cols))
 
     X = df[feature_cols].copy()
-    X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    # HistGradientBoostingClassifier handles NaN natively; do NOT fillna(0.0)
+    # which would conflate "no data" with "value=0".
+    X = X.replace([np.inf, -np.inf], np.nan)
 
     pos = int((y == 1).sum())
     neg = int((y == 0).sum())
