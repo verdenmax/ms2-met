@@ -698,16 +698,23 @@ def _calc_symmetry(intensity: np.ndarray) -> float:
 
 
 def _calc_snr(intensity: np.ndarray) -> float:
-    """计算信噪比: nanmax / nanmedian，处理 NaN 值"""
-    if len(intensity) == 0:
+    """Signal-to-noise ratio using p25 as a robust noise floor.
+
+    For sparse SILAC peaks (typical: 1-2 nonzero scans out of 7),
+    nanmedian is exactly 0 and using max/median blows up. Instead,
+    use 25th-percentile of all values as the noise estimate, and
+    floor it by max_int * 1e-3 to bound the ratio at 1000.
+    """
+    intensity = np.asarray(intensity, dtype="f8")
+    if intensity.size == 0:
         return 0.0
     max_int = float(np.nanmax(intensity))
-    if max_int <= 0 or np.isnan(max_int):
+    if not np.isfinite(max_int) or max_int <= 0:
         return 0.0
-    med = float(np.nanmedian(intensity))
-    if med <= 0 or np.isnan(med):
-        return max_int / 1e-10
-    return max_int / med
+    p25 = float(np.percentile(intensity, 25))
+    noise_floor = max_int * 1e-3  # cap SNR at 1000
+    noise = max(p25, noise_floor)
+    return max_int / noise
 
 
 def _default_xic_score() -> dict:
