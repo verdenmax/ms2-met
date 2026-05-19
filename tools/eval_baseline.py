@@ -19,15 +19,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.inspection import permutation_importance
-from sklearn.metrics import (
-    average_precision_score,
-    matthews_corrcoef,
-    precision_recall_curve,
-    roc_auc_score,
-)
-from sklearn.model_selection import StratifiedKFold
+
+from spectrum.species_marker import matches_species_marker
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s")
@@ -41,14 +34,14 @@ META_COLUMNS = {
 }
 
 
-def derive_binary_label(df: pd.DataFrame) -> pd.Series:
+def derive_binary_label(df: pd.DataFrame, marker: str = "HUMAN") -> pd.Series:
     """从 features.csv 中提取二分类标签。
 
     优先级:
       1. 新 schema 的 ``label_type`` 列（"positive"/"negative" 字符串）
       2. 老 schema 中 ``label`` 列已经是 0/1（兼容 pair flow 路径）
-      3. 从 ``protein_names`` 列派生（"HUMAN" 子串 → 正例），匹配
-         tools/extract_common.py 的 marker 检查规则
+      3. 从 ``protein_names`` 列派生（``matches_species_marker`` → 正例），
+         与 tools/extract_common.py 共享 marker 检查规则（suffix + 排除 decoy）
     """
     if "label_type" in df.columns:
         label_type = df["label_type"]
@@ -73,21 +66,25 @@ def derive_binary_label(df: pd.DataFrame) -> pd.Series:
 
     if "protein_names" in df.columns:
         logger.info(
-            "Deriving binary label from 'protein_names' via 'HUMAN' substring "
-            "(matches tools/extract_common.py marker rule).")
-        return df["protein_names"].fillna("").str.contains(
-            "HUMAN", regex=False).astype(int)
+            "Deriving binary label from 'protein_names' via "
+            "matches_species_marker(marker=%r) (suffix + decoy-aware).",
+            marker)
+        return df["protein_names"].fillna("").apply(
+            lambda s: int(matches_species_marker(s, marker))
+        )
 
     raise ValueError(
         "无法确定二分类 label: 缺少 label_type / 数值 label / protein_names 任一列")
 
 
-def load_features(path: Path) -> tuple[pd.DataFrame, pd.Series, list[str]]:
+def load_features(
+        path: Path, marker: str = "HUMAN"
+) -> tuple[pd.DataFrame, pd.Series, list[str]]:
     df = pd.read_csv(path)
     logger.info("Loaded %d rows, %d columns from %s",
                 len(df), df.shape[1], path)
 
-    y = derive_binary_label(df)
+    y = derive_binary_label(df, marker=marker)
 
     feature_cols = [c for c in df.columns if c not in META_COLUMNS]
     logger.info("Using %d feature columns", len(feature_cols))
@@ -133,6 +130,12 @@ def compute_working_points(y_true: np.ndarray, y_score: np.ndarray) -> dict:
 
 def cv_evaluate(X: pd.DataFrame, y: pd.Series, n_splits: int = 5,
                 random_state: int = 42) -> dict:
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.metrics import (
+        average_precision_score, matthews_corrcoef, roc_auc_score,
+    )
+    from sklearn.model_selection import StratifiedKFold
+
     skf = StratifiedKFold(
         n_splits=n_splits, shuffle=True, random_state=random_state)
 
@@ -194,6 +197,9 @@ def compute_feature_importance(
         X: pd.DataFrame, y: pd.Series,
         feature_cols: list[str], random_state: int = 42,
         n_repeats: int = 5) -> list[dict]:
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.inspection import permutation_importance
+
     pos = int((y == 1).sum())
     neg = int((y == 0).sum())
     sample_weight = np.where(y == 1, 1.0, neg / max(pos, 1))
@@ -226,11 +232,14 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--skip-importance", action="store_true",
                         help="跳过 permutation importance（速度慢时）")
+    parser.add_argument("--positive-marker", default="HUMAN",
+                        help="Species marker for positive label derivation "
+                             "(only used in protein_names fallback tier)")
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    X, y, feature_cols = load_features(args.features)
+    X, y, feature_cols = load_features(args.features, marker=args.positive_marker)
 
     logger.info("=== 5-fold CV ===")
     cv_summary = cv_evaluate(X, y)

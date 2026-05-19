@@ -27,6 +27,7 @@ if _PROJECT_ROOT not in sys.path:
 
 from spectrum.light_result import LightResult
 from spectrum.psm_info import PSMInfo
+from spectrum.species_marker import matches_species_marker
 
 
 SUPPORTED_ENGINES = {"pfind", "diann", "alphadia"}
@@ -140,7 +141,7 @@ def extract_n_engines_from_psms(
         psm = key_to_psm.get(key)
         if psm is None:
             continue
-        if positive_marker in psm._protein_names:
+        if matches_species_marker(psm._protein_names, positive_marker):
             psm._label_type = "positive"
             result.append(psm)
             positive_keys.add(key)
@@ -152,7 +153,7 @@ def extract_n_engines_from_psms(
         psm = key_to_psm.get(key)
         if psm is None:
             continue
-        if positive_marker not in psm._protein_names:
+        if not matches_species_marker(psm._protein_names, positive_marker):
             psm._label_type = "negative"
             result.append(psm)
             neg_count += 1

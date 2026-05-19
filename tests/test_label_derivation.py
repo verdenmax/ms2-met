@@ -49,3 +49,82 @@ def test_single_flow_dict_used_by_process_batch_single():
     src = inspect.getsource(flow_utils.process_batch_single)
     assert "_make_result_row_single" in src or "_make_result_row" in src, (
         "process_batch_single must use the shared helper")
+
+
+def test_matches_species_marker_basic_human_suffix():
+    from spectrum.species_marker import matches_species_marker
+    assert matches_species_marker("X_HUMAN", "HUMAN") is True
+    assert matches_species_marker("X_HUMAN/Y_HUMAN", "HUMAN") is True
+    assert matches_species_marker("X_HUMAN;Y_HUMAN", "HUMAN") is True
+
+
+def test_matches_species_marker_substring_false_positives_rejected():
+    from spectrum.species_marker import matches_species_marker
+    # These contain "HUMAN" as substring but are not _HUMAN suffixed
+    assert matches_species_marker("HUMANIN", "HUMAN") is False
+    assert matches_species_marker("HUMANITY", "HUMAN") is False
+    assert matches_species_marker("HUMANSP", "HUMAN") is False
+
+
+def test_matches_species_marker_excludes_decoys():
+    from spectrum.species_marker import matches_species_marker
+    assert matches_species_marker("REV_X_HUMAN", "HUMAN") is False
+    assert matches_species_marker("DECOY_X_HUMAN", "HUMAN") is False
+    assert matches_species_marker("rev_X_HUMAN", "HUMAN") is False
+    assert matches_species_marker("decoy_X_HUMAN", "HUMAN") is False
+    assert matches_species_marker("_REV_X_HUMAN", "HUMAN") is False
+
+
+def test_matches_species_marker_mixed_multi_protein():
+    """Mixed list: at least one non-decoy target → True"""
+    from spectrum.species_marker import matches_species_marker
+    assert matches_species_marker(
+        "REV_X_HUMAN/Y_HUMAN", "HUMAN") is True
+    assert matches_species_marker(
+        "Y_HUMAN/REV_X_HUMAN", "HUMAN") is True
+    # All decoys → False
+    assert matches_species_marker(
+        "REV_X_HUMAN/DECOY_Y_HUMAN", "HUMAN") is False
+
+
+def test_matches_species_marker_empty_input():
+    from spectrum.species_marker import matches_species_marker
+    assert matches_species_marker("", "HUMAN") is False
+    assert matches_species_marker(None, "HUMAN") is False
+    assert matches_species_marker("X_HUMAN", "") is False
+
+
+def test_matches_species_marker_other_species():
+    from spectrum.species_marker import matches_species_marker
+    assert matches_species_marker("X_MOUSE", "MOUSE") is True
+    assert matches_species_marker("X_HUMAN", "MOUSE") is False
+    assert matches_species_marker("X_YEAST", "YEAST") is True
+
+
+def test_matches_species_marker_uniprot_format():
+    """UniProt-style sp|P12345|GENE_HUMAN should match."""
+    from spectrum.species_marker import matches_species_marker
+    assert matches_species_marker("sp|P12345|GENE_HUMAN", "HUMAN") is True
+    assert matches_species_marker(
+        "sp|REV_P12345|GENE_HUMAN", "HUMAN") is False
+
+
+def test_extract_common_uses_new_marker_matcher():
+    """extract_n_engines_from_psms must call matches_species_marker
+    instead of substring `in`."""
+    import inspect
+    from tools import extract_common
+    src = inspect.getsource(extract_common.extract_n_engines_from_psms)
+    assert "matches_species_marker" in src or "species_marker" in src, (
+        "extract_common must use the new helper")
+    # The string ` in psm._protein_names` should no longer appear
+    assert "positive_marker in psm._protein_names" not in src
+    assert "positive_marker not in psm._protein_names" not in src
+
+
+def test_eval_baseline_uses_new_marker_matcher():
+    import inspect
+    from tools import eval_baseline
+    src = inspect.getsource(eval_baseline.derive_binary_label)
+    # The "HUMAN" substring contains check should be gone
+    assert ".str.contains(" not in src or "matches_species_marker" in src
