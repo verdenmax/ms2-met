@@ -37,76 +37,221 @@ class LightResult:
 
         self.peptide_len = len(self.psm_info)
 
-    def _load_from_alphadia_input(self, light_result_path: str):
-        """ 输入 alphadia 的搜索结果 """
+    def _load_from_alphadia_input(
+        self,
+        light_result_path: str,
+        qvalue_threshold: float = 0.01,
+    ):
+        """加载 alphadia precursors.parquet，应用 FDR + decoy 过滤。
 
+        过滤顺序：
+          1. precursor.qval > qvalue_threshold → 丢弃（FDR）
+          2. precursor.decoy != 0 → 丢弃（decoy）
+          3. PSMInfo.valid() == False → 丢弃
+        """
         if light_result_path is None or not os.path.exists(light_result_path):
             logging.error("Alphadia 搜索结果 report.parquet 不存在")
+            return
 
-        # 正在加载文件
         logging.info(f"正在加载 Alphadia report: {light_result_path}")
 
-        light_input = pd.read_parquet(light_result_path)
+        df = pd.read_parquet(light_result_path)
 
-        for idx, row in light_input.iterrows():
+        required = {
+            "precursor.sequence", "precursor.charge", "precursor.rt.observed",
+            "precursor.mz.observed", "pg.genes", "precursor.qval",
+            "precursor.decoy", "precursor.mods", "precursor.mod_sites",
+            "raw.name",
+        }
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"Alphadia parquet 缺少列 {sorted(missing)} "
+                f"（已有 {sorted(df.columns)}）")
 
-            modifications = parse_alphadia_peptide_modify(
-                row["precursor.mods"], row["precursor.mod_sites"])
+        # 用合法 Python identifier 替换列名，便于 itertuples 属性访问
+        col_map = {
+            "precursor.sequence": "Sequence",
+            "precursor.charge": "Charge",
+            "precursor.rt.observed": "RtObserved",
+            "precursor.mz.observed": "MzObserved",
+            "pg.genes": "Proteins",
+            "precursor.qval": "QVal",
+            "precursor.decoy": "DecoyFlag",
+            "precursor.mods": "Mods",
+            "precursor.mod_sites": "ModSites",
+            "raw.name": "RawName",
+        }
+        df = df.rename(columns=col_map)
 
-            rt = rt_sec_to_min(row["precursor.rt.observed"])
+        n_total = len(df)
+        n_fdr = n_decoy = n_invalid = n_parse_err = 0
 
-            tot_psminfo = PSMInfo(
-                sequence=row["precursor.sequence"],
-                charge=row["precursor.charge"],
-                modify=modifications,
-                rt=rt,
-                precursor_mz=row["precursor.mz.observed"],
-                raw_title=row["raw.name"],
-                protein_names=row["pg.genes"],
-            )
-
-            # 如果当肽段不合法，就不进行添加
-            if not tot_psminfo.valid():
-                logging.warn(f"存在无法处理的肽段 {tot_psminfo}")
+        for row in df.itertuples(index=False):
+            try:
+                qvalue = float(row.QVal)
+            except (ValueError, TypeError):
+                n_parse_err += 1
+                continue
+            if not np.isfinite(qvalue) or qvalue > qvalue_threshold:
+                n_fdr += 1
                 continue
 
-            self.psm_info.append(tot_psminfo)
+            try:
+                if int(row.DecoyFlag) != 0:
+                    n_decoy += 1
+                    continue
+            except (ValueError, TypeError):
+                n_parse_err += 1
+                continue
+
+            try:
+                modifications = parse_alphadia_peptide_modify(
+                    row.Mods, row.ModSites)
+                charge = int(row.Charge)
+                rt_val = rt_sec_to_min(float(row.RtObserved))
+                if not np.isfinite(rt_val):
+                    n_parse_err += 1
+                    continue
+                psm = PSMInfo(
+                    sequence=str(row.Sequence),
+                    charge=charge,
+                    modify=modifications,
+                    rt=np.float32(rt_val),
+                    precursor_mz=np.float32(row.MzObserved),
+                    raw_title=str(row.RawName),
+                    protein_names=str(row.Proteins or ""),
+                    q_value=qvalue,
+                )
+            except (AttributeError, ValueError, TypeError) as e:
+                n_parse_err += 1
+                logging.warning(f"alphadia 行解析失败: {e}")
+                continue
+
+            if not psm.valid():
+                n_invalid += 1
+                continue
+            self.psm_info.append(psm)
 
         self.peptide_len = len(self.psm_info)
+        logging.info(
+            f"alphadia 加载完成 {light_result_path}: total={n_total}, "
+            f"kept={len(self.psm_info)}, fdr_filtered={n_fdr}, "
+            f"decoy_filtered={n_decoy}, invalid={n_invalid}, "
+            f"parse_error={n_parse_err}"
+        )
 
-    def _load_from_dia_nn_input(self, light_result_path: str):
-        """ 输入diann 的搜索结果 """
+    def _load_from_dia_nn_input(
+        self,
+        light_result_path: str,
+        qvalue_threshold: float = 0.01,
+    ):
+        """加载 DIA-NN report.parquet，应用 FDR + decoy 过滤。
 
+        过滤顺序：
+          1. Q.Value > qvalue_threshold → 丢弃（FDR）
+          2. Decoy == 1 OR Protein.Names 以 REV_/_REV/DECOY_ 开头 → 丢弃
+          3. PSMInfo.valid() == False → 丢弃
+        """
         if light_result_path is None or not os.path.exists(light_result_path):
             logging.error("dia_nn 搜索结果 report.parquet 不存在")
+            return
 
-        # 正在加载文件
         logging.info(f"正在加载 DIA-NN report: {light_result_path}")
 
-        light_input = pd.read_parquet(light_result_path)
+        df = pd.read_parquet(light_result_path)
 
-        for row in light_input.itertuples():
+        required = {
+            "Modified.Sequence", "Precursor.Charge", "RT", "Precursor.Mz",
+            "Protein.Names", "Q.Value", "Run",
+        }
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"DIA-NN parquet 缺少列 {sorted(missing)} "
+                f"（已有 {sorted(df.columns)}）")
 
-            modifications = parse_diann_peptide_modify(row._5)
+        col_map = {
+            "Modified.Sequence": "ModifiedSequence",
+            "Stripped.Sequence": "StrippedSequence",
+            "Precursor.Charge": "PrecursorCharge",
+            "Precursor.Mz": "PrecursorMz",
+            "Protein.Names": "ProteinNames",
+            "Q.Value": "QValue",
+            "Decoy": "DecoyFlag",
+        }
+        df = df.rename(columns=col_map)
 
-            tot_psminfo = PSMInfo(
-                sequence=row._6,
-                charge=row._7,
-                modify=modifications,
-                rt=row.RT,
-                precursor_mz=row._11,
-                raw_title=row.Run,
-                protein_names=row._14,
-            )
+        has_decoy_col = "DecoyFlag" in df.columns
+        has_stripped = "StrippedSequence" in df.columns
 
-            # 如果当肽段不合法，就不进行添加
-            if not tot_psminfo.valid():
-                logging.warn(f"存在无法处理的肽段 {tot_psminfo}")
+        n_total = len(df)
+        n_fdr = n_decoy = n_invalid = n_parse_err = 0
+
+        for row in df.itertuples(index=False):
+            try:
+                qvalue = float(row.QValue)
+            except (ValueError, TypeError):
+                n_parse_err += 1
+                continue
+            if not np.isfinite(qvalue) or qvalue > qvalue_threshold:
+                n_fdr += 1
                 continue
 
-            self.psm_info.append(tot_psminfo)
+            if has_decoy_col:
+                try:
+                    if int(getattr(row, "DecoyFlag")) != 0:
+                        n_decoy += 1
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            proteins = str(row.ProteinNames or "")
+            if (proteins.startswith("REV_")
+                    or proteins.startswith("_REV")
+                    or proteins.startswith("DECOY_")):
+                n_decoy += 1
+                continue
+
+            try:
+                charge = int(float(row.PrecursorCharge))
+                mod_str = str(row.ModifiedSequence)
+                modifications = parse_diann_peptide_modify(mod_str)
+                if has_stripped and row.StrippedSequence:
+                    sequence = str(row.StrippedSequence)
+                else:
+                    sequence = re.sub(r"\(.*?\)", "", mod_str)
+                rt_val = float(row.RT)
+                if not np.isfinite(rt_val):
+                    n_parse_err += 1
+                    continue
+                psm = PSMInfo(
+                    sequence=sequence,
+                    charge=charge,
+                    modify=modifications,
+                    rt=np.float32(rt_val),
+                    precursor_mz=np.float32(row.PrecursorMz),
+                    raw_title=str(row.Run),
+                    protein_names=proteins,
+                    q_value=qvalue,
+                )
+            except (AttributeError, ValueError, TypeError) as e:
+                n_parse_err += 1
+                logging.warning(f"DIA-NN 行解析失败: {e}")
+                continue
+
+            if not psm.valid():
+                n_invalid += 1
+                continue
+            self.psm_info.append(psm)
 
         self.peptide_len = len(self.psm_info)
+        logging.info(
+            f"DIA-NN 加载完成 {light_result_path}: total={n_total}, "
+            f"kept={len(self.psm_info)}, fdr_filtered={n_fdr}, "
+            f"decoy_filtered={n_decoy}, invalid={n_invalid}, "
+            f"parse_error={n_parse_err}"
+        )
 
     def _load_from_pfind_input(
         self,
@@ -143,12 +288,15 @@ def parse_diann_peptide_modify(sequence: str):
             while sequence[rindex] != ')':
                 rindex += 1
 
-            # 解析出unimod id
-            match = re.search(r'UniMod:(\d+)', sequence[index:rindex])
-            unimod_id = int(match.group(1))
-
-            # 记录到结果中
-            modifications.append((count_index, unimod_id))
+            # 解析出unimod id（容错：缺失 UniMod:\d+ 时跳过，不抛异常）
+            group = sequence[index + 1:rindex]
+            match = re.search(r'UniMod:(\d+)', group)
+            if match is None:
+                logging.warning(
+                    f"DIA-NN 非 UniMod 修饰，跳过: '{group}' (in {sequence!r})")
+            else:
+                unimod_id = int(match.group(1))
+                modifications.append((count_index, unimod_id))
 
             index = rindex
         else:
@@ -197,8 +345,17 @@ def parse_alphadia_peptide_modify(modify_str: str, site_str: str):
             target_aa = None
 
         unimod_id = mod_to_unimod.get(mod_name)
+        if unimod_id is None:
+            logging.warning(
+                f"alphadia 修饰未知，跳过: '{mod_name}' (site={site_str})")
+            continue
 
-        site_index = int(site_str) - 1
+        try:
+            site_index = int(site_str) - 1
+        except (ValueError, TypeError):
+            logging.warning(
+                f"alphadia 修饰位置无法解析: '{site_str}' (mod={mod_name})")
+            continue
 
         modifications.append((site_index, unimod_id))
 

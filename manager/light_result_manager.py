@@ -43,9 +43,15 @@ class LightResultManager(BaseManager):
         if search_engine_type == 0:
             light_result._load_from_pkl(light_result_path)
         elif search_engine_type == 1:
-            light_result._load_from_dia_nn_input(light_result_path)
+            qvalue_threshold = self._config[ConfigKeys.INPUT].getfloat(
+                ConfigKeys.PFIND_QVALUE_THRESHOLD, fallback=0.01)
+            light_result._load_from_dia_nn_input(
+                light_result_path, qvalue_threshold=qvalue_threshold)
         elif search_engine_type == 2:
-            light_result._load_from_alphadia_input(light_result_path)
+            qvalue_threshold = self._config[ConfigKeys.INPUT].getfloat(
+                ConfigKeys.PFIND_QVALUE_THRESHOLD, fallback=0.01)
+            light_result._load_from_alphadia_input(
+                light_result_path, qvalue_threshold=qvalue_threshold)
         elif search_engine_type == 3:
             qvalue_threshold = self._config[ConfigKeys.INPUT].getfloat(
                 ConfigKeys.PFIND_QVALUE_THRESHOLD, fallback=0.01)

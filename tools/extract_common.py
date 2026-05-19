@@ -55,9 +55,11 @@ def load_engine_psms(engine_name: str, config: configparser.ConfigParser) -> lis
         qvalue = config[section].getfloat("qvalue_threshold", fallback=0.01)
         lr._load_from_pfind_input(path, qvalue_threshold=qvalue)
     elif engine_name == "diann":
-        lr._load_from_dia_nn_input(path)
+        qvalue = config[section].getfloat("qvalue_threshold", fallback=0.01)
+        lr._load_from_dia_nn_input(path, qvalue_threshold=qvalue)
     elif engine_name == "alphadia":
-        lr._load_from_alphadia_input(path)
+        qvalue = config[section].getfloat("qvalue_threshold", fallback=0.01)
+        lr._load_from_alphadia_input(path, qvalue_threshold=qvalue)
     else:
         raise ValueError(
             f"不支持的引擎: {engine_name}（支持 {SUPPORTED_ENGINES}）")
