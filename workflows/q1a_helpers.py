@@ -47,3 +47,61 @@ def is_signal_present_light(xic, intensity_floor: float = DEFAULT_INTENSITY_FLOO
     if not np.isfinite(max_int):
         return False
     return max_int > intensity_floor
+
+
+def _peak_width(xic) -> float:
+    """Span of rt values in the XIC (used as a denominator for
+    apex_delta normalization). Returns 0 for empty/single-point XICs."""
+    if xic is None or len(xic) < 2:
+        return 0.0
+    rts = np.asarray(xic["rt"], dtype="f8")
+    return float(rts.max() - rts.min())
+
+
+def is_signal_present_heavy(
+    light_xic,
+    heavy_xic,
+    intensity_floor: float = DEFAULT_INTENSITY_FLOOR,
+    apex_delta_fraction: float = DEFAULT_APEX_DELTA_FRACTION,
+    pearson_min: float = DEFAULT_PEARSON_MIN,
+) -> bool:
+    """Heavy 'present' iff three conditions all hold:
+      1. heavy max intensity > intensity_floor
+      2. |heavy_apex_rt - light_apex_rt| < apex_delta_fraction * light_peak_width
+      3. pearsonr(aligned_light, aligned_heavy) > pearson_min
+    """
+    if heavy_xic is None or len(heavy_xic) == 0:
+        return False
+    if light_xic is None or len(light_xic) == 0:
+        return False
+
+    heavy_max = float(np.nanmax(heavy_xic["intensity"]))
+    if not np.isfinite(heavy_max) or heavy_max <= intensity_floor:
+        return False
+
+    light_apex_rt = float(light_xic["rt"][np.nanargmax(light_xic["intensity"])])
+    heavy_apex_rt = float(heavy_xic["rt"][np.nanargmax(heavy_xic["intensity"])])
+    apex_delta = abs(heavy_apex_rt - light_apex_rt)
+    light_pw = _peak_width(light_xic)
+    if light_pw > 0 and apex_delta >= apex_delta_fraction * light_pw:
+        return False
+
+    # Pearson correlation on shared rt grid (defensive sort first, mirrors calc_xic_score)
+    light_sorted = light_xic[np.argsort(light_xic["rt"])]
+    heavy_sorted = heavy_xic[np.argsort(heavy_xic["rt"])]
+    rt_start = max(light_sorted["rt"].min(), heavy_sorted["rt"].min())
+    rt_end = min(light_sorted["rt"].max(), heavy_sorted["rt"].max())
+    if rt_start >= rt_end:
+        return False
+    common_rt = np.linspace(rt_start, rt_end, 100)
+    l_int = np.interp(common_rt, light_sorted["rt"], light_sorted["intensity"])
+    h_int = np.interp(common_rt, heavy_sorted["rt"], heavy_sorted["intensity"])
+    if np.std(l_int) < 1e-10 or np.std(h_int) < 1e-10:
+        return False
+    try:
+        corr, _ = pearsonr(l_int, h_int)
+    except (ValueError, RuntimeWarning):
+        return False
+    if not np.isfinite(corr):
+        return False
+    return bool(corr > pearson_min)
