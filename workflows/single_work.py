@@ -15,7 +15,7 @@ from spectrum.psm_info import get_SILAC_increase_mass
 from spectrum.psm_info import get_theoretical_isotope_ratios
 from spectrum.dia_data import DIAData
 
-from workflows.q1a_helpers import Q1aAccumulator, is_split_window
+from workflows.q1a_helpers import Q1aAccumulator, is_split_window, SHIFT_EPSILON
 
 from constant.keys import ConfigKeys
 from configparser import ConfigParser
@@ -413,7 +413,7 @@ def single_pair_work(
             continue
 
         # 如果在相同的区间，并且质量相同，说明重标不影响该碎片离子
-        if np.abs(heavy_mass - light_mass) < 0.01 and is_same_ms2:
+        if np.abs(heavy_mass - light_mass) < SHIFT_EPSILON and is_same_ms2:
             continue
 
         # 计算出 light 信息

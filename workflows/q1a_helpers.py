@@ -115,7 +115,7 @@ def is_signal_present_heavy(
         return False
     try:
         corr, _ = pearsonr(l_int, h_int)
-    except (ValueError, RuntimeWarning):
+    except ValueError:
         return False
     if not np.isfinite(corr):
         return False
@@ -177,6 +177,7 @@ class Q1aAccumulator:
     """
 
     MIN_VALID_TOTAL = 3  # spec §4.2: q1a_valid = (total >= 3)
+    VALID_ION_TYPES = ("b", "y")
 
     def __init__(
         self,
@@ -203,6 +204,25 @@ class Q1aAccumulator:
         Fragments that are not separable OR have no light signal are
         silently dropped from Q1a statistics.
         """
+        if ion_type not in self.VALID_ION_TYPES:
+            raise ValueError(
+                f"ion_type must be one of {self.VALID_ION_TYPES}, "
+                f"got {ion_type!r}")
+        if not np.isfinite(light_mass) or not np.isfinite(heavy_mass):
+            import warnings
+            warnings.warn(
+                f"Skipping fragment with non-finite mass: "
+                f"light={light_mass}, heavy={heavy_mass}",
+                RuntimeWarning, stacklevel=2)
+            return
+        if heavy_mass < light_mass - SHIFT_EPSILON:
+            import warnings
+            warnings.warn(
+                f"Skipping fragment with negative heavy_mass shift "
+                f"(physically impossible for SILAC): "
+                f"light={light_mass}, heavy={heavy_mass}",
+                RuntimeWarning, stacklevel=2)
+            return
         if not is_separable_fragment(light_mass, heavy_mass, self.split_window):
             return
         is_shifted = (heavy_mass - light_mass) > SHIFT_EPSILON

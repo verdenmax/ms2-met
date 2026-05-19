@@ -409,3 +409,53 @@ def test_heavy_present_fails_when_light_peak_width_zero():
     light = _xic([10.0], [500])
     heavy = _xic([10.0, 11.0, 12.0], [100, 500, 100])
     assert is_signal_present_heavy(light, heavy) is False
+
+
+def test_accumulator_rejects_unknown_ion_type():
+    """Unknown ion_type must raise ValueError — silently bucketing
+    inflates q1a_total_count but not q1a_y_recall/q1a_b_recall."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=True)
+    light, heavy = _silac_pair(500, 400)
+    with pytest.raises(ValueError, match="ion_type"):
+        acc.add(ion_type="Y",
+                light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+    with pytest.raises(ValueError, match="ion_type"):
+        acc.add(ion_type="a",
+                light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+
+
+def test_accumulator_rejects_negative_heavy_mass():
+    """Negative heavy delta is physically impossible for SILAC.
+    Must drop with warning — not silently re-classify as unshifted."""
+    import warnings
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=True)
+    light, heavy = _silac_pair(500, 400)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        acc.add(ion_type="y",
+                light_mass=310.0, heavy_mass=300.0,
+                light_xic=light, heavy_xic=heavy)
+        assert acc.compute_features()["q1a_total_count"] == 0
+        assert any("heavy_mass" in str(ww.message).lower() or
+                   "negative" in str(ww.message).lower() for ww in w)
+
+
+def test_accumulator_rejects_nan_mass():
+    """NaN mass → skip with warning."""
+    import warnings
+    from workflows.q1a_helpers import Q1aAccumulator
+    acc = Q1aAccumulator(split_window=True)
+    light, heavy = _silac_pair(500, 400)
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        acc.add(ion_type="y",
+                light_mass=float("nan"), heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+        acc.add(ion_type="y",
+                light_mass=300.0, heavy_mass=float("nan"),
+                light_xic=light, heavy_xic=heavy)
+        assert acc.compute_features()["q1a_total_count"] == 0
