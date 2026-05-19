@@ -421,7 +421,16 @@ def main():
     )
 
     config = configparser.ConfigParser()
-    config.read(args.configpath)
+    read_files = config.read(args.configpath)
+    if not read_files:
+        logging.error(
+            f"配置文件不存在或无法读取: '{args.configpath}' "
+            f"(configparser.read() 返回空列表)")
+        sys.exit(1)
+    if not config.sections():
+        logging.error(
+            f"配置文件 '{args.configpath}' 内容为空或无 [section]")
+        sys.exit(1)
 
     if "extract" not in config:
         logging.error(f"配置文件 {args.configpath} 缺少 [extract] 段")

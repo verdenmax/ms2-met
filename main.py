@@ -23,7 +23,15 @@ def main():
 
     # 解析配置文件
     config = configparser.ConfigParser()
-    config.read(args.configpath)
+    read_files = config.read(args.configpath)
+    if not read_files:
+        raise FileNotFoundError(
+            f"配置文件不存在或无法读取: '{args.configpath}' "
+            f"(configparser.read() 返回空列表)")
+    if not config.sections():
+        raise ValueError(
+            f"配置文件 '{args.configpath}' 内容为空或无 [section] "
+            f"(读取成功但 sections=[])")
 
     # 确保日志文件父目录存在，避免 FileHandler 失败
     log_dir = os.path.dirname(args.logpath)
