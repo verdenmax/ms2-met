@@ -226,3 +226,24 @@ def test_load_pfind_path_nonexistent(tmp_path):
     """不存在的路径应返回空列表并 log error。"""
     psms = load_pfind_path(str(tmp_path / "nonexistent"), qvalue_threshold=0.01)
     assert psms == []
+
+
+def test_pfind_load_rejects_nan_rt(tmp_path):
+    """If PredRT or DeltaRT(Min) is empty/NaN, the resulting PSM
+    must NOT be returned — np.searchsorted(NaN) would silently
+    return XIC from the last MS1 scan."""
+    from spectrum.pfind_parser import load_pfind_file
+    tsv = tmp_path / "test.qry.res"
+    header = ("File\tPeptideSequence\tCharge\tMH+\tDeltaRT(Min)\tPredRT\t"
+              "Modifications\tProteins\tQValue\tFinalScore\n")
+    rows = [
+        "raw1.spectra\tGOODPEP\t2\t900.5\t0.5\t30.0\t\tP12345\t0.001\t1e-5\n",
+        "raw1.spectra\tNANDELTART\t2\t900.5\t\t30.0\t\tP12345\t0.001\t1e-5\n",
+        "raw1.spectra\tNANPREDRT\t2\t900.5\t0.5\t\t\tP12345\t0.001\t1e-5\n",
+    ]
+    tsv.write_text(header + "".join(rows))
+    psms = load_pfind_file(str(tsv), qvalue_threshold=0.01)
+    seqs = {p._sequence for p in psms}
+    assert "GOODPEP" in seqs
+    assert "NANDELTART" not in seqs
+    assert "NANPREDRT" not in seqs

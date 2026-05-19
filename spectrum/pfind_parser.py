@@ -235,6 +235,9 @@ def load_pfind_file(
             pred_rt = float(row.PredRT)
             delta_rt = float(row.DeltaRTMin)
             rt = pred_rt + delta_rt
+            if not np.isfinite(rt):
+                n_parse_error += 1
+                continue
             score = float(row.FinalScore)
             sequence = str(row.PeptideSequence)
         except (AttributeError, ValueError, TypeError) as e:
