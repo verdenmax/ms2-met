@@ -139,18 +139,12 @@ def cv_evaluate(X: pd.DataFrame, y: pd.Series, n_splits: int = 5,
     skf = StratifiedKFold(
         n_splits=n_splits, shuffle=True, random_state=random_state)
 
-    pos = int((y == 1).sum())
-    neg = int((y == 0).sum())
-    sample_weight_pos = neg / max(pos, 1)
-
     fold_metrics = []
     all_y_true = []
     all_y_score = []
     for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
-
-        sample_weight = np.where(y_train == 1, 1.0, sample_weight_pos)
 
         clf = HistGradientBoostingClassifier(
             max_iter=300,
@@ -160,7 +154,7 @@ def cv_evaluate(X: pd.DataFrame, y: pd.Series, n_splits: int = 5,
             random_state=random_state,
             class_weight="balanced",
         )
-        clf.fit(X_train, y_train, sample_weight=sample_weight)
+        clf.fit(X_train, y_train)
         y_proba = clf.predict_proba(X_val)[:, 1]
         y_pred = (y_proba >= 0.5).astype(int)
 
@@ -200,16 +194,12 @@ def compute_feature_importance(
     from sklearn.ensemble import HistGradientBoostingClassifier
     from sklearn.inspection import permutation_importance
 
-    pos = int((y == 1).sum())
-    neg = int((y == 0).sum())
-    sample_weight = np.where(y == 1, 1.0, neg / max(pos, 1))
-
     clf = HistGradientBoostingClassifier(
         max_iter=300, learning_rate=0.05, max_depth=6,
         l2_regularization=1.0, random_state=random_state,
         class_weight="balanced",
     )
-    clf.fit(X, y, sample_weight=sample_weight)
+    clf.fit(X, y)
 
     logger.info("Computing permutation importance (n_repeats=%d)...", n_repeats)
     perm = permutation_importance(
