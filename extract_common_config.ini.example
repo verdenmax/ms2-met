@@ -28,20 +28,28 @@ path = ./hela-mix-2da_report.parquet
 # path = ./precursors.parquet
 
 # ----------------------------------------------------------------------
-# [entrapment]（可选）：用 proteinCopilot 的 entrapment 分类剔除质谱不可分级
-# 的"伪负例"。如果你之前在 proteinCopilot 项目跑过 entrapment 分析，把它产出的
-# classified.tsv 指过来即可。匹配键为 (sequence, charge, raw_title)，忽略 modify。
+# [entrapment]（可选）：用 entrapment 分类剔除质谱不可分级的"伪负例"。
+#
+# 你可以用 ms2-met 自带的 classifier 生成 classified_tsv：
+#
+#   python -m tools.entrapment_classify \
+#     --negatives datasets/hela_2da_pfind_diann.json \
+#     --target-fasta /path/to/human_swissprot.fasta \
+#     --output datasets/entrapment_classified.tsv
+#
+# 也兼容 proteinCopilot 的 classified.tsv 输出。匹配键为
+# (sequence, charge, raw_title)，忽略 modify。
 #
 # Level 含义：
 #   L0  razor-error      序列在 target 库中精确存在 → 质谱不可分
 #   L1  LI-isomer        仅 L↔I 互换           → 质谱不可分
-#   L2  near-identical   1 处差异 + Δm < 阈值   → 弱可分
-#   L3  homolog          1-2 处差异 + Δm 充足   → 理论可分
+#   L2  near-identical   1 处差异 + Δm < 阈值   → 弱可分 (ms2-met 自建 classifier 不产此级)
+#   L3  homolog          1-2 处差异 + Δm 充足   → 理论可分 (同上)
 #   L4  true-trap        无近邻 target 肽段     → 理想负样本
 #
 # 默认剔除 L0/L1（质谱完全不可分）。Positive PSM 不受影响；
 # negative 中 (seq, charge, raw) 未在 classified.tsv 出现 → 保守保留。
 # ----------------------------------------------------------------------
 # [entrapment]
-# classified_tsv = ./output/entrapment-negatives/output/classified.tsv
+# classified_tsv = ./datasets/entrapment_classified.tsv
 # drop_levels = L0, L1
