@@ -112,37 +112,44 @@ def is_signal_present_heavy(
     return bool(corr > pearson_min)
 
 
-def is_split_window(w_light: dict, w_heavy: dict) -> bool:
-    """True iff the light and heavy precursor m/z fall into DIFFERENT
-    DIA isolation windows.
+def is_split_window(w_light: dict, w_heavy: dict):
+    """Return True if windows differ, False if same, None if undecidable.
 
-    Compares (lower, upper) tuples exactly. If either bound is NaN
-    (window-lookup failed), conservatively treats as split — this lets
-    Q1a still include unshifted fragments when window info is missing,
-    which is the safer direction.
+    None means: window lookup failed for at least one of light/heavy
+    (bounds are NaN/None). Caller should treat this as 'cannot judge
+    separation' rather than defaulting to either case.
     """
     l_lo, l_hi = w_light.get("lower"), w_light.get("upper")
     h_lo, h_hi = w_heavy.get("lower"), w_heavy.get("upper")
-    if any(v is None or (isinstance(v, float) and np.isnan(v))
-           for v in (l_lo, l_hi, h_lo, h_hi)):
-        return True
+
+    def _is_nan_like(v):
+        if v is None:
+            return True
+        try:
+            return bool(np.isnan(v))
+        except (TypeError, ValueError):
+            return False
+
+    if any(_is_nan_like(v) for v in (l_lo, l_hi, h_lo, h_hi)):
+        return None
     return (l_lo != h_lo) or (l_hi != h_hi)
 
 
 def is_separable_fragment(
-    light_mass: float, heavy_mass: float, split_window: bool,
+    light_mass: float, heavy_mass: float, split_window,
     shift_epsilon: float = SHIFT_EPSILON,
 ) -> bool:
-    """A fragment is separable iff either:
-      (a) It carries K or R and is shifted by SILAC (light_mass != heavy_mass), OR
-      (b) The DIA windows for light/heavy precursors differ.
+    """A fragment is separable iff:
+      (a) It carries K or R and is shifted (light_mass != heavy_mass), OR
+      (b) The DIA windows are KNOWN to be split.
 
-    Unshifted fragments under co-isolation cannot be separated:
-    light_xic and heavy_xic are extracted from the same MS2 spectra
-    at the same m/z, so they are identical by construction.
+    Unknown (None) windows are NOT treated as split for unshifted
+    fragments — we don't have a physical basis to claim separation.
     """
     is_shifted = (heavy_mass - light_mass) > shift_epsilon
-    return bool(is_shifted or split_window)
+    if is_shifted:
+        return True
+    return split_window is True
 
 
 class Q1aAccumulator:

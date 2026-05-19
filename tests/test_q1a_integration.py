@@ -73,6 +73,51 @@ def test_multi_batch_work_emits_q1a_features():
     assert np.isnan(features["q1a_recall"])
 
 
+def test_multi_batch_work_skips_when_heavy_out_of_raw():
+    """multi_batch_work must drop unshifted-separable fragments when
+    the heavy precursor m/z is outside DIA windows (NaN bounds),
+    avoiding polluted q1a counts."""
+    from spectrum.psm_info import PSMInfo
+    from workflows import single_work
+
+    psm = PSMInfo(
+        sequence="PEPTIDEK", charge=2, modify=[],
+        rt=np.float32(10.0), precursor_mz=np.float32(500.0),
+        raw_title="r1", protein_names="X_HUMAN",
+    )
+
+    class OutOfRangeDIA:
+        """Heavy precursor m/z falls outside all DIA windows → NaN bounds."""
+
+        def xic_peaks_extreact(self, *args, **kwargs):
+            return np.array([], dtype=XIC_DTYPE)
+
+        def xic_ms2_peaks_extract(self, *args, **kwargs):
+            return np.array([], dtype=XIC_DTYPE), 0.0
+
+        def get_window_info(self, mz):
+            if 499.0 <= mz <= 501.0:
+                return {"width": 2.0, "centering": 0.5,
+                        "lower": 499.0, "upper": 501.0}
+            return {"width": 0.0, "centering": 0.5,
+                    "lower": float("nan"), "upper": float("nan")}
+
+        def check_in_same_ms2(self, mz1, mz2):
+            return True
+
+        def check_in_raw(self, mz):
+            return True
+
+    dia = OutOfRangeDIA()
+    features = single_work.multi_batch_work(
+        psm1=psm, dia_data1=dia,
+        psm2=psm, dia_data2=dia,
+        config=_minimal_config(),
+    )
+    assert features["q1a_total_count"] == 0
+    assert np.isnan(features["q1a_recall_unshifted_separable"])
+
+
 def test_single_pair_work_emits_q1a_features():
     """single_pair_work must also add q1a_* keys."""
     from spectrum.psm_info import PSMInfo

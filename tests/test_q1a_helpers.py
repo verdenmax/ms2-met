@@ -116,14 +116,61 @@ def test_is_split_window_different_bounds_returns_true():
     assert is_split_window(w_L, w_H) is True
 
 
-def test_is_split_window_nan_treated_as_split():
-    """If either window lookup fails (NaN bounds), be conservative
-    and treat as split (more inclusion in q1a)."""
+def test_is_split_window_nan_returns_none():
+    """NaN bounds = unknown isolation. Helper must signal this clearly,
+    NOT default to 'split' (which over-admits unshifted fragments)."""
     from workflows.q1a_helpers import is_split_window
     w_L = {"width": 2.0, "centering": 0.5, "lower": 500.0, "upper": 502.0}
     w_H = {"width": 0.0, "centering": 0.5,
            "lower": float("nan"), "upper": float("nan")}
-    assert is_split_window(w_L, w_H) is True
+    assert is_split_window(w_L, w_H) is None
+
+
+def test_is_split_window_numpy_nan_handled():
+    """is_split_window must also recognize numpy NaN, not just Python float NaN."""
+    from workflows.q1a_helpers import is_split_window
+    w_L = {"width": 2.0, "centering": 0.5,
+           "lower": np.float64(500.0), "upper": np.float64(502.0)}
+    w_H = {"width": 0.0, "centering": 0.5,
+           "lower": np.float64("nan"), "upper": np.float64("nan")}
+    assert is_split_window(w_L, w_H) is None
+
+
+def test_is_separable_fragment_unshifted_with_unknown_window_returns_false():
+    """When the window is 'unknown' (None passed in), unshifted fragments
+    are NOT separable — we have no physical basis to claim separation."""
+    from workflows.q1a_helpers import is_separable_fragment
+    assert is_separable_fragment(
+        light_mass=300.0, heavy_mass=300.0, split_window=None) is False
+    # shifted always separable, regardless
+    assert is_separable_fragment(
+        light_mass=300.0, heavy_mass=310.0, split_window=None) is True
+
+
+def test_q1a_accumulator_unknown_window_drops_unshifted():
+    """Accumulator with None (unknown) split_window must drop unshifted
+    fragments entirely — they don't count to total, TP, or FN."""
+    from workflows.q1a_helpers import Q1aAccumulator
+    rts = np.linspace(10, 14, 5)
+    light_int = [50, 200, 500, 200, 50]
+    light = np.zeros(5, dtype=[("rt", "f8"), ("intensity", "f8"),
+                               ("ppm_error", "f8"), ("mz", "f8")])
+    light["rt"] = rts
+    light["intensity"] = light_int
+    heavy = light.copy()
+    acc = Q1aAccumulator(split_window=None)
+    for _ in range(5):
+        acc.add(ion_type="b", light_mass=300.0, heavy_mass=300.0,
+                light_xic=light, heavy_xic=heavy)
+    feats = acc.compute_features()
+    assert feats["q1a_total_count"] == 0
+    assert feats["q1a_TP_unshifted_separable"] == 0
+    for _ in range(5):
+        acc.add(ion_type="y", light_mass=300.0, heavy_mass=310.0,
+                light_xic=light, heavy_xic=heavy)
+    feats = acc.compute_features()
+    assert feats["q1a_total_count"] == 5
+    assert feats["q1a_TP_shifted"] == 5
 
 
 # ----------------------------------------------------------------------
