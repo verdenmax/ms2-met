@@ -116,7 +116,7 @@ def multi_batch_work(
     intensitys_map = {
         "b": 0,
         "y": 0,
-        "all": 1,
+        "all": 0,
     }
 
     fragment_apex_deltas = []
@@ -162,7 +162,7 @@ def multi_batch_work(
                 np.max(heavy_ions_xic["intensity"]) > 0):
             intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
             intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
-            intensitys_map["all"] = light_all_intensity + \
+            intensitys_map["all"] += light_all_intensity + \
                 heavy_all_intensity
 
         ion_score = calc_xic_score(light_ions_xic, heavy_ions_xic)
@@ -216,7 +216,7 @@ def multi_batch_work(
         features["frag_corr_weighted"] = 0.0
 
     features["matched_intensity_percent"] = (
-        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
+        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"] if intensitys_map["all"] > 0 else 0.0)
 
     # 碎片级 apex_delta / mz_err / cosine / snr 汇总
     features.update(extract_ion_numeric_features(
@@ -349,7 +349,7 @@ def single_pair_work(
     intensitys_map = {
         "b": 0,
         "y": 0,
-        "all": 1,
+        "all": 0,
     }
 
     heavy_in_raw = dia_data.check_in_raw(heavy_precursor_mz)
@@ -399,7 +399,7 @@ def single_pair_work(
                 np.max(heavy_ions_xic["intensity"]) > 0):
             intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
             intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
-            intensitys_map["all"] = light_all_intensity + \
+            intensitys_map["all"] += light_all_intensity + \
                 heavy_all_intensity
 
         ion_score = calc_xic_score(light_ions_xic, heavy_ions_xic)
@@ -450,7 +450,7 @@ def single_pair_work(
         features["frag_corr_weighted"] = 0.0
 
     features["matched_intensity_percent"] = (
-        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"])
+        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"] if intensitys_map["all"] > 0 else 0.0)
 
     # 碎片级 apex_delta / mz_err / cosine / snr 汇总
     features.update(extract_ion_numeric_features(
