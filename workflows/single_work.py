@@ -87,6 +87,12 @@ def multi_batch_work(
             psm2._rt, xic_cycle_window,
             psm2._precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
 
+        # Sort by rt for np.interp monotonicity (see calc_xic_score).
+        if len(heavy_m1_xic) > 0:
+            heavy_m1_xic = heavy_m1_xic[np.argsort(heavy_m1_xic["rt"])]
+        if len(heavy_m2_xic) > 0:
+            heavy_m2_xic = heavy_m2_xic[np.argsort(heavy_m2_xic["rt"])]
+
         # 在 M0 apex RT 处统一取各同位素峰强度
         m0_int = float(heavy_xic["intensity"][apex_idx])
         m1_int = (float(interp(apex_rt, heavy_m1_xic["rt"],
@@ -316,6 +322,12 @@ def single_pair_work(
         heavy_m2_xic = dia_data.xic_peaks_extreact(
             psm._rt, xic_cycle_window,
             heavy_precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
+
+        # Sort by rt for np.interp monotonicity (see calc_xic_score).
+        if len(heavy_m1_xic) > 0:
+            heavy_m1_xic = heavy_m1_xic[np.argsort(heavy_m1_xic["rt"])]
+        if len(heavy_m2_xic) > 0:
+            heavy_m2_xic = heavy_m2_xic[np.argsort(heavy_m2_xic["rt"])]
 
         # 在 M0 apex RT 处统一取各同位素峰强度
         m0_int = float(heavy_xic["intensity"][apex_idx])
@@ -719,6 +731,13 @@ def calc_xic_score(
     intensity_threshold: float = 1e-10
 ) -> dict:
     """ 根据轻重标 XIC 计算综合特征，返回包含 pearson/mz_avg_err/apex_delta/强度信息的字典 """
+
+    # Defensively sort by rt — np.interp requires monotonically increasing xp;
+    # raw mzML scan order may not guarantee that for multiplexed DIA.
+    if len(light_xic) > 0:
+        light_xic = light_xic[np.argsort(light_xic["rt"])]
+    if len(heavy_xic) > 0:
+        heavy_xic = heavy_xic[np.argsort(heavy_xic["rt"])]
 
     # 计算重标平均误差
     ppm_errors = heavy_xic["ppm_error"]

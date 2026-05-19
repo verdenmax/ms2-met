@@ -99,3 +99,60 @@ def test_psm_info_imports_from_any_cwd(tmp_path, monkeypatch):
         if m.startswith("spectrum.psm_info"):
             del sys.modules[m]
     import spectrum.psm_info  # noqa: F401  — must not raise FileNotFoundError
+
+
+def test_calc_xic_score_sorted_unsorted_give_same_pearson():
+    """np.interp silently returns wrong values when xp is not sorted.
+    calc_xic_score must defend by sorting first."""
+    from workflows.single_work import calc_xic_score
+
+    n = 7
+    sorted_rt = np.linspace(0.0, 10.0, n).astype("f8")
+    intensities_l = np.array([1, 5, 20, 30, 15, 3, 1], dtype="f8")
+    intensities_h = np.array([2, 4, 18, 28, 12, 4, 2], dtype="f8")
+
+    dt = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+    light_sorted = np.zeros(n, dtype=dt)
+    light_sorted["rt"] = sorted_rt
+    light_sorted["intensity"] = intensities_l
+    heavy_sorted = light_sorted.copy()
+    heavy_sorted["intensity"] = intensities_h
+
+    perm = np.array([3, 1, 0, 5, 2, 6, 4])
+    light_unsorted = light_sorted[perm]
+    heavy_unsorted = heavy_sorted[perm]
+
+    p_sorted = calc_xic_score(light_sorted, heavy_sorted)
+    p_unsorted = calc_xic_score(light_unsorted, heavy_unsorted)
+
+    assert abs(p_sorted["pearson"] - p_unsorted["pearson"]) < 1e-3, (
+        f"Pearson changed under permutation: "
+        f"sorted={p_sorted['pearson']:.4f} vs "
+        f"unsorted={p_unsorted['pearson']:.4f}")
+
+
+def test_calc_snr_bounded_when_median_zero():
+    """Sparse SILAC XIC: 1-2 nonzero scans out of 7 -> median is 0 -> SNR
+    must not blow up to 1e10+."""
+    from workflows.single_work import _calc_snr
+
+    intensity = np.array([0, 0, 0, 1000, 0, 0, 0], dtype="f4")
+    snr = _calc_snr(intensity)
+    assert snr < 1e4, f"SNR={snr} blew up (>1e4); need a noise floor"
+    assert snr > 5  # still meaningfully > 1
+
+
+def test_calc_snr_normal_peak():
+    """Normal Gaussian-ish peak should produce reasonable SNR."""
+    from workflows.single_work import _calc_snr
+    intensity = np.array([10, 50, 200, 500, 200, 50, 10], dtype="f4")
+    snr = _calc_snr(intensity)
+    assert snr > 1
+    assert snr < 1e4
+
+
+def test_calc_snr_empty_or_zero():
+    """Edge cases: empty array, all zeros."""
+    from workflows.single_work import _calc_snr
+    assert _calc_snr(np.array([], dtype="f4")) == 0.0
+    assert _calc_snr(np.array([0.0, 0.0, 0.0], dtype="f4")) == 0.0
