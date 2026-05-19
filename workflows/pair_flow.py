@@ -1,4 +1,5 @@
 import configparser
+import copy
 import logging
 import os
 import pandas as pd
@@ -142,10 +143,12 @@ class PairFlow:
         # 在重复样本中，找到负样本
         for a, b in combinations(group, 2):
             # label 设置为 0,记为负样本
-            # 这里对 b 进行一个小处理就行 ，其实就是对b 的 时间稍微做一个偏移
-
-            b._rt = b._rt + 10
-            res = self.multi_handle(a, b, 0)
+            # Bug #3: 'b' is shared across multiple combinations(group, 2)
+            # iterations; mutating b._rt += 10 in place caused offsets to
+            # accumulate (10, 20, 30...) across pairs. Shift a copy instead.
+            b_shifted = copy.copy(b)
+            b_shifted._rt = b._rt + 10
+            res = self.multi_handle(a, b_shifted, 0)
             ans.append(res)
 
         return ans

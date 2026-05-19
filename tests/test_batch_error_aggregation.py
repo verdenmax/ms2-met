@@ -37,3 +37,27 @@ def test_distribute_writes_partial_marker_on_broken_process_pool():
     from workflows import pair_flow
     src = inspect.getsource(pair_flow.PairFlow.distribute)
     assert "PARTIAL_INCOMPLETE" in src or "incomplete" in src.lower()
+
+
+def test_process_group_does_not_mutate_input_psms():
+    """If pair_flow exposes a per-group helper that bumps psm._rt, it
+    must not mutate the original PSM (which is shared across pairs)."""
+    from workflows import pair_flow
+    candidates = []
+    for name in dir(pair_flow.PairFlow):
+        if name.startswith("_"):
+            try:
+                src = inspect.getsource(getattr(pair_flow.PairFlow, name))
+                if "_rt" in src and ("combinations" in src or "_rt +" in src or "_rt =" in src):
+                    candidates.append((name, src))
+            except (TypeError, OSError):
+                continue
+    for name, src in candidates:
+        has_inplace = "b._rt = b._rt +" in src or "b._rt +=" in src \
+            or "psm2._rt +=" in src or "psm2._rt = psm2._rt +" in src
+        has_copy = ("copy.copy" in src or "copy.deepcopy" in src
+                    or "PSMInfo.from_dict" in src)
+        if has_inplace:
+            assert has_copy, (
+                f"{name} mutates _rt in place without copying first; "
+                f"shared PSMInfo will accumulate offsets across pairs")
