@@ -43,7 +43,12 @@ def is_signal_present_light(xic, intensity_floor: float = DEFAULT_INTENSITY_FLOO
     """
     if xic is None or len(xic) == 0:
         return False
-    max_int = float(np.nanmax(xic["intensity"])) if xic.size > 0 else 0.0
+    intensities = np.asarray(xic["intensity"])
+    # Detect all-NaN before calling nanmax (which would emit a RuntimeWarning
+    # then return NaN). is_signal_present_light returns False for that case.
+    if not np.any(np.isfinite(intensities)):
+        return False
+    max_int = float(np.nanmax(intensities))
     if not np.isfinite(max_int):
         return False
     return max_int > intensity_floor

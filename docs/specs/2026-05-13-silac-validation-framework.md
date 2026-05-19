@@ -448,6 +448,47 @@ def is_separable(fragment_i, W_L, W_H):
 
 7. **集成点**：在 `workflows/single_work.py` 的 `multi_batch_work` 和 `single_pair_work` 内部以累加器方式实现，复用已有 XIC 提取避免重复读取。
 
+##### 实施完成（2026-05-19）
+
+5 task 已落地：
+- `f617afb` get_window_info 扩充 lower/upper
+- `f5137aa f7169df f9ba9ab c57df5d` workflows/q1a_helpers.py 四步 TDD
+- `1baaa4d` 集成进 single_work.py 两个函数
+
+测试增量：117 → 164（21 q1a_helpers 单测 + 2 集成 + 1 ablation 防御 + 1 RuntimeWarning 回归）。
+
+###### 远程重跑获取 q1a_* 列
+
+特征 CSV 需要在修过代码后重新生成才会含 11 个 q1a_* 列：
+
+```bash
+# 远程 jianyan 环境：
+cd /home/wskong/jianyan/ms2-met
+git pull origin feature_extraction
+python main.py \
+  --configpath runs/baseline_2da_clean/config.ini \
+  --logpath runs/baseline_2da_clean/extract_q1a.log
+# 注意：删 workspace/*.dia.npz 才会重新跑 XIC 提取
+# (raw 解析缓存可保留，特征提取必跑全程)
+```
+
+重评估：
+```bash
+python tools/eval_baseline.py \
+  --features runs/baseline_2da_clean/features.csv \
+  --output runs/baseline_2da_clean/eval/baseline_metrics_q1a.json
+python tools/eval_feature_ablation.py \
+  --features runs/baseline_2da_clean/features.csv \
+  --output runs/baseline_2da_clean/eval/ablation_q1a.json
+```
+
+###### 成功指标
+
+- `silac_only` AUC：0.893 → 目标 ≥ 0.92
+- `pos_recall @ neg_recall=95%`：55% → 目标 ≥ 65%
+
+如果 silac_only AUC 没显著上升，意味着 Q1a 与已有特征过度相关，需检视新增特征的诊断价值。
+
 #### Q1b：不平移碎片陷阱位置干净度（负向证据）
 
 ##### 计算流程

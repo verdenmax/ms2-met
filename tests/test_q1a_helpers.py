@@ -292,3 +292,48 @@ def test_q1a_accumulator_y_b_split():
     assert feats["q1a_b_recall"] == 1.0
     assert feats["q1a_TP_count"] == 5
     assert feats["q1a_total_count"] == 5
+
+
+# ----------------------------------------------------------------------
+# Ablation feature grouping guard
+# ----------------------------------------------------------------------
+
+def test_q1a_features_are_not_in_sequence_only_group():
+    """q1a_* are SILAC-pairing features. They must NEVER end up in
+    sequence_only when split_features() runs the ablation grouping."""
+    from tools.eval_feature_ablation import split_features
+
+    # Synthesize a feature column list that includes q1a_* alongside
+    # both sequence-only and known silac-only features.
+    all_features = [
+        "modification_count", "kr_count", "sequence_len",  # sequence
+        "precursor_pearson", "all_cosine_p50",             # silac existing
+        "q1a_recall", "q1a_recall_shifted",
+        "q1a_recall_unshifted_separable", "q1a_y_recall",
+        "q1a_b_recall", "q1a_TP_count", "q1a_FN_count",
+        "q1a_TP_shifted", "q1a_TP_unshifted_separable",
+        "q1a_total_count", "q1a_valid",
+    ]
+    groups = split_features(all_features)
+    q1a_features = [f for f in all_features if f.startswith("q1a_")]
+    assert len(q1a_features) == 11, "test should reference all 11 q1a features"
+    for q1a_feat in q1a_features:
+        assert q1a_feat not in groups["sequence_only"], (
+            f"{q1a_feat} accidentally classified as sequence_only")
+        assert q1a_feat in groups["silac_only"], (
+            f"{q1a_feat} missing from silac_only")
+
+
+# ----------------------------------------------------------------------
+# RuntimeWarning regression (all-NaN intensity must not warn)
+# ----------------------------------------------------------------------
+
+def test_light_present_no_warning_on_all_nan(recwarn):
+    """is_signal_present_light must NOT emit RuntimeWarning when the
+    XIC has all-NaN intensity (we early-return False before nanmax)."""
+    import warnings
+    from workflows.q1a_helpers import is_signal_present_light
+    xic = _xic([10, 11, 12], [np.nan, np.nan, np.nan])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        assert is_signal_present_light(xic) is False
