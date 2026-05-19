@@ -53,6 +53,7 @@ def multi_batch_work(
     if len(light_xic) == 0 or len(heavy_xic) == 0:
         features["precursor_pearson"] = 0
         features["precursor_apex_delta"] = 0.0
+        features["precursor_apex_delta_signed"] = 0.0
         features["precursor_mz_avg_err"] = 0.0
         features["precursor_light_max_int"] = 0.0
         features["precursor_heavy_max_int"] = 0.0
@@ -65,6 +66,7 @@ def multi_batch_work(
         precursor_score = calc_xic_score(light_xic, heavy_xic)
         features["precursor_pearson"] = precursor_score["pearson"]
         features["precursor_apex_delta"] = precursor_score["apex_delta"]
+        features["precursor_apex_delta_signed"] = precursor_score["apex_delta_signed"]
         features["precursor_mz_avg_err"] = precursor_score["mz_avg_err"]
         features["precursor_light_max_int"] = precursor_score["light_max_int"]
         features["precursor_heavy_max_int"] = precursor_score["heavy_max_int"]
@@ -289,6 +291,7 @@ def single_pair_work(
     if len(light_xic) == 0 or len(heavy_xic) == 0:
         features["precursor_pearson"] = 0
         features["precursor_apex_delta"] = 0.0
+        features["precursor_apex_delta_signed"] = 0.0
         features["precursor_mz_avg_err"] = 0.0
         features["precursor_light_max_int"] = 0.0
         features["precursor_heavy_max_int"] = 0.0
@@ -301,6 +304,7 @@ def single_pair_work(
         precursor_score = calc_xic_score(light_xic, heavy_xic)
         features["precursor_pearson"] = precursor_score["pearson"]
         features["precursor_apex_delta"] = precursor_score["apex_delta"]
+        features["precursor_apex_delta_signed"] = precursor_score["apex_delta_signed"]
         features["precursor_mz_avg_err"] = precursor_score["mz_avg_err"]
         features["precursor_light_max_int"] = precursor_score["light_max_int"]
         features["precursor_heavy_max_int"] = precursor_score["heavy_max_int"]
@@ -634,7 +638,10 @@ def extract_ion_pearson_features(ions_pearsons: []) -> dict:
     p50 = np.clip(np.percentile(clean_vals, 50), 0, 1)
     p75 = np.clip(np.percentile(clean_vals, 75), 0, 1)
     mean = np.mean(clean_vals)
-    std = float(np.std(clean_vals))
+    # Bug #21: N=1 has no defined spread. Returning 0 conflates a single
+    # ion with many ions of identical value. Use NaN so HistGBT can
+    # branch on missingness.
+    std = float(np.std(clean_vals)) if count >= 2 else float("nan")
     min_val = float(np.min(clean_vals))
     high_ratio = sum(1 for v in clean_vals if v > 0.5) / count
 
@@ -723,6 +730,7 @@ def _default_xic_score() -> dict:
         "pearson": np.float32(0.0),
         "mz_avg_err": 0.0,
         "apex_delta": 0.0,
+        "apex_delta_signed": 0.0,
         "light_max_int": 0.0,
         "heavy_max_int": 0.0,
         "intensity_ratio": 0.0,
@@ -757,6 +765,11 @@ def calc_xic_score(
     rt_apex_light = light_xic["rt"][np.argmax(light_xic["intensity"])]
     rt_apex_heavy = heavy_xic["rt"][np.argmax(heavy_xic["intensity"])]
     apex_delta = float(abs(rt_apex_light - rt_apex_heavy))
+    # Bug #19: also emit the signed delta. The negative-sample generator
+    # always shifts heavy by +10, so without sign the model can't tell
+    # "heavy elutes earlier" (real co-elution variation) from the
+    # artificial direction of the shift used for negatives.
+    apex_delta_signed = float(rt_apex_light - rt_apex_heavy)
 
     # 计算强度信息
     light_max_int = float(np.max(light_xic["intensity"]))
@@ -782,6 +795,7 @@ def calc_xic_score(
         result = _default_xic_score()
         result["mz_avg_err"] = mz_avg_err
         result["apex_delta"] = apex_delta
+        result["apex_delta_signed"] = apex_delta_signed
         result["light_max_int"] = light_max_int
         result["heavy_max_int"] = heavy_max_int
         result["intensity_ratio"] = intensity_ratio
@@ -809,6 +823,12 @@ def calc_xic_score(
                 corr, _ = pearsonr(inten1_interp, inten2_interp)
             except (ValueError, RuntimeWarning):
                 corr = 0.0
+            # Bug #22: modern scipy emits ConstantInputWarning and returns
+            # NaN (no longer raises) when one input is constant. Coerce
+            # NaN/Inf pearson → 0.0 explicitly so downstream features
+            # don't silently inherit NaN.
+            if not np.isfinite(corr):
+                corr = 0.0
         # cosine similarity
         norm1 = np.linalg.norm(inten1_interp)
         norm2 = np.linalg.norm(inten2_interp)
@@ -822,6 +842,7 @@ def calc_xic_score(
         "pearson": np.float32(corr),
         "mz_avg_err": mz_avg_err,
         "apex_delta": apex_delta,
+        "apex_delta_signed": apex_delta_signed,
         "light_max_int": light_max_int,
         "heavy_max_int": heavy_max_int,
         "intensity_ratio": intensity_ratio,

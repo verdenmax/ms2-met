@@ -156,3 +156,55 @@ def test_calc_snr_empty_or_zero():
     from workflows.single_work import _calc_snr
     assert _calc_snr(np.array([], dtype="f4")) == 0.0
     assert _calc_snr(np.array([0.0, 0.0, 0.0], dtype="f4")) == 0.0
+
+
+def test_apex_delta_signed_emitted_alongside_unsigned():
+    """calc_xic_score should emit apex_delta_signed (preserving sign)
+    in addition to apex_delta (abs)."""
+    import numpy as np
+    from workflows.single_work import calc_xic_score
+
+    dt = [("rt", "f4"), ("intensity", "f4"), ("ppm_error", "f4"), ("mz", "f4")]
+    n = 5
+    light = np.zeros(n, dtype=dt)
+    light["rt"] = [10.0, 11.0, 12.0, 13.0, 14.0]
+    light["intensity"] = [1, 5, 100, 5, 1]  # apex at idx 2 (rt=12)
+    heavy = light.copy()
+    heavy["intensity"] = [1, 100, 5, 1, 1]  # apex at idx 1 (rt=11)
+    result = calc_xic_score(light, heavy)
+    # heavy apex (11) is earlier than light apex (12) → signed = light - heavy = +1
+    assert "apex_delta_signed" in result
+    assert abs(result["apex_delta_signed"] - 1.0) < 1e-3
+    # Existing unsigned key still works
+    assert "apex_delta" in result
+    assert abs(result["apex_delta"] - 1.0) < 1e-3
+
+
+def test_extract_ion_pearson_features_returns_nan_std_for_single_element():
+    """N=1 has no defined std spread; returning 0 misleads the model."""
+    import math
+    from workflows.single_work import extract_ion_pearson_features
+    out = extract_ion_pearson_features([0.85])
+    assert math.isnan(out["std"]), (
+        "Single-element std must be NaN, not 0 (which conflates "
+        "'one ion' with 'many ions of identical value')"
+    )
+
+
+def test_calc_xic_score_handles_pearsonr_constant_input():
+    """When one XIC is constant, scipy.stats.pearsonr may emit
+    ConstantInputWarning and return NaN. calc_xic_score must
+    coerce NaN to 0.0."""
+    import numpy as np
+    from workflows.single_work import calc_xic_score
+
+    dt = [("rt", "f4"), ("intensity", "f4"), ("ppm_error", "f4"), ("mz", "f4")]
+    n = 5
+    light = np.zeros(n, dtype=dt)
+    light["rt"] = [10.0, 11.0, 12.0, 13.0, 14.0]
+    light["intensity"] = [1.0, 1.0, 1.0, 1.0, 1.0]  # constant
+    heavy = light.copy()
+    heavy["intensity"] = [1, 5, 100, 5, 1]
+    result = calc_xic_score(light, heavy)
+    # pearson should be 0.0, not NaN
+    assert np.isfinite(result["pearson"])
