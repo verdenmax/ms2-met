@@ -1,13 +1,82 @@
 
-# Byte-compiled
-__pycache__
+# ---------------- Python ----------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+build/
+dist/
+*.egg
 
-# Result
+# ---------------- Editor / IDE / OS ----------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ---------------- Mass-spec raw / cache / intermediate ----------------
+*.mzML
+*.mzML.idx
+*.raw
+*.dia.npz
+*.npz
+workspace/
+.scratch/
+
+# ---------------- Search engine outputs (large; never tracked) ----------------
+*.parquet
+*.qry.res
+!tests/fixtures/**/*.qry.res
+*.spectra
+*.pep.xml
+*.pepXML
+
+# ---------------- Feature CSV / JSON / TSV produced by ms2-met ----------------
 *.csv
-*.png
-*.log
-workspace
+*.tsv
+*.json
+!extract_common_config.ini.example
+!tests/**/*.json
+!tests/**/*.csv
+!tests/**/*.tsv
 
-# ai file
+# ---------------- Logs ----------------
+*.log
+*.[Ll][Oo][Gg]
+
+# ---------------- Plots ----------------
+*.png
+*.pdf
+*.svg
+*.eps
+
+# ---------------- ms2-met runtime artifacts ----------------
+runs/
+baseline_*/
+result_*.csv
+result.csv
+ms2*.log
+
+# ---------------- User-specific configs (commit *.example instead) ----------------
+config.ini
+extract_*.ini
+!extract_common_config.ini.example
+
+# ---------------- AI / scratch / planning files ----------------
 PLAN.md
 PROJECT_INFO.md
+NOTES.md
+TODO.md
+
+# Root-level ad-hoc test scripts (real tests live in tests/)
+/test_*.py
+/scratch_*.py
