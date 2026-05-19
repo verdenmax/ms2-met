@@ -5,6 +5,10 @@
 - 负例：任一引擎识别为非目标物种的 PSM（key 并集 + species marker 不匹配）
 
 支持的引擎：pfind, diann, alphadia
+
+可选后处理：用 proteinCopilot 的 entrapment 分析结果（classified.tsv）剔除
+L0（razor-error）/ L1（L↔I 异构体）级别的"伪负例"——它们物理上与正例无法分辨，
+不应作为 SILAC 配对验证的负样本。
 """
 import argparse
 import configparser
@@ -14,6 +18,7 @@ import os
 import sys
 from typing import Optional
 
+import pandas as pd
 from rich.logging import RichHandler
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +30,9 @@ from spectrum.psm_info import PSMInfo
 
 
 SUPPORTED_ENGINES = {"pfind", "diann", "alphadia"}
+
+# entrapment 默认剔除的级别：质谱不可分级
+DEFAULT_DROP_LEVELS = frozenset({"L0", "L1"})
 
 
 def load_engine_psms(engine_name: str, config: configparser.ConfigParser) -> list:
@@ -148,8 +156,119 @@ def extract_n_engines_from_psms(
     return result
 
 
+def load_entrapment_classifications(tsv_path: str) -> dict:
+    """从 proteinCopilot 输出的 classified.tsv 加载 PSM 级别分类。
+
+    classified.tsv 由 proteinCopilot 的 entrapment 分析产出，含 L0-L4 五级:
+      - L0: razor-error  (序列在 target 库中精确存在 → 质谱不可分)
+      - L1: LI-isomer    (仅 L↔I 互换 → 质谱不可分)
+      - L2: near-identical (1 处差异 + Δm < 阈值 → 弱可分)
+      - L3: homolog      (1-2 处差异 + Δm 充足 → 理论可分)
+      - L4: true-trap    (无近邻 target 肽段 → 理想负样本)
+
+    Args:
+        tsv_path: classified.tsv 的路径
+
+    Returns:
+        dict[(sequence, charge, raw_title) -> level]。
+        缺少 level 字段的行会被跳过（不计入索引）。
+
+    Note:
+        匹配键忽略 modify：L0/L1 是序列层判定（stripped sequence），
+        同 (seq, charge, raw) 不同修饰的 PSM 共享 level。
+    """
+    df = pd.read_csv(tsv_path, sep="\t", dtype=str, keep_default_na=False)
+
+    required = {"peptide", "charge", "spectrum_file", "level"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"classified.tsv 缺少列 {sorted(missing)}（已有 {sorted(df.columns)}）")
+
+    result: dict = {}
+    for row in df.itertuples(index=False):
+        level = (row.level or "").strip()
+        if not level:
+            continue
+        try:
+            charge = int(row.charge)
+        except (ValueError, TypeError):
+            continue
+        peptide = (row.peptide or "").strip()
+        raw_title = (row.spectrum_file or "").strip()
+        if not peptide or not raw_title:
+            continue
+        result[(peptide, charge, raw_title)] = level
+
+    logging.info(
+        f"加载 entrapment 分类: {len(result)} 条 PSM 来自 {tsv_path}")
+    return result
+
+
+def filter_by_entrapment(
+    psms: list,
+    classifications: dict,
+    drop_levels=DEFAULT_DROP_LEVELS,
+) -> list:
+    """剔除 classified 中处于 drop_levels 的 negative PSM。
+
+    Args:
+        psms: PSMInfo 列表（已设置 label_type）
+        classifications: load_entrapment_classifications 的输出
+        drop_levels: 要剔除的 level 集合，默认 {"L0", "L1"}（质谱不可分）
+
+    Returns:
+        过滤后的 PSMInfo 列表。规则：
+          - label_type == "negative" 且 (seq, charge, raw_title) 命中 drop_levels → 剔除
+          - 其他 negative（不在 classifications 中或 level 不在 drop_levels） → 保留
+          - positive PSM 一律不动（即使误进 classified.tsv）
+
+        匹配只看 (sequence, charge, raw_title)，忽略 modify；被保留的 PSM 自身
+        modify 字段不变。
+    """
+    drop_levels = set(drop_levels)
+    if not classifications or not drop_levels:
+        return list(psms)
+
+    kept = []
+    neg_total = 0
+    neg_dropped = 0
+    neg_dropped_by_level: dict = {}
+    neg_unknown = 0
+
+    for psm in psms:
+        if psm._label_type != "negative":
+            kept.append(psm)
+            continue
+
+        neg_total += 1
+        key = (psm._sequence, psm._charge, psm._raw_title)
+        level = classifications.get(key)
+
+        if level is None:
+            neg_unknown += 1
+            kept.append(psm)
+            continue
+
+        if level in drop_levels:
+            neg_dropped += 1
+            neg_dropped_by_level[level] = neg_dropped_by_level.get(level, 0) + 1
+            continue
+
+        kept.append(psm)
+
+    by_level_str = ", ".join(
+        f"{lvl}={n}" for lvl, n in sorted(neg_dropped_by_level.items()))
+    logging.info(
+        f"entrapment 过滤: negative 输入={neg_total}, 剔除={neg_dropped} "
+        f"({by_level_str if by_level_str else 'none'}), "
+        f"unknown(保留)={neg_unknown}, negative 输出={neg_total - neg_dropped}"
+    )
+    return kept
+
+
 def extract_n_engines(config: configparser.ConfigParser) -> list:
-    """根据 config 加载各引擎并构造正负例。"""
+    """根据 config 加载各引擎并构造正负例（含可选 entrapment 过滤）。"""
     engines_str = config["extract"]["engines"]
     engine_order = [e.strip() for e in engines_str.split(",") if e.strip()]
 
@@ -168,8 +287,23 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
         engine_psms[name] = load_engine_psms(name, config)
         logging.info(f"  → {name} 共 {len(engine_psms[name])} 条 PSM")
 
-    return extract_n_engines_from_psms(
+    psms = extract_n_engines_from_psms(
         engine_psms, engine_order, positive_marker)
+
+    if "entrapment" in config:
+        classified_tsv = config["entrapment"].get("classified_tsv", "").strip()
+        if classified_tsv:
+            drop_levels_str = config["entrapment"].get(
+                "drop_levels", "L0,L1").strip()
+            drop_levels = {
+                lvl.strip().upper() for lvl in drop_levels_str.split(",")
+                if lvl.strip()
+            }
+            classifications = load_entrapment_classifications(classified_tsv)
+            psms = filter_by_entrapment(
+                psms, classifications, drop_levels=drop_levels)
+
+    return psms
 
 
 def write_psms_to_json(psms: list, output_path: str):

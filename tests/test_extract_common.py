@@ -239,3 +239,163 @@ def test_extract_cross_raw_only_in_one_engine_keeps_independently():
     positives = sorted([p._raw_title for p in result if p._label_type == "positive"])
     assert positives == ["rep1"]
     assert len(result) == 1
+
+
+# ------------------------------------------------------------------
+# Entrapment 过滤相关测试 (L0/L1 negative 剔除)
+# ------------------------------------------------------------------
+
+
+def _write_classified_tsv(path, rows):
+    """rows: list of dict with keys peptide/charge/spectrum_file/level (+ optional fields)."""
+    header = ["peptide", "charge", "precursor_mz", "retention_time",
+              "scan_number", "spectrum_file", "protein_ids", "q_value",
+              "group", "level"]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\t".join(header) + "\n")
+        for r in rows:
+            f.write("\t".join([
+                str(r.get("peptide", "")),
+                str(r.get("charge", "")),
+                str(r.get("precursor_mz", "0")),
+                str(r.get("retention_time", "0")),
+                str(r.get("scan_number", "")),
+                str(r.get("spectrum_file", "")),
+                str(r.get("protein_ids", "")),
+                str(r.get("q_value", "")),
+                str(r.get("group", "trap")),
+                str(r.get("level", "")),
+            ]) + "\n")
+
+
+def test_load_entrapment_classifications_basic(tmp_path):
+    """读取 classified.tsv 应建立 (sequence, charge, raw_title) -> level 索引。"""
+    from tools.extract_common import load_entrapment_classifications
+
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv(tsv, [
+        {"peptide": "AAAK", "charge": 2, "spectrum_file": "raw1", "level": "L0"},
+        {"peptide": "BBBR", "charge": 3, "spectrum_file": "raw1", "level": "L1"},
+        {"peptide": "CCCK", "charge": 2, "spectrum_file": "raw2", "level": "L4"},
+    ])
+
+    classifications = load_entrapment_classifications(str(tsv))
+    assert classifications[("AAAK", 2, "raw1")] == "L0"
+    assert classifications[("BBBR", 3, "raw1")] == "L1"
+    assert classifications[("CCCK", 2, "raw2")] == "L4"
+    assert classifications.get(("ZZZZ", 2, "raw1")) is None
+
+
+def test_load_entrapment_classifications_handles_empty_lines(tmp_path):
+    """空行 / 缺失 level 的行应被跳过，不报错。"""
+    from tools.extract_common import load_entrapment_classifications
+
+    tsv = tmp_path / "classified.tsv"
+    _write_classified_tsv(tsv, [
+        {"peptide": "AAAK", "charge": 2, "spectrum_file": "raw1", "level": "L0"},
+        {"peptide": "MISSING", "charge": 2, "spectrum_file": "raw1", "level": ""},
+        {"peptide": "BBBR", "charge": 2, "spectrum_file": "raw1", "level": "L4"},
+    ])
+    classifications = load_entrapment_classifications(str(tsv))
+    # 缺 level 的行不计入
+    assert ("MISSING", 2, "raw1") not in classifications
+    assert classifications[("AAAK", 2, "raw1")] == "L0"
+    assert classifications[("BBBR", 2, "raw1")] == "L4"
+
+
+def test_filter_by_entrapment_removes_L0_L1_negatives_only():
+    """L0/L1 negative 被剔除；L4 negative 与 unknown negative 保留；positive 全部不动。"""
+    from tools.extract_common import filter_by_entrapment
+
+    # 输入: 2 个 positive (HUMAN) + 4 个 negative (各种 level)
+    psm_l0_neg = _make_psm("L0PEP", 2, "ROA1_RAT", raw="raw1")
+    psm_l0_neg._label_type = "negative"
+    psm_l1_neg = _make_psm("L1PEP", 2, "ACT_DICDI", raw="raw1")
+    psm_l1_neg._label_type = "negative"
+    psm_l4_neg = _make_psm("L4PEP", 2, "GYP7_YEAST", raw="raw2")
+    psm_l4_neg._label_type = "negative"
+    psm_unknown_neg = _make_psm("UNKNOWN", 2, "FOO_BAR", raw="raw1")
+    psm_unknown_neg._label_type = "negative"
+    psm_pos_1 = _make_psm("HUMAN_A", 2, "P12345_HUMAN", raw="raw1")
+    psm_pos_1._label_type = "positive"
+    psm_pos_2 = _make_psm("HUMAN_B", 3, "P67890_HUMAN", raw="raw1")
+    psm_pos_2._label_type = "positive"
+
+    psms = [psm_l0_neg, psm_l1_neg, psm_l4_neg,
+            psm_unknown_neg, psm_pos_1, psm_pos_2]
+
+    classifications = {
+        ("L0PEP", 2, "raw1"): "L0",
+        ("L1PEP", 2, "raw1"): "L1",
+        ("L4PEP", 2, "raw2"): "L4",
+    }
+
+    result = filter_by_entrapment(
+        psms, classifications, drop_levels={"L0", "L1"})
+
+    result_seqs = {p._sequence for p in result}
+    assert "L0PEP" not in result_seqs
+    assert "L1PEP" not in result_seqs
+    assert "L4PEP" in result_seqs
+    assert "UNKNOWN" in result_seqs
+    assert "HUMAN_A" in result_seqs
+    assert "HUMAN_B" in result_seqs
+    assert len(result) == 4  # 6 - 2
+
+
+def test_filter_by_entrapment_only_touches_negatives():
+    """即使某 positive 的 (seq, charge, raw) 也在 classified.tsv 中被标 L0/L1，positive 也不动。"""
+    from tools.extract_common import filter_by_entrapment
+
+    psm_pos = _make_psm("CONFUSING", 2, "HUMAN_X", raw="raw1")
+    psm_pos._label_type = "positive"
+    psm_neg = _make_psm("L0PEP", 2, "TRAP_X", raw="raw1")
+    psm_neg._label_type = "negative"
+
+    classifications = {
+        ("CONFUSING", 2, "raw1"): "L0",  # 错误地把 positive 也标了
+        ("L0PEP", 2, "raw1"): "L0",
+    }
+
+    result = filter_by_entrapment(
+        [psm_pos, psm_neg], classifications, drop_levels={"L0", "L1"})
+
+    result_seqs = {p._sequence for p in result}
+    assert "CONFUSING" in result_seqs  # positive 不剔除
+    assert "L0PEP" not in result_seqs
+
+
+def test_filter_by_entrapment_empty_classifications_is_noop():
+    """空分类表 → 一个不动。"""
+    from tools.extract_common import filter_by_entrapment
+
+    psm = _make_psm("ANY", 2, "X_TRAP", raw="r")
+    psm._label_type = "negative"
+    result = filter_by_entrapment([psm], {}, drop_levels={"L0", "L1"})
+    assert len(result) == 1
+    assert result[0]._sequence == "ANY"
+
+
+def test_filter_by_entrapment_custom_drop_levels():
+    """drop_levels 可配置，例如同时剔除 L0/L1/L2。"""
+    from tools.extract_common import filter_by_entrapment
+
+    psm_l0 = _make_psm("L0PEP", 2, "X_TRAP", raw="r1")
+    psm_l0._label_type = "negative"
+    psm_l2 = _make_psm("L2PEP", 2, "X_TRAP", raw="r1")
+    psm_l2._label_type = "negative"
+    psm_l4 = _make_psm("L4PEP", 2, "X_TRAP", raw="r1")
+    psm_l4._label_type = "negative"
+
+    classifications = {
+        ("L0PEP", 2, "r1"): "L0",
+        ("L2PEP", 2, "r1"): "L2",
+        ("L4PEP", 2, "r1"): "L4",
+    }
+
+    result = filter_by_entrapment(
+        [psm_l0, psm_l2, psm_l4], classifications,
+        drop_levels={"L0", "L1", "L2"})
+
+    seqs = {p._sequence for p in result}
+    assert seqs == {"L4PEP"}
