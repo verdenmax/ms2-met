@@ -285,17 +285,43 @@ class PairFlow:
                     "[cyan] 处理进度 ...", total=len(multi_sample_futures))
 
                 # 收集结果（as_completed 可尽早获取已完成任务）
+                n_total_errors = 0
+                n_total_attempted = 0
                 for future in as_completed(multi_sample_futures):
                     progress.update(rich_task_progress, advance=1)
                     try:
-                        tot_results = future.result()
-                        ans.extend(tot_results)
+                        result = future.result()
+                        if isinstance(result, tuple) and len(result) == 2:
+                            batch_results, batch_errors = result
+                            ans.extend(batch_results)
+                            n_total_errors += batch_errors
+                            n_total_attempted += (
+                                len(batch_results) + batch_errors)
+                        else:
+                            # Backward-compat fallback (list return)
+                            ans.extend(result)
+                            n_total_attempted += len(result)
                     except BrokenProcessPool:
                         logging.error(
                             "进程池崩溃（可能内存不足），尝试减少 workers 数量或数据量")
                         break
                     except Exception as e:
                         logging.error(f"批次处理异常: {e}")
+                        n_total_errors += 1
+
+        # 汇总错误率
+        if n_total_attempted > 0:
+            error_rate = n_total_errors / n_total_attempted
+            if error_rate > 0.01:
+                logging.warning(
+                    f"批次错误率过高: {n_total_errors}/{n_total_attempted} "
+                    f"({error_rate:.1%}) — 检查日志中的 PSM 处理失败明细"
+                )
+            else:
+                logging.info(
+                    f"批次完成: {len(ans)}/{n_total_attempted} 成功 "
+                    f"({n_total_errors} 错误)"
+                )
 
         # NOTE: 保存结果
         ans_df = pd.DataFrame(ans)

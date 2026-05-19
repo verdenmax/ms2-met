@@ -121,9 +121,16 @@ def process_psm_single(
 
 
 def process_batch_single(shared_path: str, batch_psm_dicts: list, config):
-    """ 批量处理单文件任务 """
+    """ 批量处理单文件任务
+
+    Returns:
+        tuple: (results, n_errors) — results is the list of successfully
+        processed PSM rows; n_errors counts per-PSM exceptions that were
+        caught and logged (so callers can detect silent failures).
+    """
     dia_data = DIAData.load_from_file(shared_path, use_mmap=True)
     results = []
+    n_errors = 0
     for (psm_dict,) in batch_psm_dicts:
         try:
             psm = PSMInfo.from_dict(psm_dict)
@@ -133,14 +140,20 @@ def process_batch_single(shared_path: str, batch_psm_dicts: list, config):
             logging.error(f"PSM处理失败 seq={psm_dict.get('sequence','?')} "
                           f"charge={psm_dict.get('charge','?')}: "
                           f"{traceback.format_exc()}")
-    return results
+            n_errors += 1
+    return results, n_errors
 
 
 def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
-    """ 批量处理双文件任务 """
+    """ 批量处理双文件任务
+
+    Returns:
+        tuple: (results, n_errors).
+    """
     dia1 = DIAData.load_from_file(shared1, use_mmap=True)
     dia2 = DIAData.load_from_file(shared2, use_mmap=True)
     results = []
+    n_errors = 0
     for psm1_dict, psm2_dict, label in batch_items:
         try:
             psm1 = PSMInfo.from_dict(psm1_dict)
@@ -172,14 +185,20 @@ def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
             logging.error(f"PSM处理失败 seq={psm1_dict.get('sequence','?')} "
                           f"charge={psm1_dict.get('charge','?')}: "
                           f"{traceback.format_exc()}")
-    return results
+            n_errors += 1
+    return results, n_errors
 
 
 def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, config):
-    """ 使用shuffle 的模式处理所有负例 """
+    """ 使用shuffle 的模式处理所有负例
+
+    Returns:
+        tuple: (results, n_errors).
+    """
     dia1 = DIAData.load_from_file(shared1, use_mmap=True)
     dia2 = DIAData.load_from_file(shared2, use_mmap=True)
     results = []
+    n_errors = 0
     for psm1_dict, psm2_dict, label in batch_items:
         try:
             psm1 = PSMInfo.from_dict(psm1_dict)
@@ -216,4 +235,5 @@ def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, co
             logging.error(f"PSM处理失败 seq={psm1_dict.get('sequence','?')} "
                           f"charge={psm1_dict.get('charge','?')}: "
                           f"{traceback.format_exc()}")
-    return results
+            n_errors += 1
+    return results, n_errors
