@@ -440,15 +440,21 @@ class DIAData:
 
     def get_window_info(self, precursor_mz: float) -> dict:
         """获取包含该 precursor_mz 的 DIA 窗口信息。
-        返回 {"width": 窗口宽度Da, "centering": 前体在窗口中的相对位置 0-1}
+        返回 {
+            "width": 窗口宽度Da,
+            "centering": 前体在窗口中的相对位置 0-1,
+            "lower": 窗口下边界 m/z (NaN if not found),
+            "upper": 窗口上边界 m/z (NaN if not found),
+        }
         """
+        default = {"width": 0.0, "centering": 0.5,
+                   "lower": float("nan"), "upper": float("nan")}
         if (self._precursor_lower_mz is None or
                 self._precursor_upper_mz is None or
                 self.ms2_indexs is None or
                 len(self.ms2_indexs) == 0):
-            return {"width": 0.0, "centering": 0.5}
+            return default
 
-        # 搜索一个完整 DIA 循环的 MS2 谱图（循环长度 = 去重后的窗口数量）
         cycle_len = (len(self._cycle_left_precursor)
                      if self._cycle_left_precursor is not None
                      else len(self.ms2_indexs))
@@ -464,9 +470,10 @@ class DIAData:
                 width = float(upper - lower)
                 centering = (float(precursor_mz - lower) / width
                              if width > 0 else 0.5)
-                return {"width": width, "centering": centering}
+                return {"width": width, "centering": centering,
+                        "lower": float(lower), "upper": float(upper)}
 
-        return {"width": 0.0, "centering": 0.5}
+        return default
 
     def _check_is_ms1(self, index: int) -> bool:
         """ 检查这个下标对应的谱图是不是一个ms1"""
