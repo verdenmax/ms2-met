@@ -105,3 +105,36 @@ def is_signal_present_heavy(
     if not np.isfinite(corr):
         return False
     return bool(corr > pearson_min)
+
+
+def is_split_window(w_light: dict, w_heavy: dict) -> bool:
+    """True iff the light and heavy precursor m/z fall into DIFFERENT
+    DIA isolation windows.
+
+    Compares (lower, upper) tuples exactly. If either bound is NaN
+    (window-lookup failed), conservatively treats as split — this lets
+    Q1a still include unshifted fragments when window info is missing,
+    which is the safer direction.
+    """
+    l_lo, l_hi = w_light.get("lower"), w_light.get("upper")
+    h_lo, h_hi = w_heavy.get("lower"), w_heavy.get("upper")
+    if any(v is None or (isinstance(v, float) and np.isnan(v))
+           for v in (l_lo, l_hi, h_lo, h_hi)):
+        return True
+    return (l_lo != h_lo) or (l_hi != h_hi)
+
+
+def is_separable_fragment(
+    light_mass: float, heavy_mass: float, split_window: bool,
+    shift_epsilon: float = SHIFT_EPSILON,
+) -> bool:
+    """A fragment is separable iff either:
+      (a) It carries K or R and is shifted by SILAC (light_mass != heavy_mass), OR
+      (b) The DIA windows for light/heavy precursors differ.
+
+    Unshifted fragments under co-isolation cannot be separated:
+    light_xic and heavy_xic are extracted from the same MS2 spectra
+    at the same m/z, so they are identical by construction.
+    """
+    is_shifted = (heavy_mass - light_mass) > shift_epsilon
+    return bool(is_shifted or split_window)

@@ -96,3 +96,55 @@ def test_heavy_absent_when_empty_xic():
     light = _xic([10, 11, 12], [50, 200, 500])
     heavy = _xic([], [])
     assert is_signal_present_heavy(light, heavy, intensity_floor=100) is False
+
+
+# ----------------------------------------------------------------------
+# Window separability
+# ----------------------------------------------------------------------
+
+def test_is_split_window_same_bounds_returns_false():
+    from workflows.q1a_helpers import is_split_window
+    w_L = {"width": 2.0, "centering": 0.5, "lower": 500.0, "upper": 502.0}
+    w_H = {"width": 2.0, "centering": 0.7, "lower": 500.0, "upper": 502.0}
+    assert is_split_window(w_L, w_H) is False
+
+
+def test_is_split_window_different_bounds_returns_true():
+    from workflows.q1a_helpers import is_split_window
+    w_L = {"width": 2.0, "centering": 0.5, "lower": 500.0, "upper": 502.0}
+    w_H = {"width": 2.0, "centering": 0.5, "lower": 504.0, "upper": 506.0}
+    assert is_split_window(w_L, w_H) is True
+
+
+def test_is_split_window_nan_treated_as_split():
+    """If either window lookup fails (NaN bounds), be conservative
+    and treat as split (more inclusion in q1a)."""
+    from workflows.q1a_helpers import is_split_window
+    w_L = {"width": 2.0, "centering": 0.5, "lower": 500.0, "upper": 502.0}
+    w_H = {"width": 0.0, "centering": 0.5,
+           "lower": float("nan"), "upper": float("nan")}
+    assert is_split_window(w_L, w_H) is True
+
+
+# ----------------------------------------------------------------------
+# Fragment separability
+# ----------------------------------------------------------------------
+
+def test_shifted_fragment_always_separable():
+    """A fragment with K or R is shifted by SILAC; always separable
+    by m/z regardless of window configuration."""
+    from workflows.q1a_helpers import is_separable_fragment
+    assert is_separable_fragment(
+        light_mass=300.0, heavy_mass=310.0, split_window=True) is True
+    assert is_separable_fragment(
+        light_mass=300.0, heavy_mass=310.0, split_window=False) is True
+
+
+def test_unshifted_fragment_separable_only_in_split_window():
+    """A fragment with no K/R has equal light/heavy mass. It can only
+    be separated by the DIA window (its precursor isolation differs)."""
+    from workflows.q1a_helpers import is_separable_fragment
+    assert is_separable_fragment(
+        light_mass=300.0, heavy_mass=300.0, split_window=True) is True
+    assert is_separable_fragment(
+        light_mass=300.0, heavy_mass=300.0, split_window=False) is False
