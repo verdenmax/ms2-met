@@ -323,8 +323,13 @@ def single_pair_work(
         features["precursor_snr"] = 0.0
         features["precursor_peak_width_ratio"] = 0.0
         features["precursor_peak_symmetry"] = 0.0
+        features["precursor_light_apex_cycle_offset"] = 0
+        features["precursor_light_apex_cycle_offset_signed"] = 0
+        features["precursor_heavy_apex_cycle_offset"] = 0
+        features["precursor_heavy_apex_cycle_offset_signed"] = 0
     else:
-        precursor_score = calc_xic_score(light_xic, heavy_xic)
+        precursor_score = calc_xic_score(
+            light_xic, heavy_xic, center_rt=float(psm._rt))
         features["precursor_pearson"] = precursor_score["pearson"]
         features["precursor_apex_delta"] = precursor_score["apex_delta"]
         features["precursor_apex_delta_signed"] = precursor_score["apex_delta_signed"]
@@ -336,6 +341,14 @@ def single_pair_work(
         features["precursor_snr"] = precursor_score["snr"]
         features["precursor_peak_width_ratio"] = precursor_score["peak_width_ratio"]
         features["precursor_peak_symmetry"] = precursor_score["peak_symmetry"]
+        features["precursor_light_apex_cycle_offset"] = (
+            precursor_score["light_apex_cycle_offset"])
+        features["precursor_light_apex_cycle_offset_signed"] = (
+            precursor_score["light_apex_cycle_offset_signed"])
+        features["precursor_heavy_apex_cycle_offset"] = (
+            precursor_score["heavy_apex_cycle_offset"])
+        features["precursor_heavy_apex_cycle_offset_signed"] = (
+            precursor_score["heavy_apex_cycle_offset_signed"])
 
     # 同位素模式匹配 + 质量偏移验证
     isotope_spacing = 1.003355 / psm._charge
