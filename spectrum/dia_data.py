@@ -499,6 +499,27 @@ class DIAData:
 
         return mz, intensity
 
+    def _ms2_cycle_idx(self, global_ms2_idx: int) -> int:
+        """Return the cycle index (= position in ms1_indexs) that owns this MS2.
+
+        DIA cycle = one MS1 followed by N MS2. The owning MS1 is identified by
+        precursor_scan_ids[global_ms2_idx]. Return -1 if the owning MS1 isn't
+        found in ms1_indexs (defensive; shouldn't happen on well-formed data).
+        """
+        if (self.precursor_scan_ids is None or
+                self._scan_id_to_index is None or
+                self.ms1_indexs is None):
+            return -1
+        ms1_scan_id = int(self.precursor_scan_ids[global_ms2_idx])
+        if ms1_scan_id < 0:
+            return -1
+        ms1_global_idx = int(self._scan_id_to_index[ms1_scan_id])
+        pos = int(np.searchsorted(self.ms1_indexs, ms1_global_idx))
+        if (pos < len(self.ms1_indexs) and
+                int(self.ms1_indexs[pos]) == ms1_global_idx):
+            return pos
+        return -1
+
     def get_spectrum(self, scan_id: int) -> tuple[np.ndarray, np.ndarray]:
         """获取指定索引的谱图数据"""
         if scan_id < 0 or scan_id >= len(self._scan_id_to_index):
