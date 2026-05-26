@@ -565,7 +565,8 @@ class DIAData:
         向左/右各扩展 xic_cycle_window 个「有效」MS2 谱图（即窗口包含 precursor_mz）。
         """
         if self.ms2_indexs is None or len(self.ms2_indexs) == 0:
-            dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+            dtype = [("rt", "f8"), ("ppm_error", "f8"),
+                     ("intensity", "f8"), ("cycle_idx", "i4")]
             return np.array([], dtype=dtype), 0.0
 
         protonmass = 1.00727646677
@@ -601,7 +602,8 @@ class DIAData:
 
         if center_idx is None:
             # 没有找到任何窗口匹配的 MS2 谱图
-            dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+            dtype = [("rt", "f8"), ("ppm_error", "f8"),
+                     ("intensity", "f8"), ("cycle_idx", "i4")]
             logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
             logging.warn(f"precursor_mz: {precursor_mz}  left: {
                          self._cycle_left_precursor}")
@@ -665,10 +667,12 @@ class DIAData:
             ans.append({
                 "rt": self.rt_values[global_idx],
                 "ppm_error": ppm_error,
-                "intensity": match_intensity
+                "intensity": match_intensity,
+                "cycle_idx": self._ms2_cycle_idx(int(global_idx)),
             })
 
-        dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+        dtype = [("rt", "f8"), ("ppm_error", "f8"),
+                 ("intensity", "f8"), ("cycle_idx", "i4")]
         arr = np.array([tuple(d.values()) for d in ans], dtype=dtype)
 
         return arr, total_intensity

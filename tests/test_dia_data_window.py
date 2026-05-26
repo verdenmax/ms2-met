@@ -108,3 +108,60 @@ def test_ms1_xic_returns_cycle_idx_field():
     assert "cycle_idx" in xic.dtype.names
     # Center = ms1_indexs[2] (RT=30); window=2 -> indices 0..4 of ms1_indexs
     assert list(xic["cycle_idx"]) == [0, 1, 2, 3, 4]
+
+
+def test_ms2_xic_returns_cycle_idx_field():
+    """xic_ms2_peaks_extract dtype includes cycle_idx that maps
+    each entry to its owning MS1's position in ms1_indexs."""
+    d = DIAData.__new__(DIAData)
+    # Layout (global indices):
+    #   0: MS1 (cycle 0), 1: MS2 of cycle 0
+    #   2: MS1 (cycle 1), 3: MS2 of cycle 1
+    #   4: MS1 (cycle 2), 5: MS2 of cycle 2
+    d.ms1_indexs = np.array([0, 2, 4], dtype=np.int32)
+    d.ms1_indexs_rt = np.array([10.0, 30.0, 50.0], dtype=np.float32)
+    d.ms2_indexs = np.array([1, 3, 5], dtype=np.int32)
+    d.ms2_indexs_rt = np.array([15.0, 35.0, 55.0], dtype=np.float32)
+    d.rt_values = np.array(
+        [10.0, 15.0, 30.0, 35.0, 50.0, 55.0], dtype=np.float32)
+    d.precursor_scan_ids = np.array(
+        [-1, 100, -1, 101, -1, 102], dtype=np.int32)
+    d._scan_id_to_index = np.zeros(200, dtype=np.int32)
+    d._scan_id_to_index[100] = 0
+    d._scan_id_to_index[101] = 2
+    d._scan_id_to_index[102] = 4
+    # All MS2 windows contain precursor_mz=500.0
+    d._precursor_lower_mz = np.array(
+        [np.nan, 499.0, np.nan, 499.0, np.nan, 499.0], dtype=np.float64)
+    d._precursor_upper_mz = np.array(
+        [np.nan, 501.0, np.nan, 501.0, np.nan, 501.0], dtype=np.float64)
+    # Empty peak lists so match_peak_ppm returns harmlessly
+    d._peak_start_idx_list = np.zeros(6, dtype=np.int64)
+    d._peak_stop_idx_list = np.zeros(6, dtype=np.int64)
+    d._mz_values = np.array([], dtype=np.float32)
+    d._intensity_values = np.array([], dtype=np.float32)
+    d._cycle_left_precursor = np.array([499.0], dtype=np.float32)
+
+    xic, _ = d.xic_ms2_peaks_extract(
+        rt=np.float32(35.0), xic_cycle_window=1,
+        precursor_mz=np.float32(500.0), ions_mass=np.float32(200.0),
+        mass_tol_ppm=np.float32(10.0))
+
+    assert "cycle_idx" in xic.dtype.names
+    # Center is MS2 at rt=35 (global idx 3, cycle 1).
+    # Window=1 -> 1 left + center + 1 right = 3 entries; cycles [0,1,2].
+    assert list(xic["cycle_idx"]) == [0, 1, 2]
+
+
+def test_ms2_xic_empty_path_still_has_cycle_idx_in_dtype():
+    """Early-return path (no matching window) must still emit cycle_idx."""
+    d = DIAData.__new__(DIAData)
+    d.ms2_indexs = np.array([], dtype=np.int32)
+    d.ms2_indexs_rt = np.array([], dtype=np.float32)
+
+    xic, _ = d.xic_ms2_peaks_extract(
+        rt=np.float32(10.0), xic_cycle_window=3,
+        precursor_mz=np.float32(500.0), ions_mass=np.float32(200.0),
+        mass_tol_ppm=np.float32(10.0))
+    assert "cycle_idx" in xic.dtype.names
+    assert len(xic) == 0
