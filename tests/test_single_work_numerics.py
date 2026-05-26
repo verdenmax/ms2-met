@@ -375,3 +375,38 @@ def test_default_xic_score_has_cycle_offset_zero_fields():
     assert d["light_apex_cycle_offset_signed"] == 0
     assert d["heavy_apex_cycle_offset"] == 0
     assert d["heavy_apex_cycle_offset_signed"] == 0
+
+
+def test_calc_hl_ratio_consistency_basic_std_and_mad():
+    """Returns (std, mad) of log10(ratios > 0)."""
+    from workflows.single_work import _calc_hl_ratio_consistency
+    # ratios: 1, 10, 100 -> log10 = 0, 1, 2 -> mean=1, std=sqrt(2/3)
+    std_v, mad_v = _calc_hl_ratio_consistency([1.0, 10.0, 100.0])
+    assert abs(std_v - np.std([0.0, 1.0, 2.0])) < 1e-9
+    # median = 1.0 -> |log10-median| = [1, 0, 1] -> mad = median = 1.0
+    assert abs(mad_v - 1.0) < 1e-9
+
+
+def test_calc_hl_ratio_consistency_drops_non_positive():
+    """ratios <= 0 are excluded from log10."""
+    from workflows.single_work import _calc_hl_ratio_consistency
+    std_v, mad_v = _calc_hl_ratio_consistency([1.0, 0.0, -5.0, 100.0])
+    # Only [1, 100] survive -> log10 = [0, 2] -> std=1, median=1, mad=1
+    assert abs(std_v - 1.0) < 1e-9
+    assert abs(mad_v - 1.0) < 1e-9
+
+
+def test_calc_hl_ratio_consistency_empty_list_returns_zero():
+    """Empty list -> (0.0, 0.0)."""
+    from workflows.single_work import _calc_hl_ratio_consistency
+    assert _calc_hl_ratio_consistency([]) == (0.0, 0.0)
+    assert _calc_hl_ratio_consistency([0.0, -1.0]) == (0.0, 0.0)
+
+
+def test_calc_hl_ratio_consistency_single_element_std_is_nan():
+    """count=1 -> std is NaN (consistent with Bug #21 convention); mad=0."""
+    import math
+    from workflows.single_work import _calc_hl_ratio_consistency
+    std_v, mad_v = _calc_hl_ratio_consistency([5.0])
+    assert math.isnan(std_v)
+    assert mad_v == 0.0

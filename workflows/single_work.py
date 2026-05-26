@@ -786,6 +786,28 @@ def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
     return abs(signed), signed
 
 
+def _calc_hl_ratio_consistency(ratios: list) -> tuple[float, float]:
+    """Compute consistency of light/heavy intensity ratios across fragments.
+
+    Returns (std, mad) of log10(ratio) over the input list. Non-positive
+    ratios are dropped (cannot take log). std uses NaN for count==1 to
+    match the existing single-element convention (see Bug #21 in
+    extract_ion_pearson_features). mad is 0 for empty input, otherwise
+    median absolute deviation from the median.
+    """
+    log_ratios = [float(np.log10(r)) for r in ratios if r > 0]
+    count = len(log_ratios)
+    if count == 0:
+        return 0.0, 0.0
+    if count == 1:
+        return float("nan"), 0.0
+    arr = np.asarray(log_ratios, dtype="f8")
+    std_v = float(np.std(arr))
+    med = float(np.median(arr))
+    mad_v = float(np.median(np.abs(arr - med)))
+    return std_v, mad_v
+
+
 def _default_xic_score() -> dict:
     """calc_xic_score 的全零默认返回值"""
     return {
