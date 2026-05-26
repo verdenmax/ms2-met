@@ -707,8 +707,10 @@ class DIAData:
         end_index = min(len(self.ms1_indexs),
                         mid_rt_index + xic_cycle_window + 1)
 
-        # 遍历所有 index
-        for index in self.ms1_indexs[start_index:end_index]:
+        # 遍历所有 index, 并记录 cycle_idx (= position in ms1_indexs)
+        for local_pos, index in enumerate(
+                self.ms1_indexs[start_index:end_index]):
+            cycle_idx = start_index + local_pos
 
             # 当是 ms1 谱图的时候，取出这个precursor_mz 对应的信息
             (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
@@ -719,9 +721,11 @@ class DIAData:
             ans.append(
                 {"rt": self.rt_values[index],
                  "ppm_error": ppm_error,
-                 "intensity": match_intensity})
+                 "intensity": match_intensity,
+                 "cycle_idx": cycle_idx})
 
-        dtype = [("rt", "f8"), ("ppm_error", "f8"), ("intensity", "f8")]
+        dtype = [("rt", "f8"), ("ppm_error", "f8"),
+                 ("intensity", "f8"), ("cycle_idx", "i4")]
 
         # 把 list[dict] 转成结构化 ndarray
         arr = np.array([tuple(d.values()) for d in ans], dtype=dtype)

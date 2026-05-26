@@ -86,3 +86,25 @@ def test_ms2_cycle_idx_returns_minus_one_when_owning_ms1_missing():
 
     # MS2 at global idx 1: owning MS1 = scan_id 7 -> global idx 3, not in ms1_indexs
     assert d._ms2_cycle_idx(1) == -1
+
+
+def test_ms1_xic_returns_cycle_idx_field():
+    """xic_peaks_extreact dtype includes cycle_idx = ms1_indexs position."""
+    d = DIAData.__new__(DIAData)
+    # 5 MS1 spectra at global indices 0..4, equally spaced RT
+    d.ms1_indexs = np.array([0, 1, 2, 3, 4], dtype=np.int32)
+    d.ms1_indexs_rt = np.array([10.0, 20.0, 30.0, 40.0, 50.0], dtype=np.float32)
+    d.rt_values = np.array([10.0, 20.0, 30.0, 40.0, 50.0], dtype=np.float32)
+    # Empty peak lists so match_peak_ppm returns (nan, 0) safely
+    d._peak_start_idx_list = np.zeros(5, dtype=np.int64)
+    d._peak_stop_idx_list = np.zeros(5, dtype=np.int64)
+    d._mz_values = np.array([], dtype=np.float32)
+    d._intensity_values = np.array([], dtype=np.float32)
+
+    xic = d.xic_peaks_extreact(
+        rt=np.float32(30.0), xic_cycle_window=2,
+        precursor_mz=np.float32(500.0), mass_tol_ppm=np.float32(10.0))
+
+    assert "cycle_idx" in xic.dtype.names
+    # Center = ms1_indexs[2] (RT=30); window=2 -> indices 0..4 of ms1_indexs
+    assert list(xic["cycle_idx"]) == [0, 1, 2, 3, 4]
