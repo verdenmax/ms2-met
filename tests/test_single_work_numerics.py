@@ -301,3 +301,77 @@ def test_calc_cycle_offset_skips_invalid_cycle_idx():
         intensities=[1, 1, 100, 1, 1])  # apex at idx 2 (cycle_idx -1)
     abs_off2, signed2 = _calc_cycle_offset(xic2, center_rt=11.0)
     assert (abs_off2, signed2) == (0, 0)
+
+
+def test_calc_xic_score_emits_cycle_offset_when_center_rt_provided():
+    """calc_xic_score(light, heavy, center_rt=...) returns 4 new fields:
+    light_apex_cycle_offset, light_apex_cycle_offset_signed,
+    heavy_apex_cycle_offset, heavy_apex_cycle_offset_signed."""
+    from workflows.single_work import calc_xic_score
+    dt = [("rt", "f8"), ("ppm_error", "f8"),
+          ("intensity", "f8"), ("cycle_idx", "i4")]
+    n = 5
+    light = np.zeros(n, dtype=dt)
+    light["rt"] = [10, 11, 12, 13, 14]
+    light["cycle_idx"] = [0, 1, 2, 3, 4]
+    light["intensity"] = [1, 5, 100, 5, 1]  # apex at cycle 2 (center)
+    heavy = light.copy()
+    heavy["intensity"] = [1, 100, 5, 1, 1]  # apex at cycle 1 (one early)
+
+    result = calc_xic_score(light, heavy, center_rt=12.0)
+    assert result["light_apex_cycle_offset"] == 0
+    assert result["light_apex_cycle_offset_signed"] == 0
+    assert result["heavy_apex_cycle_offset"] == 1
+    assert result["heavy_apex_cycle_offset_signed"] == -1
+
+
+def test_calc_xic_score_supports_separate_heavy_center_rt():
+    """When light and heavy come from different DIAData (multi_batch_work),
+    heavy may have a different RT origin."""
+    from workflows.single_work import calc_xic_score
+    dt = [("rt", "f8"), ("ppm_error", "f8"),
+          ("intensity", "f8"), ("cycle_idx", "i4")]
+    n = 5
+    light = np.zeros(n, dtype=dt)
+    light["rt"] = [10, 11, 12, 13, 14]
+    light["cycle_idx"] = [0, 1, 2, 3, 4]
+    light["intensity"] = [1, 5, 100, 5, 1]
+
+    # Heavy XIC at a different RT range (different raw)
+    heavy = np.zeros(n, dtype=dt)
+    heavy["rt"] = [20, 21, 22, 23, 24]
+    heavy["cycle_idx"] = [10, 11, 12, 13, 14]
+    heavy["intensity"] = [1, 5, 100, 5, 1]  # apex at cycle 12
+
+    result = calc_xic_score(
+        light, heavy, center_rt=12.0, heavy_center_rt=22.0)
+    assert result["light_apex_cycle_offset"] == 0
+    assert result["heavy_apex_cycle_offset"] == 0
+
+
+def test_calc_xic_score_omits_cycle_offset_default_zero():
+    """Backwards compat: not passing center_rt returns zero for new fields."""
+    from workflows.single_work import calc_xic_score
+    dt = [("rt", "f8"), ("ppm_error", "f8"),
+          ("intensity", "f8"), ("cycle_idx", "i4")]
+    n = 3
+    light = np.zeros(n, dtype=dt)
+    light["rt"] = [10, 11, 12]
+    light["cycle_idx"] = [0, 1, 2]
+    light["intensity"] = [1, 100, 1]
+    heavy = light.copy()
+    result = calc_xic_score(light, heavy)
+    assert result["light_apex_cycle_offset"] == 0
+    assert result["light_apex_cycle_offset_signed"] == 0
+    assert result["heavy_apex_cycle_offset"] == 0
+    assert result["heavy_apex_cycle_offset_signed"] == 0
+
+
+def test_default_xic_score_has_cycle_offset_zero_fields():
+    """The early-return default dict must include all 4 cycle offset keys."""
+    from workflows.single_work import _default_xic_score
+    d = _default_xic_score()
+    assert d["light_apex_cycle_offset"] == 0
+    assert d["light_apex_cycle_offset_signed"] == 0
+    assert d["heavy_apex_cycle_offset"] == 0
+    assert d["heavy_apex_cycle_offset_signed"] == 0

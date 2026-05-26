@@ -800,11 +800,17 @@ def _default_xic_score() -> dict:
         "snr": 0.0,
         "peak_width_ratio": 0.0,
         "peak_symmetry": 0.0,
+        "light_apex_cycle_offset": 0,
+        "light_apex_cycle_offset_signed": 0,
+        "heavy_apex_cycle_offset": 0,
+        "heavy_apex_cycle_offset_signed": 0,
     }
 
 
 def calc_xic_score(
     light_xic: np.array, heavy_xic: np.array,
+    center_rt: float | None = None,
+    heavy_center_rt: float | None = None,
     intensity_threshold: float = 1e-10
 ) -> dict:
     """ 根据轻重标 XIC 计算综合特征，返回包含 pearson/mz_avg_err/apex_delta/强度信息的字典 """
@@ -861,6 +867,15 @@ def calc_xic_score(
         result["light_max_int"] = light_max_int
         result["heavy_max_int"] = heavy_max_int
         result["intensity_ratio"] = intensity_ratio
+        if center_rt is not None:
+            l_abs, l_sig = _calc_cycle_offset(light_xic, center_rt)
+            h_center = (heavy_center_rt
+                        if heavy_center_rt is not None else center_rt)
+            h_abs, h_sig = _calc_cycle_offset(heavy_xic, h_center)
+            result["light_apex_cycle_offset"] = l_abs
+            result["light_apex_cycle_offset_signed"] = l_sig
+            result["heavy_apex_cycle_offset"] = h_abs
+            result["heavy_apex_cycle_offset_signed"] = h_sig
         return result
 
     common_rt = np.linspace(rt_start, rt_end, 100)
@@ -900,6 +915,14 @@ def calc_xic_score(
         else:
             cosine = 0.0
 
+    if center_rt is not None:
+        l_abs, l_sig = _calc_cycle_offset(light_xic, center_rt)
+        h_center = (heavy_center_rt
+                    if heavy_center_rt is not None else center_rt)
+        h_abs, h_sig = _calc_cycle_offset(heavy_xic, h_center)
+    else:
+        l_abs = l_sig = h_abs = h_sig = 0
+
     return {
         "pearson": np.float32(corr),
         "mz_avg_err": mz_avg_err,
@@ -912,6 +935,10 @@ def calc_xic_score(
         "snr": snr,
         "peak_width_ratio": peak_width_ratio,
         "peak_symmetry": peak_symmetry,
+        "light_apex_cycle_offset": l_abs,
+        "light_apex_cycle_offset_signed": l_sig,
+        "heavy_apex_cycle_offset": h_abs,
+        "heavy_apex_cycle_offset_signed": h_sig,
     }
 
 
