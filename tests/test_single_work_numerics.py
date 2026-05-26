@@ -227,3 +227,77 @@ def test_extract_ion_numeric_features_max_empty_list_is_zero():
     from workflows.single_work import extract_ion_numeric_features
     out = extract_ion_numeric_features([], "demo")
     assert out["demo_max"] == 0.0
+
+
+def _make_xic(cycles, rts, intensities):
+    dt = [("rt", "f8"), ("ppm_error", "f8"),
+          ("intensity", "f8"), ("cycle_idx", "i4")]
+    arr = np.zeros(len(cycles), dtype=dt)
+    arr["cycle_idx"] = cycles
+    arr["rt"] = rts
+    arr["intensity"] = intensities
+    return arr
+
+
+def test_calc_cycle_offset_apex_at_center_returns_zero():
+    """When apex aligns with the center RT entry, offset is (0, 0)."""
+    from workflows.single_work import _calc_cycle_offset
+    xic = _make_xic(
+        cycles=[5, 6, 7, 8, 9], rts=[10, 11, 12, 13, 14],
+        intensities=[1, 5, 100, 5, 1])
+    abs_off, signed = _calc_cycle_offset(xic, center_rt=12.0)
+    assert abs_off == 0
+    assert signed == 0
+
+
+def test_calc_cycle_offset_apex_before_center_is_negative():
+    """Apex one cycle earlier than center -> signed = -1, abs = 1."""
+    from workflows.single_work import _calc_cycle_offset
+    xic = _make_xic(
+        cycles=[5, 6, 7, 8, 9], rts=[10, 11, 12, 13, 14],
+        intensities=[1, 100, 5, 1, 1])  # apex at cycle 6
+    abs_off, signed = _calc_cycle_offset(xic, center_rt=12.0)
+    assert signed == -1
+    assert abs_off == 1
+
+
+def test_calc_cycle_offset_apex_after_center_is_positive():
+    """Apex two cycles after center -> signed = +2, abs = 2."""
+    from workflows.single_work import _calc_cycle_offset
+    xic = _make_xic(
+        cycles=[5, 6, 7, 8, 9], rts=[10, 11, 12, 13, 14],
+        intensities=[1, 1, 5, 1, 100])  # apex at cycle 9
+    abs_off, signed = _calc_cycle_offset(xic, center_rt=12.0)
+    assert signed == 2
+    assert abs_off == 2
+
+
+def test_calc_cycle_offset_empty_xic_returns_zero():
+    """Empty XIC -> (0, 0)."""
+    from workflows.single_work import _calc_cycle_offset
+    xic = _make_xic(cycles=[], rts=[], intensities=[])
+    abs_off, signed = _calc_cycle_offset(xic, center_rt=0.0)
+    assert (abs_off, signed) == (0, 0)
+
+
+def test_calc_cycle_offset_skips_invalid_cycle_idx():
+    """cycle_idx == -1 entries (defensive) are excluded from center search,
+    and an apex with cycle_idx == -1 returns (0, 0)."""
+    from workflows.single_work import _calc_cycle_offset
+    # Center RT entry has cycle_idx == -1 -> picks next-closest valid entry
+    xic = _make_xic(
+        cycles=[5, -1, 7, 8, 9], rts=[10, 11, 12, 13, 14],
+        intensities=[1, 5, 100, 5, 1])  # apex at idx 2 (cycle 7)
+    abs_off, signed = _calc_cycle_offset(xic, center_rt=11.0)
+    # All cycle_idx>=0 entries: cycles [5,7,8,9] at rts [10,12,13,14]
+    # Closest to 11 is rt=10 (cycle 5) or rt=12 (cycle 7), tie -> argmin picks rt=10
+    # apex cycle = 7, center cycle = 5 -> signed = 2
+    assert signed == 2
+    assert abs_off == 2
+
+    # If apex itself has cycle_idx -1 -> return (0, 0)
+    xic2 = _make_xic(
+        cycles=[5, 6, -1, 8, 9], rts=[10, 11, 12, 13, 14],
+        intensities=[1, 1, 100, 1, 1])  # apex at idx 2 (cycle_idx -1)
+    abs_off2, signed2 = _calc_cycle_offset(xic2, center_rt=11.0)
+    assert (abs_off2, signed2) == (0, 0)

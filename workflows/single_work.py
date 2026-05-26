@@ -757,6 +757,35 @@ def _calc_snr(intensity: np.ndarray) -> float:
     return max_int / noise
 
 
+def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
+    """Compute how far the intensity apex is from the center RT, in cycles.
+
+    Returns (abs_offset, signed_offset). signed < 0 means apex is at an
+    earlier cycle than center_rt; > 0 means later.
+
+    The "center" is the cycle whose RT is closest to center_rt (among
+    entries with valid cycle_idx >= 0). The "apex" is the cycle at
+    argmax(intensity). Both returned values are integer cycle counts.
+
+    Returns (0, 0) for empty XIC, all-invalid cycle_idx, or apex with
+    cycle_idx == -1 (defensive — shouldn't happen on well-formed data).
+    """
+    if len(xic) == 0:
+        return 0, 0
+    valid_mask = xic["cycle_idx"] >= 0
+    if not np.any(valid_mask):
+        return 0, 0
+    valid_xic = xic[valid_mask]
+    center_local_idx = int(np.argmin(np.abs(valid_xic["rt"] - center_rt)))
+    center_cycle = int(valid_xic["cycle_idx"][center_local_idx])
+    apex_global_idx = int(np.argmax(xic["intensity"]))
+    apex_cycle = int(xic["cycle_idx"][apex_global_idx])
+    if apex_cycle < 0:
+        return 0, 0
+    signed = apex_cycle - center_cycle
+    return abs(signed), signed
+
+
 def _default_xic_score() -> dict:
     """calc_xic_score 的全零默认返回值"""
     return {
