@@ -64,8 +64,15 @@ def multi_batch_work(
         features["precursor_snr"] = 0.0
         features["precursor_peak_width_ratio"] = 0.0
         features["precursor_peak_symmetry"] = 0.0
+        features["precursor_light_apex_cycle_offset"] = 0
+        features["precursor_light_apex_cycle_offset_signed"] = 0
+        features["precursor_heavy_apex_cycle_offset"] = 0
+        features["precursor_heavy_apex_cycle_offset_signed"] = 0
     else:
-        precursor_score = calc_xic_score(light_xic, heavy_xic)
+        precursor_score = calc_xic_score(
+            light_xic, heavy_xic,
+            center_rt=float(psm1._rt),
+            heavy_center_rt=float(psm2._rt))
         features["precursor_pearson"] = precursor_score["pearson"]
         features["precursor_apex_delta"] = precursor_score["apex_delta"]
         features["precursor_apex_delta_signed"] = precursor_score["apex_delta_signed"]
@@ -77,6 +84,14 @@ def multi_batch_work(
         features["precursor_snr"] = precursor_score["snr"]
         features["precursor_peak_width_ratio"] = precursor_score["peak_width_ratio"]
         features["precursor_peak_symmetry"] = precursor_score["peak_symmetry"]
+        features["precursor_light_apex_cycle_offset"] = (
+            precursor_score["light_apex_cycle_offset"])
+        features["precursor_light_apex_cycle_offset_signed"] = (
+            precursor_score["light_apex_cycle_offset_signed"])
+        features["precursor_heavy_apex_cycle_offset"] = (
+            precursor_score["heavy_apex_cycle_offset"])
+        features["precursor_heavy_apex_cycle_offset_signed"] = (
+            precursor_score["heavy_apex_cycle_offset_signed"])
 
     # 同位素模式匹配 + 质量偏移验证
     isotope_spacing = 1.003355 / psm1._charge
@@ -137,6 +152,11 @@ def multi_batch_work(
     fragment_intensities = []  # per-ion max intensity for weighted correlation
     fragment_cosines = []
     fragment_snrs = []
+    fragment_light_cycle_offsets = []
+    fragment_light_cycle_offsets_signed = []
+    fragment_heavy_cycle_offsets = []
+    fragment_heavy_cycle_offsets_signed = []
+    fragment_hl_ratios = {"all": [], "b": [], "y": []}
 
     # --- Q1a setup: classify co/split-isolation for accumulator ---
     w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
@@ -191,7 +211,10 @@ def multi_batch_work(
             intensitys_map["all"] += light_all_intensity + \
                 heavy_all_intensity
 
-        ion_score = calc_xic_score(light_ions_xic, heavy_ions_xic)
+        ion_score = calc_xic_score(
+            light_ions_xic, heavy_ions_xic,
+            center_rt=float(psm1._rt),
+            heavy_center_rt=float(psm2._rt))
 
         pearsons_map[ions_type].append(ion_score["pearson"])
         pearsons_map["all"].append(ion_score["pearson"])
@@ -201,6 +224,19 @@ def multi_batch_work(
             max(ion_score["light_max_int"], ion_score["heavy_max_int"]))
         fragment_cosines.append(ion_score["cosine"])
         fragment_snrs.append(ion_score["snr"])
+        fragment_light_cycle_offsets.append(
+            ion_score["light_apex_cycle_offset"])
+        fragment_light_cycle_offsets_signed.append(
+            ion_score["light_apex_cycle_offset_signed"])
+        fragment_heavy_cycle_offsets.append(
+            ion_score["heavy_apex_cycle_offset"])
+        fragment_heavy_cycle_offsets_signed.append(
+            ion_score["heavy_apex_cycle_offset_signed"])
+        if ion_score["intensity_ratio"] > 0:
+            fragment_hl_ratios[ions_type].append(
+                float(ion_score["intensity_ratio"]))
+            fragment_hl_ratios["all"].append(
+                float(ion_score["intensity_ratio"]))
 
         # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
 
@@ -253,6 +289,24 @@ def multi_batch_work(
         fragment_cosines, "all_cosine"))
     features.update(extract_ion_numeric_features(
         fragment_snrs, "all_snr"))
+
+    # 碎片级 apex_cycle_offset 汇总（light/heavy × abs/signed × {mean,p50,std,max}）
+    features.update(extract_ion_numeric_features(
+        fragment_light_cycle_offsets, "all_light_apex_cycle_offset"))
+    features.update(extract_ion_numeric_features(
+        fragment_light_cycle_offsets_signed,
+        "all_light_apex_cycle_offset_signed"))
+    features.update(extract_ion_numeric_features(
+        fragment_heavy_cycle_offsets, "all_heavy_apex_cycle_offset"))
+    features.update(extract_ion_numeric_features(
+        fragment_heavy_cycle_offsets_signed,
+        "all_heavy_apex_cycle_offset_signed"))
+
+    # H/L 强度比一致性（按 all/b/y 分组的 log10-ratio std/mad）
+    for ion_type, ratios in fragment_hl_ratios.items():
+        std_v, mad_v = _calc_hl_ratio_consistency(ratios)
+        features[f"{ion_type}_log_hl_ratio_std"] = std_v
+        features[f"{ion_type}_log_hl_ratio_mad"] = mad_v
 
     # 序列级特征
     features["kr_count"] = psm1._sequence.count('K') + \
