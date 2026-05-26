@@ -690,8 +690,8 @@ def extract_ion_pearson_features(ions_pearsons: []) -> dict:
 
 def extract_ion_numeric_features(values: list, prefix: str) -> dict:
     """
-    对碎片级数值列表（如 apex_delta、mz_err）计算均值、中位数和标准差。
-    清除 NaN/Inf 值后统计。
+    对碎片级数值列表（如 apex_delta、mz_err、cycle_offset）计算均值、
+    中位数、标准差和最大值。清除 NaN/Inf 值后统计。
     """
     clean_vals = [v for v in values if not np.isnan(v) and np.isfinite(v)]
     if len(clean_vals) == 0:
@@ -699,11 +699,13 @@ def extract_ion_numeric_features(values: list, prefix: str) -> dict:
             f"{prefix}_mean": 0.0,
             f"{prefix}_p50": 0.0,
             f"{prefix}_std": 0.0,
+            f"{prefix}_max": 0.0,
         }
     return {
         f"{prefix}_mean": float(np.mean(clean_vals)),
         f"{prefix}_p50": float(np.median(clean_vals)),
         f"{prefix}_std": float(np.std(clean_vals)),
+        f"{prefix}_max": float(np.max(clean_vals)),
     }
 
 

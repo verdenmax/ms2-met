@@ -208,3 +208,22 @@ def test_calc_xic_score_handles_pearsonr_constant_input():
     result = calc_xic_score(light, heavy)
     # pearson should be 0.0, not NaN
     assert np.isfinite(result["pearson"])
+
+
+def test_extract_ion_numeric_features_emits_max_field():
+    """extract_ion_numeric_features must include `_max` so caller can
+    track the worst-offending fragment (e.g. largest apex_cycle_offset)."""
+    from workflows.single_work import extract_ion_numeric_features
+    out = extract_ion_numeric_features([0.1, 0.5, 0.3, 0.9, 0.2], "demo")
+    assert "demo_max" in out
+    assert abs(out["demo_max"] - 0.9) < 1e-9
+    assert "demo_mean" in out  # existing fields preserved
+    assert "demo_p50" in out
+    assert "demo_std" in out
+
+
+def test_extract_ion_numeric_features_max_empty_list_is_zero():
+    """Empty list -> demo_max = 0.0 (consistent with other defaults)."""
+    from workflows.single_work import extract_ion_numeric_features
+    out = extract_ion_numeric_features([], "demo")
+    assert out["demo_max"] == 0.0
