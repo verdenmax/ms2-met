@@ -871,13 +871,16 @@ def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
     entries with valid cycle_idx >= 0). The "apex" is the cycle at
     argmax(intensity). Both returned values are integer cycle counts.
 
-    Returns (0, 0) for empty XIC, all-invalid cycle_idx, or apex with
-    cycle_idx == -1 (defensive — shouldn't happen on well-formed data).
+    Returns (0, 0) for empty XIC, all-invalid cycle_idx, all-zero
+    intensity (no real apex — np.argmax would pick the window edge),
+    or apex with cycle_idx == -1 (defensive).
     """
     if len(xic) == 0:
         return 0, 0
     valid_mask = xic["cycle_idx"] >= 0
     if not np.any(valid_mask):
+        return 0, 0
+    if not np.any(xic["intensity"] > 0):
         return 0, 0
     valid_xic = xic[valid_mask]
     center_local_idx = int(np.argmin(np.abs(valid_xic["rt"] - center_rt)))

@@ -410,3 +410,31 @@ def test_calc_hl_ratio_consistency_single_element_std_is_nan():
     std_v, mad_v = _calc_hl_ratio_consistency([5.0])
     assert math.isnan(std_v)
     assert mad_v == 0.0
+
+
+def test_calc_cycle_offset_all_zero_intensity_returns_zero():
+    """When XIC has entries but every intensity is 0 (no peak matched),
+    np.argmax would silently pick the left-edge cycle and emit a fake
+    non-zero offset. Guard returns (0, 0) instead."""
+    from workflows.single_work import _calc_cycle_offset
+    # XIC populated but every intensity == 0 (typical for MS2 fragment
+    # XICs that find spectra but no peak matches the fragment m/z)
+    xic = _make_xic(
+        cycles=[10, 11, 12, 13, 14], rts=[20, 21, 22, 23, 24],
+        intensities=[0, 0, 0, 0, 0])
+    abs_off, signed = _calc_cycle_offset(xic, center_rt=22.0)
+    assert abs_off == 0
+    assert signed == 0
+
+
+def test_calc_cycle_offset_zero_intensity_with_nonzero_apex_still_works():
+    """Sanity: the guard only triggers when ALL intensities are 0;
+    a single non-zero entry still produces a meaningful offset."""
+    from workflows.single_work import _calc_cycle_offset
+    xic = _make_xic(
+        cycles=[10, 11, 12, 13, 14], rts=[20, 21, 22, 23, 24],
+        intensities=[0, 0, 0, 0, 100])  # apex at cycle 14
+    abs_off, signed = _calc_cycle_offset(xic, center_rt=22.0)
+    # Center = cycle 12 (rt=22), apex = cycle 14 -> signed = 2
+    assert signed == 2
+    assert abs_off == 2
