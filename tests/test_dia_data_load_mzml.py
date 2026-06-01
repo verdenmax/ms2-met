@@ -308,3 +308,62 @@ def test_load_from_mzml_skips_centroid_for_already_centroid(monkeypatch):
         d._mz_values, np.array([400.0, 500.0, 600.0], dtype=np.float32))
     np.testing.assert_array_equal(
         d._intensity_values, np.array([10.0, 20.0, 30.0], dtype=np.float32))
+
+
+# ---- DataManager wires config ----
+
+def test_data_manager_passes_centroid_config_to_dia_data(monkeypatch, tmp_path):
+    """DataManager.get_dia_data_object reads CENTROID_ENABLED and
+    CENTROID_REL_THRESHOLD from [general] and sets them on DIAData
+    before _load_from_mzml runs."""
+    import configparser
+    from manager.data_manager import DataManager
+
+    cfg = configparser.ConfigParser()
+    cfg['general'] = {
+        'centroid_enabled': 'false',
+        'centroid_rel_threshold': '0.005',
+    }
+
+    captured = {}
+
+    def fake_load(self, mzml_file_path):
+        # Capture the centroid fields at load-time.
+        captured['enabled'] = self._centroid_enabled
+        captured['threshold'] = self._centroid_rel_threshold
+        # Skip actual loading work.
+        return None
+
+    monkeypatch.setattr(
+        'spectrum.dia_data.DIAData._load_from_mzml', fake_load)
+
+    dm = DataManager(config=cfg, path=str(tmp_path / 'mgr.pkl'))
+    dm.get_dia_data_object('does_not_exist.mzML')
+
+    assert captured['enabled'] is False
+    assert captured['threshold'] == pytest.approx(0.005)
+
+
+def test_data_manager_defaults_when_keys_missing(monkeypatch, tmp_path):
+    """Missing keys must fall back to DIAData defaults (True / 1e-3)."""
+    import configparser
+    from manager.data_manager import DataManager
+
+    cfg = configparser.ConfigParser()
+    cfg['general'] = {}
+
+    captured = {}
+
+    def fake_load(self, mzml_file_path):
+        captured['enabled'] = self._centroid_enabled
+        captured['threshold'] = self._centroid_rel_threshold
+        return None
+
+    monkeypatch.setattr(
+        'spectrum.dia_data.DIAData._load_from_mzml', fake_load)
+
+    dm = DataManager(config=cfg, path=str(tmp_path / 'mgr.pkl'))
+    dm.get_dia_data_object('does_not_exist.mzML')
+
+    assert captured['enabled'] is True
+    assert captured['threshold'] == pytest.approx(1e-3)

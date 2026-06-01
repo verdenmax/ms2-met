@@ -4,6 +4,7 @@ import logging
 
 import manager.base_manager as base_manager
 from spectrum.dia_data import DIAData
+from constant.keys import ConfigKeys
 
 
 class DataManager(base_manager.BaseManager):
@@ -32,8 +33,17 @@ class DataManager(base_manager.BaseManager):
 
         dia_data = DIAData()
 
-        dia_data._load_from_mzml(tot_raw_path)
+        # 注入 centroid 配置（spec 2026-06-01-mzml-centroiding-on-load §5.3）
+        # 不存在时退回 DIAData 默认值 (True / 1e-3)
+        if self._config is not None and self._config.has_section(
+                ConfigKeys.GENERAL):
+            dia_data._centroid_enabled = self._config.getboolean(
+                ConfigKeys.GENERAL, ConfigKeys.CENTROID_ENABLED,
+                fallback=dia_data._centroid_enabled)
+            dia_data._centroid_rel_threshold = self._config.getfloat(
+                ConfigKeys.GENERAL, ConfigKeys.CENTROID_REL_THRESHOLD,
+                fallback=dia_data._centroid_rel_threshold)
 
-        # dia_data._preprocess_data()
+        dia_data._load_from_mzml(tot_raw_path)
 
         return dia_data
