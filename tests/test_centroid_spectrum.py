@@ -119,3 +119,32 @@ def test_strictly_monotonic_mz_in_output():
     mz, intensity = _gaussian_profile(true_centers, heights)
     out_mz, _ = centroid_spectrum(mz, intensity)
     assert np.all(np.diff(out_mz) > 0)
+
+
+from spectrum.dia_data import _is_already_centroid
+
+
+def test_is_already_centroid_true_when_cv_term_present():
+    spectrum = {
+        'm/z array': np.array([100.0, 200.0]),
+        'intensity array': np.array([1.0, 2.0]),
+        'centroid spectrum': '',  # pyteomics stores cv terms as keys
+    }
+    assert _is_already_centroid(spectrum) is True
+
+
+def test_is_already_centroid_false_when_profile():
+    spectrum = {
+        'm/z array': np.array([100.0, 200.0]),
+        'intensity array': np.array([1.0, 2.0]),
+        'profile spectrum': '',
+    }
+    assert _is_already_centroid(spectrum) is False
+
+
+def test_is_already_centroid_false_when_neither_term():
+    spectrum = {
+        'm/z array': np.array([100.0, 200.0]),
+        'intensity array': np.array([1.0, 2.0]),
+    }
+    assert _is_already_centroid(spectrum) is False

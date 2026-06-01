@@ -40,6 +40,17 @@ def deduplicate_with_tolerance(arr, tolerance=0.1):
     return np.array(unique_values, dtype=np.float32)
 
 
+def _is_already_centroid(spectrum) -> bool:
+    """Return True if the pyteomics spectrum dict carries the MS controlled-
+    vocabulary term `MS:1000127 centroid spectrum`.
+
+    pyteomics flattens cv terms into dict keys with the term name as the key
+    (and the value as the term's value, often empty string). Presence of the
+    key alone is sufficient.
+    """
+    return 'centroid spectrum' in spectrum
+
+
 def _load_attrs(obj, data):
     """辅助函数：从 npz 数据填充属性"""
     # 标量
