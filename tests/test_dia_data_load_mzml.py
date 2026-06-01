@@ -42,6 +42,44 @@ def _make_minimal_dia_for_save():
     return d
 
 
+def _save_legacy_npz(path, dia, version=None):
+    """Save a DIAData to npz mimicking the legacy format-version handling.
+
+    If `version` is None: writes the npz WITHOUT a `_format_version` key
+    (legacy pre-T5 format). If `version` is an int: writes the npz with
+    `_format_version = np.int32(version)`. All other field names mirror
+    `DIAData.save_to_file` so that tests around format-version rejection
+    only need to vary the version sentinel.
+    """
+    payload = {
+        'has_mobility': dia.has_mobility,
+        'has_ms1': dia.has_ms1,
+        '_max_mz_value': dia._max_mz_value,
+        '_min_mz_value': dia._min_mz_value,
+        '_zeroth_frame': dia._zeroth_frame,
+        '_scan_max_index': dia._scan_max_index,
+        'frame_max_index': dia.frame_max_index,
+        'ms1_indexs': dia.ms1_indexs,
+        'ms1_indexs_rt': dia.ms1_indexs_rt,
+        'ms2_indexs': dia.ms2_indexs,
+        'ms2_indexs_rt': dia.ms2_indexs_rt,
+        'precursor_scan_ids': dia.precursor_scan_ids,
+        '_mz_values': dia._mz_values,
+        'rt_values': dia.rt_values,
+        '_intensity_values': dia._intensity_values,
+        'mobility_values': dia.mobility_values,
+        '_cycle_left_precursor': dia._cycle_left_precursor,
+        '_scan_id_to_index': dia._scan_id_to_index,
+        '_peak_start_idx_list': dia._peak_start_idx_list,
+        '_peak_stop_idx_list': dia._peak_stop_idx_list,
+        '_precursor_lower_mz': dia._precursor_lower_mz,
+        '_precursor_upper_mz': dia._precursor_upper_mz,
+    }
+    if version is not None:
+        payload['_format_version'] = np.int32(version)
+    np.savez_compressed(str(path), **payload)
+
+
 def test_save_writes_format_version_2(tmp_path):
     """save_to_file persists _format_version=2."""
     d = _make_minimal_dia_for_save()
@@ -72,34 +110,9 @@ def test_load_rejects_missing_format_version(tmp_path):
     naming the path so the user knows what to delete."""
     d = _make_minimal_dia_for_save()
     out = tmp_path / "old.dia.npz"
-    # Manually build a "legacy" npz with no version key.
-    payload = {
-        'has_mobility': d.has_mobility,
-        'has_ms1': d.has_ms1,
-        '_max_mz_value': d._max_mz_value,
-        '_min_mz_value': d._min_mz_value,
-        '_zeroth_frame': d._zeroth_frame,
-        '_scan_max_index': d._scan_max_index,
-        'frame_max_index': d.frame_max_index,
-        'ms1_indexs': d.ms1_indexs,
-        'ms1_indexs_rt': d.ms1_indexs_rt,
-        'ms2_indexs': d.ms2_indexs,
-        'ms2_indexs_rt': d.ms2_indexs_rt,
-        'precursor_scan_ids': d.precursor_scan_ids,
-        '_mz_values': d._mz_values,
-        'rt_values': d.rt_values,
-        '_intensity_values': d._intensity_values,
-        'mobility_values': d.mobility_values,
-        '_cycle_left_precursor': d._cycle_left_precursor,
-        '_scan_id_to_index': d._scan_id_to_index,
-        '_peak_start_idx_list': d._peak_start_idx_list,
-        '_peak_stop_idx_list': d._peak_stop_idx_list,
-        '_precursor_lower_mz': d._precursor_lower_mz,
-        '_precursor_upper_mz': d._precursor_upper_mz,
-    }
-    np.savez_compressed(str(out), **payload)
+    _save_legacy_npz(out, d, version=None)
 
-    with pytest.raises(ValueError, match=r"_format_version"):
+    with pytest.raises(ValueError, match=r"没有 _format_version"):
         DIAData.load_from_file(str(out), use_mmap=False)
 
 
@@ -107,32 +120,7 @@ def test_load_rejects_wrong_format_version(tmp_path):
     """npz with _format_version != 2 must be rejected."""
     d = _make_minimal_dia_for_save()
     out = tmp_path / "wrong.dia.npz"
-    payload = {
-        '_format_version': np.int32(99),
-        'has_mobility': d.has_mobility,
-        'has_ms1': d.has_ms1,
-        '_max_mz_value': d._max_mz_value,
-        '_min_mz_value': d._min_mz_value,
-        '_zeroth_frame': d._zeroth_frame,
-        '_scan_max_index': d._scan_max_index,
-        'frame_max_index': d.frame_max_index,
-        'ms1_indexs': d.ms1_indexs,
-        'ms1_indexs_rt': d.ms1_indexs_rt,
-        'ms2_indexs': d.ms2_indexs,
-        'ms2_indexs_rt': d.ms2_indexs_rt,
-        'precursor_scan_ids': d.precursor_scan_ids,
-        '_mz_values': d._mz_values,
-        'rt_values': d.rt_values,
-        '_intensity_values': d._intensity_values,
-        'mobility_values': d.mobility_values,
-        '_cycle_left_precursor': d._cycle_left_precursor,
-        '_scan_id_to_index': d._scan_id_to_index,
-        '_peak_start_idx_list': d._peak_start_idx_list,
-        '_peak_stop_idx_list': d._peak_stop_idx_list,
-        '_precursor_lower_mz': d._precursor_lower_mz,
-        '_precursor_upper_mz': d._precursor_upper_mz,
-    }
-    np.savez_compressed(str(out), **payload)
+    _save_legacy_npz(out, d, version=99)
 
-    with pytest.raises(ValueError, match=r"_format_version"):
+    with pytest.raises(ValueError, match=r"_format_version=99"):
         DIAData.load_from_file(str(out), use_mmap=False)

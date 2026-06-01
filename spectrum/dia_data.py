@@ -77,6 +77,10 @@ def _load_attrs(obj, data):
     obj.mobility_values = data['mobility_values']
     obj._cycle_left_precursor = data['_cycle_left_precursor']
 
+    # NOTE: `_format_version` is intentionally NOT loaded here — it's
+    # consumed by `DIAData._check_format_version` before this function
+    # runs. Do not iterate `data.files` blindly to copy keys onto `obj`.
+
     # 可选数组
     obj._quad_max_mz_value = data['_quad_max_mz_value'] if '_quad_max_mz_value' in data else None
     obj._quad_min_mz_value = data['_quad_min_mz_value'] if '_quad_min_mz_value' in data else None
