@@ -283,8 +283,8 @@ class DIAData:
 
     def _process_single_spectrum(
         self, spectrum,
-        spectrum_idx, current_peak_index
-    ):
+        spectrum_idx: int, current_peak_index: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """ 处理单个的谱图，将其中信息记录起来 """
 
         # 获取保留时间 (转换为秒)
@@ -424,6 +424,11 @@ class DIAData:
         # 按谱图数预分配定长数组（不再预分配 peak 数组）
         self._preallocate_arrays(total_spectra=total_spectra)
 
+        # 内存权衡（spec §5.1）：chunk + concat 模式下，concat 时同时持
+        # 有 chunk list 与新数组，峰值内存约为最终 _mz_values 的 2 倍。
+        # 当 _centroid_enabled=True（生产默认值），chunks 已经 centroid
+        # 到 5-10% 体积，影响可忽略。当 _centroid_enabled=False（仅调试），
+        # profile 数据全量保留，峰值可达数 GB——比旧的单次预分配翻倍。
         # 第二遍：填充。peak 数组通过 chunk list 收集后 concat。
         mz_chunks: list[np.ndarray] = []
         int_chunks: list[np.ndarray] = []
@@ -442,9 +447,10 @@ class DIAData:
 
         # Concat peak arrays (一次性, 然后立即释放 chunk list 节省内存)
         if mz_chunks:
-            self._mz_values = np.concatenate(mz_chunks).astype(np.float32)
+            self._mz_values = np.concatenate(mz_chunks).astype(
+                np.float32, copy=False)
             self._intensity_values = np.concatenate(int_chunks).astype(
-                np.float32)
+                np.float32, copy=False)
         else:
             self._mz_values = np.empty(0, dtype=np.float32)
             self._intensity_values = np.empty(0, dtype=np.float32)
