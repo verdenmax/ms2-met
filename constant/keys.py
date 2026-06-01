@@ -30,3 +30,7 @@ class ConfigKeys(metaclass=ConstantsClass):
     XIC_CYCLE_WINDOW = "xic_cycle_window"
     RESULT_FILE = "result_file"
     FEATURE_TYPE = "feature_type"
+
+    # mzML centroiding (loaded by manager/data_manager.py)
+    CENTROID_ENABLED = "centroid_enabled"
+    CENTROID_REL_THRESHOLD = "centroid_rel_threshold"
