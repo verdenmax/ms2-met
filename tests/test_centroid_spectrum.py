@@ -83,9 +83,18 @@ def test_short_input_returns_empty():
     assert out_int.shape == (0,)
 
 
-def test_flat_top_no_zero_division():
-    """Three equal samples at the apex → parabola denominator = 0, must fall
-    back to bin-center m/z without raising ZeroDivisionError."""
+def test_flat_top_picks_leftmost_does_not_raise():
+    """Flat-top plateau ``[1, 10, 10, 10, 1]``: the asymmetric detection
+    rule (``> left & >= right``) selects only the leftmost shoulder
+    (i=1), where ``denom = (y0-y1) + (y2-y1) = -9 + 0 = -9`` is strictly
+    negative — so no zero-division occurs and no exception is raised.
+    The resulting centroid must still fall inside the flat-top region.
+
+    Note: under the detection rule the fallback ``safe``/``where=`` branch
+    is unreachable for any detected peak (denom is strictly negative for
+    every selected index), so this test only asserts the observable
+    behaviour — no raise, centroid inside the plateau.
+    """
     mz = np.array([100.0, 100.01, 100.02, 100.03, 100.04],
                   dtype=np.float32)
     intensity = np.array([1.0, 10.0, 10.0, 10.0, 1.0], dtype=np.float32)

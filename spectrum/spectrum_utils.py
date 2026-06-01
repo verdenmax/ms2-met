@@ -48,6 +48,9 @@ def centroid_spectrum(
         rel_threshold: drop maxima with intensity below
             `max(intensity) * rel_threshold`. Default 1e-3.
 
+    Plateaus with equal adjacent samples are resolved to the leftmost
+    interior index (asymmetric ``>`` / ``>=`` rule).
+
     Returns:
         (mz_out, intensity_out): two 1D arrays of equal length (= number of
         accepted peaks). Empty arrays when input length < 3 or no peak
@@ -86,7 +89,11 @@ def centroid_spectrum(
     safe = np.abs(denom) > 1e-12
     dx = np.zeros_like(denom)
     np.divide(0.5 * (y0 - y2), denom, out=dx, where=safe)
-    np.clip(dx, -1.0, 1.0, out=dx)
+    # Theoretical bound for a true parabolic max is |dx| <= 0.5. A larger
+    # offset signals a degenerate fit (noisy plateau adjacent to a steep
+    # edge, or numerical edge-case) — treat as "fit failed" and fall back
+    # to bin-center (dx = 0).
+    dx[np.abs(dx) > 0.5] = 0.0
 
     mz_center = mz[peak_idx].astype(np.float64)
     mz_prev = mz[peak_idx - 1].astype(np.float64)
