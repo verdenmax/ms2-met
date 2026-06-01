@@ -264,8 +264,12 @@ class DIAData:
         else:
             raise ValueError(f"无法从 scan_id 提取扫描号: {scan_id_str}")
 
-    def _preallocate_arrays(self, total_spectra: int, total_peaks: int):
-        """ 预先分配数组信息 """
+    def _preallocate_arrays(self, total_spectra: int):
+        """预先分配按谱图数定长的数组。
+
+        Peak 数组 (_mz_values / _intensity_values) 不再预分配，由
+        _load_from_mzml 通过 chunk + concat 构建。
+        """
         # 谱图信息数组
         self.precursor_scan_ids = np.zeros(total_spectra, dtype=np.int64)
         self.rt_values = np.zeros(total_spectra, dtype=np.float32)
@@ -274,11 +278,7 @@ class DIAData:
         self._precursor_lower_mz = np.zeros(total_spectra, dtype=np.float32)
         self._precursor_upper_mz = np.zeros(total_spectra, dtype=np.float32)
 
-        # 峰数据数组
-        self._mz_values = np.zeros(total_peaks, dtype=np.float32)
-        self._intensity_values = np.zeros(total_peaks, dtype=np.float32)
-
-        # 其他数组
+        # scan_id 反查表 (留 +10 余量, 防止极端 scan_id)
         self._scan_id_to_index = np.zeros(total_spectra + 10, dtype=np.int64)
 
     def _process_single_spectrum(
@@ -369,11 +369,12 @@ class DIAData:
 
         """
         记录的原始数据关键数组, mz_value、rt_value、intensity_value、mobility_values。
+
+        改造（spec 2026-06-01）：mz/intensity 不再写入预分配数组，而是
+        作为 chunk 返回给 _load_from_mzml 累积后 concat。
         """
         peak_stop_idx = current_peak_index + len(mz_array)
         self.precursor_scan_ids[spectrum_idx] = precursor_scan_id
-        self._mz_values[current_peak_index:peak_stop_idx] = mz_array
-        self._intensity_values[current_peak_index:peak_stop_idx] = intensity_array
 
         # 提取 RT 值
         self.rt_values[spectrum_idx] = rt
@@ -395,42 +396,59 @@ class DIAData:
         self._precursor_lower_mz[spectrum_idx] = isolation_lower
         self._precursor_upper_mz[spectrum_idx] = isolation_upper
 
+        return mz_array, intensity_array
+
     def _load_from_mzml(
         self,
         mzml_file_path: None | str = None
     ):
-        """从 mzML 文件加载数据"""
+        """从 mzML 文件加载数据。
+
+        改造说明（spec 2026-06-01-mzml-centroiding-on-load §5.1）：
+        第一遍只统计 total_spectra（不访问 peaks 数组，pyteomics 按需懒
+        解码）。第二遍 centroid 后通过 chunk + concat 构建
+        `_mz_values` / `_intensity_values`；其余按谱图数预分配的数组保持
+        现状。
+        """
         logging.info(f"Loading DIA data from {mzml_file_path} ...")
 
-        # 第一遍：统计数据量
+        # 第一遍：只统计谱图数（不读 peaks）
         total_spectra = 0
-        total_peaks = 0
         with mzml.read(mzml_file_path) as reader:
-            for spectrum in reader:
+            for _spectrum in reader:
                 total_spectra += 1
-                total_peaks += len(spectrum['m/z array'])
 
-        logging.info(f"{mzml_file_path} Total spectra: {
-                     total_spectra}, total peaks: {total_peaks}")
+        logging.info(
+            f"{mzml_file_path} Total spectra: {total_spectra}")
 
-        # 预先分配数组
-        self._preallocate_arrays(total_spectra=total_spectra,
-                                 total_peaks=total_peaks)
+        # 按谱图数预分配定长数组（不再预分配 peak 数组）
+        self._preallocate_arrays(total_spectra=total_spectra)
 
-        # 第二遍：填充数据
+        # 第二遍：填充。peak 数组通过 chunk list 收集后 concat。
+        mz_chunks: list[np.ndarray] = []
+        int_chunks: list[np.ndarray] = []
         current_spectrum_idx = 0
         current_peak_idx = 0
-        # 开始处理信息
+
         with mzml.read(mzml_file_path) as reader:
             for spectrum in reader:
-
-                self._process_single_spectrum(
+                mz_chunk, int_chunk = self._process_single_spectrum(
                     spectrum, current_spectrum_idx, current_peak_idx)
+                mz_chunks.append(mz_chunk)
+                int_chunks.append(int_chunk)
 
-                # 更新索引
-                num_peaks = len(spectrum['m/z array'])
-                current_peak_idx += num_peaks
+                current_peak_idx += len(mz_chunk)
                 current_spectrum_idx += 1
+
+        # Concat peak arrays (一次性, 然后立即释放 chunk list 节省内存)
+        if mz_chunks:
+            self._mz_values = np.concatenate(mz_chunks).astype(np.float32)
+            self._intensity_values = np.concatenate(int_chunks).astype(
+                np.float32)
+        else:
+            self._mz_values = np.empty(0, dtype=np.float32)
+            self._intensity_values = np.empty(0, dtype=np.float32)
+        del mz_chunks, int_chunks
 
         """ mz 范围信息 """
         # 计算 m/z 范围

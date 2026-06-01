@@ -124,3 +124,102 @@ def test_load_rejects_wrong_format_version(tmp_path):
 
     with pytest.raises(ValueError, match=r"_format_version=99"):
         DIAData.load_from_file(str(out), use_mmap=False)
+
+
+# ---- _load_from_mzml refactor: chunk + concat peak storage ----
+
+class _FakeMzmlReader:
+    """Mimic the context manager that pyteomics.mzml.read returns."""
+    def __init__(self, spectra):
+        self._spectra = spectra
+    def __enter__(self):
+        return iter(self._spectra)
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+def _make_spectrum(scan_num, ms_level, rt, mz_arr, int_arr,
+                   precursor_scan_num=None, precursor_mz=None,
+                   iso_lower_off=0.0, iso_upper_off=0.0):
+    """Build a dict matching pyteomics.mzml output shape."""
+    spectrum = {
+        'id': f'controllerType=0 controllerNumber=1 scan={scan_num}',
+        'spectrum title': f'spec{scan_num} dummy',
+        'ms level': ms_level,
+        'm/z array': np.asarray(mz_arr, dtype=np.float32),
+        'intensity array': np.asarray(int_arr, dtype=np.float32),
+        'scanList': {
+            'scan': [{'scan start time': float(rt)}],
+        },
+    }
+    if ms_level > 1 and precursor_scan_num is not None:
+        spectrum['precursorList'] = {
+            'precursor': [{
+                'spectrumRef': (
+                    f'controllerType=0 controllerNumber=1 '
+                    f'scan={precursor_scan_num}'),
+                'selectedIonList': {
+                    'selectedIon': [{
+                        'selected ion m/z': precursor_mz,
+                        'charge state': 2,
+                    }],
+                },
+                'isolationWindow': {
+                    'isolation window lower offset': iso_lower_off,
+                    'isolation window upper offset': iso_upper_off,
+                },
+            }],
+        }
+    return spectrum
+
+
+def test_load_from_mzml_chunk_concat_preserves_arrays(monkeypatch):
+    """With centroid disabled, refactored _load_from_mzml must produce
+    arrays identical to feeding raw peaks in directly."""
+    spectra = [
+        _make_spectrum(
+            scan_num=1, ms_level=1, rt=1.0,
+            mz_arr=[400.0, 401.0, 402.0],
+            int_arr=[10.0, 20.0, 30.0],
+        ),
+        _make_spectrum(
+            scan_num=2, ms_level=2, rt=1.05,
+            mz_arr=[200.0, 201.0],
+            int_arr=[5.0, 15.0],
+            precursor_scan_num=1, precursor_mz=500.0,
+            iso_lower_off=1.0, iso_upper_off=1.0,
+        ),
+        _make_spectrum(
+            scan_num=3, ms_level=2, rt=1.10,
+            mz_arr=[300.0, 301.0, 302.0, 303.0],
+            int_arr=[1.0, 2.0, 3.0, 4.0],
+            precursor_scan_num=1, precursor_mz=600.0,
+            iso_lower_off=2.0, iso_upper_off=2.0,
+        ),
+    ]
+
+    from spectrum import dia_data as dd
+    monkeypatch.setattr(dd.mzml, 'read',
+                        lambda p: _FakeMzmlReader(spectra))
+
+    d = DIAData()
+    d._centroid_enabled = False
+    d._load_from_mzml('fake.mzML')
+
+    assert d._mz_values.shape == (9,), \
+        f"expected 9 concatenated peaks, got {d._mz_values.shape}"
+    assert d._intensity_values.shape == (9,)
+
+    assert list(d._peak_start_idx_list) == [0, 3, 5]
+    assert list(d._peak_stop_idx_list) == [3, 5, 9]
+
+    np.testing.assert_array_equal(
+        d._mz_values[0:3], np.array([400.0, 401.0, 402.0], dtype=np.float32))
+    np.testing.assert_array_equal(
+        d._intensity_values[0:3], np.array([10.0, 20.0, 30.0], dtype=np.float32))
+    np.testing.assert_array_equal(
+        d._mz_values[5:9],
+        np.array([300.0, 301.0, 302.0, 303.0], dtype=np.float32))
+
+    np.testing.assert_array_equal(d.ms1_indexs, np.array([0], dtype=np.int32))
+    np.testing.assert_array_equal(d.ms2_indexs, np.array([1, 2], dtype=np.int32))
