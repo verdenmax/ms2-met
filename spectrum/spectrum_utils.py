@@ -57,9 +57,14 @@ def centroid_spectrum(
         survives the threshold.
     """
     n = len(mz)
-    if n < 3 or len(intensity) != n:
+    if len(intensity) != n:
+        raise ValueError(
+            f"mz and intensity must have the same length; "
+            f"got len(mz)={n}, len(intensity)={len(intensity)}")
+    if n < 3:
         empty_mz = np.empty(0, dtype=mz.dtype if n > 0 else np.float32)
-        empty_int = np.empty(0, dtype=intensity.dtype if n > 0 else np.float32)
+        empty_int = np.empty(
+            0, dtype=intensity.dtype if n > 0 else np.float32)
         return empty_mz, empty_int
 
     interior = intensity[1:-1]
