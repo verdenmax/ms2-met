@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from pyteomics import mzml
-from spectrum.spectrum_utils import match_peak_ppm
+from spectrum.spectrum_utils import match_peak_ppm, centroid_spectrum
 
 
 DEFAULT_VALUE_NO_MOBILITY = 1e-6
@@ -343,6 +343,14 @@ class DIAData:
         # 获取 m/z 和强度数组
         mz_array = spectrum['m/z array']
         intensity_array = spectrum['intensity array']
+
+        # On-load centroiding (spec 2026-06-01-mzml-centroiding-on-load §5.2).
+        # Skip if input already carries the centroid cv term, or if disabled.
+        if self._centroid_enabled and not _is_already_centroid(spectrum):
+            mz_array, intensity_array = centroid_spectrum(
+                mz_array, intensity_array,
+                rel_threshold=self._centroid_rel_threshold,
+            )
 
         # 记录谱图信息
         # _spectrum_info = {
