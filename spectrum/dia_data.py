@@ -151,6 +151,10 @@ class DIAData:
         self._scan_max_index: int = 1
         self.frame_max_index: int | None = None
 
+        """ 加载时 centroiding 配置 (由 DataManager 从 config 注入；这里给默认值) """
+        self._centroid_enabled: bool = True
+        self._centroid_rel_threshold: float = 1e-3
+
     # 在 DIAData 类中添加
     def save_to_file(self, filepath: str):
         """将所有 NumPy 数组和标量保存到 .npz 文件"""

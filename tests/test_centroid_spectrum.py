@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from spectrum.spectrum_utils import centroid_spectrum
-from spectrum.dia_data import _is_already_centroid
+from spectrum.dia_data import _is_already_centroid, DIAData
 
 
 def _gaussian_profile(centers, heights, sigma=0.005, n_per_peak=11,
@@ -385,3 +385,11 @@ def test_real_mzml_centroid_invariants():
             if n_checked >= 5:
                 break
     assert n_checked > 0, "expected to check at least one spectrum"
+
+
+def test_dia_data_defaults_have_centroid_fields():
+    """DIAData() must expose centroid config fields with documented
+    defaults: enabled=True, rel_threshold=1e-3."""
+    d = DIAData()
+    assert d._centroid_enabled is True
+    assert d._centroid_rel_threshold == pytest.approx(1e-3)
