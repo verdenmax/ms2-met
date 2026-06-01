@@ -160,6 +160,8 @@ class DIAData:
         """将所有 NumPy 数组和标量保存到 .npz 文件"""
 
         data = {
+            # 格式版本号 (2 = centroided peaks; 见 docs/specs/2026-06-01-...)
+            '_format_version': np.int32(2),
             # 标量属性
             'has_mobility': self.has_mobility,
             'has_ms1': self.has_ms1,
@@ -196,19 +198,43 @@ class DIAData:
 
     @classmethod
     def load_from_file(cls, filepath: str, use_mmap: bool = True):
-        """从 .npz 文件加载 DIAData，支持内存映射（只读）"""
+        """从 .npz 文件加载 DIAData，支持内存映射（只读）
+
+        Raises:
+            ValueError: 若 npz 没有 `_format_version` 字段或版本号 != 2。
+                这通常意味着旧版本生成的 profile-peaks 缓存。请删除文件
+                让 workflows/flow_utils.py:data_to_npz 重新生成。
+        """
         obj = cls()
 
         if use_mmap:
             # 使用 mmap_mode='r' 实现零拷贝共享
             with np.load(filepath, mmap_mode='r') as data:
+                cls._check_format_version(filepath, data)
                 _load_attrs(obj, data)
         else:
             # 普通加载（用于主进程预处理）
             data = np.load(filepath)
+            cls._check_format_version(filepath, data)
             _load_attrs(obj, data)
 
         return obj
+
+    @staticmethod
+    def _check_format_version(filepath: str, data) -> None:
+        """Reject npz files without `_format_version=2`."""
+        if '_format_version' not in data:
+            raise ValueError(
+                f"npz 缓存 {filepath} 没有 _format_version 字段——这是 "
+                f"旧版本（profile peaks）生成的缓存。请删除该文件后重新"
+                f"运行以生成 centroided 缓存。"
+            )
+        version = int(data['_format_version'])
+        if version != 2:
+            raise ValueError(
+                f"npz 缓存 {filepath} 的 _format_version={version}，"
+                f"当前代码只支持 version=2。请删除该文件后重新运行。"
+            )
 
     def _get_retention_time(self, spectrum) -> float:
         """从谱图中提取保留时间（转换为秒）"""
