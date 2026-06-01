@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from spectrum.spectrum_utils import centroid_spectrum
+from spectrum.dia_data import _is_already_centroid
 
 
 def _gaussian_profile(centers, heights, sigma=0.005, n_per_peak=11,
@@ -119,9 +120,6 @@ def test_strictly_monotonic_mz_in_output():
     mz, intensity = _gaussian_profile(true_centers, heights)
     out_mz, _ = centroid_spectrum(mz, intensity)
     assert np.all(np.diff(out_mz) > 0)
-
-
-from spectrum.dia_data import _is_already_centroid
 
 
 def test_is_already_centroid_true_when_cv_term_present():
