@@ -188,8 +188,8 @@ def main():
 
     # Evaluate
     report_path = f"results/{args.name}_report.json"
-    fig_path = f"figures/{args.name}_importance.png"
-    roc_path = f"figures/{args.name}_roc_curve.png"
+    fig_path = f"runs/spec_trainer/figures/{args.name}_importance.png"
+    roc_path = f"runs/spec_trainer/figures/{args.name}_roc_curve.png"
 
     evaluate_and_report(
         y_test, y_pred, y_proba,
