@@ -1,0 +1,81 @@
+data:
+  train_files:
+    - data/hela_5da_mix_0_feature.csv
+    # - data/hela_2da_comm_features_all.csv
+  test_files:
+    - data/mix_dinn_features_new.csv
+    # - data/hela_5da_comm_features_all.csv
+    # - data/mix_dinn_features_new.csv
+  feature_cols:
+    - precursor_mz
+    - sequence_len
+    - precursor_pearson
+    - b_count
+    - b_p25
+    - b_p50
+    - b_p75
+    - b_mean
+    - y_count
+    - y_p50
+    - y_p75
+    - y_mean
+    - all_count
+    - all_p25
+    - all_p50
+    - all_p75
+    - all_mean
+    - matched_intensity_percent
+  target_col: label  # 假设你的标签列叫 'label'
+
+model:
+  type: lightgbm  # 选择是什么模型
+  params:         # 这个模型的参数
+    boosting_type: gbdt
+    objective: binary
+    metric: [auc, binary_logloss]
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    is_unbalance: True
+    verbose: -1
+# NOTE: xgboost 参数
+# model:
+#   type: xgboost
+#   params:
+#     objective: binary:logistic          # 二分类逻辑回归（输出概率）
+#     eval_metric: [auc, logloss]         # 对应 LightGBM 的 metric: [auc, binary_logloss]
+#     max_depth: 5                        # LightGBM 的 num_leaves=31 ≈ 完全二叉树深度 5（2^5=32）
+#     learning_rate: 0.05                 # 同 LightGBM
+#     subsample: 0.8                      # 对应 bagging_fraction（行采样）
+#     colsample_bytree: 0.9               # 对应 feature_fraction（列采样）
+#     verbosity: 0                        # 类似 verbose=-1，静默模式
+#     random_state: 42                    # 建议固定随机种子以保证可复现性
+
+# NOTE:  sklearn 参数
+# model:
+#   type: sklearn_rf
+#   params:
+#     n_estimators: 200
+#     max_depth: 10
+#     min_samples_split: 5
+#     random_state: 42
+#     n_jobs: -1  # 并行加速
+#
+# model:
+#   type: sklearn_lr
+#   params:
+#     penalty: l2
+#     C: 1.0
+#     solver: liblinear  # 适合小数据集二分类
+#     random_state: 42
+#     max_iter: 1000
+
+training:
+  num_boost_round: 1000  # 训练轮数
+  early_stopping_rounds: 50
+  valid_size: 0.2  # 从训练集中划分验证集（可选）
+
+output:
+  model_path: models/exp1.txt
+  result_path: results/exp1.json
