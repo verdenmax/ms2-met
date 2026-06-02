@@ -1,11 +1,8 @@
 data:
   train_files:
-    - data/hela_5da_mix_0_feature.csv
-    # - data/hela_2da_comm_features_all.csv
+    - runs/baseline_2da_clean/features.csv
   test_files:
-    - data/mix_dinn_features_new.csv
-    # - data/hela_5da_comm_features_all.csv
-    # - data/mix_dinn_features_new.csv
+    - runs/baseline_2da_clean/features.csv
   feature_cols:
     - precursor_mz
     - sequence_len
@@ -77,5 +74,5 @@ training:
   valid_size: 0.2  # 从训练集中划分验证集（可选）
 
 output:
-  model_path: models/exp1.txt
-  result_path: results/exp1.json
+  model_path: runs/spec_trainer/models/exp1.txt
+  result_path: runs/spec_trainer/results/exp1.json
