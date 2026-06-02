@@ -367,3 +367,209 @@ def test_data_manager_defaults_when_keys_missing(monkeypatch, tmp_path):
 
     assert captured['enabled'] is True
     assert captured['threshold'] == pytest.approx(1e-3)
+
+
+# ============================================================================
+# Functional coverage extension (2026-06-01).
+#
+# Additional integration tests beyond T6/T7/T8: DataManager config-section
+# edge cases (absent section, None config), _load_from_mzml structural
+# edge cases (multi-cycle, empty peak arrays), and centroid-disabled paths
+# with already-centroid input. Reuses existing helpers; does not redefine.
+# ============================================================================
+
+
+def test_data_manager_no_general_section_at_all(monkeypatch, tmp_path):
+    """When config has no [general] section, has_section() returns False
+    and DIAData retains its constructor defaults."""
+    import configparser
+    from manager.data_manager import DataManager
+
+    cfg = configparser.ConfigParser()
+    # No sections at all
+
+    captured = {}
+
+    def fake_load(self, mzml_file_path):
+        captured['enabled'] = self._centroid_enabled
+        captured['threshold'] = self._centroid_rel_threshold
+        return None
+
+    monkeypatch.setattr(
+        'spectrum.dia_data.DIAData._load_from_mzml', fake_load)
+
+    dm = DataManager(config=cfg, path=str(tmp_path / 'mgr.pkl'))
+    dm.get_dia_data_object('does_not_exist.mzML')
+
+    assert captured['enabled'] is True
+    assert captured['threshold'] == pytest.approx(1e-3)
+
+
+def test_data_manager_with_none_config(monkeypatch, tmp_path):
+    """DataManager(config=None) must not crash; DIAData keeps defaults."""
+    from manager.data_manager import DataManager
+
+    captured = {}
+
+    def fake_load(self, mzml_file_path):
+        captured['enabled'] = self._centroid_enabled
+        captured['threshold'] = self._centroid_rel_threshold
+        return None
+
+    monkeypatch.setattr(
+        'spectrum.dia_data.DIAData._load_from_mzml', fake_load)
+
+    dm = DataManager(config=None, path=str(tmp_path / 'mgr.pkl'))
+    dm.get_dia_data_object('does_not_exist.mzML')
+
+    assert captured['enabled'] is True
+    assert captured['threshold'] == pytest.approx(1e-3)
+
+
+def test_load_from_mzml_already_centroid_with_centroid_disabled(monkeypatch):
+    """Both 'centroid spectrum' cv term AND _centroid_enabled=False —
+    redundant skips. Input must pass through verbatim regardless."""
+    spectrum = _make_spectrum(
+        scan_num=1, ms_level=1, rt=1.0,
+        mz_arr=[100.0, 200.0, 300.0],
+        int_arr=[5.0, 10.0, 15.0],
+    )
+    spectrum['centroid spectrum'] = ''
+
+    from spectrum import dia_data as dd
+    monkeypatch.setattr(dd.mzml, 'read',
+                        lambda p: _FakeMzmlReader([spectrum]))
+
+    d = DIAData()
+    d._centroid_enabled = False
+    d._load_from_mzml('fake.mzML')
+
+    assert d._mz_values.shape == (3,)
+    np.testing.assert_array_equal(
+        d._mz_values, np.array([100.0, 200.0, 300.0], dtype=np.float32))
+
+
+def test_load_from_mzml_multi_cycle_dia_structure(monkeypatch):
+    """Two DIA cycles (each: 1 MS1 + 2 MS2). Verify ms1_indexs and
+    ms2_indexs partition correctly; peak indices stay consistent."""
+    spectra = [
+        # Cycle 1
+        _make_spectrum(scan_num=1, ms_level=1, rt=1.0,
+                       mz_arr=[400.0, 401.0], int_arr=[10.0, 20.0]),
+        _make_spectrum(scan_num=2, ms_level=2, rt=1.01,
+                       mz_arr=[200.0, 201.0], int_arr=[5.0, 15.0],
+                       precursor_scan_num=1, precursor_mz=500.0,
+                       iso_lower_off=1.0, iso_upper_off=1.0),
+        _make_spectrum(scan_num=3, ms_level=2, rt=1.02,
+                       mz_arr=[300.0, 301.0, 302.0],
+                       int_arr=[1.0, 2.0, 3.0],
+                       precursor_scan_num=1, precursor_mz=600.0,
+                       iso_lower_off=2.0, iso_upper_off=2.0),
+        # Cycle 2
+        _make_spectrum(scan_num=4, ms_level=1, rt=2.0,
+                       mz_arr=[400.0, 401.0], int_arr=[12.0, 22.0]),
+        _make_spectrum(scan_num=5, ms_level=2, rt=2.01,
+                       mz_arr=[200.0], int_arr=[7.0],
+                       precursor_scan_num=4, precursor_mz=500.0,
+                       iso_lower_off=1.0, iso_upper_off=1.0),
+        _make_spectrum(scan_num=6, ms_level=2, rt=2.02,
+                       mz_arr=[300.0, 301.0], int_arr=[4.0, 5.0],
+                       precursor_scan_num=4, precursor_mz=600.0,
+                       iso_lower_off=2.0, iso_upper_off=2.0),
+    ]
+
+    from spectrum import dia_data as dd
+    monkeypatch.setattr(dd.mzml, 'read',
+                        lambda p: _FakeMzmlReader(spectra))
+
+    d = DIAData()
+    d._centroid_enabled = False  # exact peak counts
+    d._load_from_mzml('fake.mzML')
+
+    # MS1/MS2 partitioning
+    np.testing.assert_array_equal(d.ms1_indexs,
+                                  np.array([0, 3], dtype=np.int32))
+    np.testing.assert_array_equal(d.ms2_indexs,
+                                  np.array([1, 2, 4, 5], dtype=np.int32))
+
+    # Total peaks: 2+2+3+2+1+2 = 12
+    assert d._mz_values.shape == (12,)
+    assert int(d._peak_stop_idx_list[-1]) == 12
+
+    # rt_values are populated for all 6 spectra
+    np.testing.assert_array_almost_equal(
+        d.rt_values,
+        np.array([1.0, 1.01, 1.02, 2.0, 2.01, 2.02], dtype=np.float32),
+        decimal=5)
+
+
+def test_load_from_mzml_handles_spectrum_with_zero_peaks(monkeypatch):
+    """A spectrum with empty m/z array must not break index bookkeeping.
+    _peak_start_idx_list[i] == _peak_stop_idx_list[i] for that spectrum."""
+    spectra = [
+        _make_spectrum(scan_num=1, ms_level=1, rt=1.0,
+                       mz_arr=[400.0, 401.0], int_arr=[10.0, 20.0]),
+        _make_spectrum(scan_num=2, ms_level=2, rt=1.01,
+                       mz_arr=[], int_arr=[],  # EMPTY
+                       precursor_scan_num=1, precursor_mz=500.0,
+                       iso_lower_off=1.0, iso_upper_off=1.0),
+        _make_spectrum(scan_num=3, ms_level=2, rt=1.02,
+                       mz_arr=[300.0], int_arr=[5.0],
+                       precursor_scan_num=1, precursor_mz=600.0,
+                       iso_lower_off=2.0, iso_upper_off=2.0),
+    ]
+
+    from spectrum import dia_data as dd
+    monkeypatch.setattr(dd.mzml, 'read',
+                        lambda p: _FakeMzmlReader(spectra))
+
+    d = DIAData()
+    d._centroid_enabled = False
+    d._load_from_mzml('fake.mzML')
+
+    # Total peaks = 2 + 0 + 1 = 3
+    assert d._mz_values.shape == (3,)
+    # Bookkeeping: spectrum 1 (empty) has start == stop
+    assert int(d._peak_start_idx_list[1]) == 2
+    assert int(d._peak_stop_idx_list[1]) == 2
+    # Spectrum 2 picks up at peak idx 2
+    assert int(d._peak_start_idx_list[2]) == 2
+    assert int(d._peak_stop_idx_list[2]) == 3
+
+
+def test_load_from_mzml_centroid_below_threshold_yields_empty_chunk(monkeypatch):
+    """When centroid filters all peaks (e.g., rel_threshold > max), the
+    spectrum contributes 0 peaks. _peak_start_idx_list[i] ==
+    _peak_stop_idx_list[i] and concat across the loop stays consistent."""
+    # Spectrum 0: a strong gaussian peak — centroid keeps 1 peak
+    mz0, int0 = _profile_gaussian([400.0], [1000.0])
+    # Spectrum 1: a flat-low input so the centroid detector finds no local
+    # max and produces 0 peaks.
+    mz1 = np.array([500.0, 500.001, 500.002], dtype=np.float32)
+    int1 = np.array([0.1, 0.1, 0.1], dtype=np.float32)
+
+    spectra = [
+        _make_spectrum(scan_num=1, ms_level=1, rt=1.0,
+                       mz_arr=mz0, int_arr=int0),
+        _make_spectrum(scan_num=2, ms_level=2, rt=1.01,
+                       mz_arr=mz1, int_arr=int1,
+                       precursor_scan_num=1, precursor_mz=500.0,
+                       iso_lower_off=1.0, iso_upper_off=1.0),
+    ]
+
+    from spectrum import dia_data as dd
+    monkeypatch.setattr(dd.mzml, 'read',
+                        lambda p: _FakeMzmlReader(spectra))
+
+    d = DIAData()
+    d._centroid_enabled = True
+    d._centroid_rel_threshold = 1e-3
+    d._load_from_mzml('fake.mzML')
+
+    # Spectrum 0 → 1 centroid; spectrum 1 → 0 centroids
+    assert d._mz_values.shape == (1,)
+    # Bookkeeping: spectrum 0 occupies [0:1]; spectrum 1 occupies [1:1]
+    assert int(d._peak_start_idx_list[0]) == 0
+    assert int(d._peak_stop_idx_list[0]) == 1
+    assert int(d._peak_start_idx_list[1]) == 1
+    assert int(d._peak_stop_idx_list[1]) == 1
