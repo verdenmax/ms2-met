@@ -25,6 +25,42 @@ import logging
 from rich.logging import RichHandler
 
 
+# META columns that are not features themselves (PSM identification + label).
+# 与 tools/eval_baseline.py:37-41 保持一致。
+META_COLUMNS = {
+    "sequence", "charge", "raw_title1", "raw_title2",
+    "protein_names", "label", "label_type",
+    "precursor_mz", "sequence_len",
+}
+
+# 额外排除的特征列：modification_count 在训练时倾向于过拟合非物理信号
+# （负样本 entrapment 大多带修饰），见 PLAN.md 三-2 分析。
+EXCLUDED_EXTRA = {"modification_count"}
+
+
+def _resolve_feature_cols(explicit, sample_csv_path, target_col):
+    """Resolve final feature column list.
+
+    If explicit is a non-empty list, return it unchanged (yaml took
+    care of selection). Otherwise auto-detect from the CSV column
+    header, excluding META_COLUMNS + EXCLUDED_EXTRA + target_col.
+
+    The CSV column order determines the feature order (pandas read_csv
+    is deterministic for a given file). Cross-runs with the same
+    features.csv produce the same feature_cols list.
+    """
+    if explicit:
+        return list(explicit)
+    sample_df = pd.read_csv(sample_csv_path, nrows=0)
+    all_cols = list(sample_df.columns)
+    return [
+        c for c in all_cols
+        if c not in META_COLUMNS
+        and c not in EXCLUDED_EXTRA
+        and c != target_col
+    ]
+
+
 def load_data(file_paths, feature_cols, target_col):
     dfs = []
 
@@ -152,15 +188,23 @@ def main():
         cfg = yaml.safe_load(f)
 
     # Load data
+    target_col = cfg['data']['target_col']
+    feature_cols = _resolve_feature_cols(
+        explicit=cfg['data'].get('feature_cols'),
+        sample_csv_path=cfg['data']['train_files'][0],
+        target_col=target_col,
+    )
+    logging.info(f"using {len(feature_cols)} feature columns")
+
     X_train, y_train = load_data(
         cfg['data']['train_files'],
-        cfg['data']['feature_cols'],
-        cfg['data']['target_col']
+        feature_cols,
+        target_col,
     )
     X_test, y_test = load_data(
         cfg['data']['test_files'],
-        cfg['data']['feature_cols'],
-        cfg['data']['target_col']
+        feature_cols,
+        target_col,
     )
 
     # 划分验证集
@@ -193,7 +237,7 @@ def main():
 
     evaluate_and_report(
         y_test, y_pred, y_proba,
-        feature_names=cfg['data']['feature_cols'],
+        feature_names=feature_cols,
         model=model,  # 传入 model 对象，内部会调用 feature_importance()
         report_path=report_path,
         fig_path=fig_path,
