@@ -876,6 +876,29 @@ def _calc_base_to_apex_ratio(intensity: np.ndarray) -> float:
     return base / apex
 
 
+def _calc_apex_monotonicity(intensity: np.ndarray) -> float:
+    """Fraction of pairs that monotonically rise to apex and fall after.
+
+    Left of apex should be non-decreasing; right of apex should be
+    non-increasing. Return = 1 - (violations / total_pairs) in [0, 1].
+    True peaks -> ~1; zigzag / noise -> low.
+
+    Note: right slice includes apex (intensity[apex_idx:]) so when apex
+    is at the leftmost index there is still a meaningful right slice.
+    """
+    if len(intensity) < 3:
+        return 0.0
+    apex_idx = int(np.argmax(intensity))
+    left = intensity[:apex_idx + 1]
+    right = intensity[apex_idx:]
+    if len(left) < 2 and len(right) < 2:
+        return 0.0
+    left_viol = int(np.sum(np.diff(left) < 0)) if len(left) >= 2 else 0
+    right_viol = int(np.sum(np.diff(right) > 0)) if len(right) >= 2 else 0
+    total_pairs = max(len(intensity) - 1, 1)
+    return 1.0 - (left_viol + right_viol) / total_pairs
+
+
 def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
     """Compute how far the intensity apex is from the center RT, in cycles.
 
