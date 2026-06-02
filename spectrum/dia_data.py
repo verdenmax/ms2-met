@@ -264,11 +264,19 @@ class DIAData:
         else:
             raise ValueError(f"无法从 scan_id 提取扫描号: {scan_id_str}")
 
-    def _preallocate_arrays(self, total_spectra: int):
+    def _preallocate_arrays(self, total_spectra: int, max_scan_id: int):
         """预先分配按谱图数定长的数组。
 
         Peak 数组 (_mz_values / _intensity_values) 不再预分配，由
         _load_from_mzml 通过 chunk + concat 构建。
+
+        Args:
+            total_spectra: 谱图总数，决定按 spectrum_idx 索引的数组长度。
+            max_scan_id: 当前 mzML 中所有谱图 scan_id 的最大值。决定
+                _scan_id_to_index 反查表的长度（max_scan_id + 1）。
+                通常 max_scan_id == total_spectra - 1（scan_id 稠密）；
+                pParse / ProteoWizard 过滤后剩余谱图保留原始 scan_num
+                时，max_scan_id 可远大于 total_spectra。
         """
         # 谱图信息数组
         self.precursor_scan_ids = np.zeros(total_spectra, dtype=np.int64)
@@ -278,8 +286,10 @@ class DIAData:
         self._precursor_lower_mz = np.zeros(total_spectra, dtype=np.float32)
         self._precursor_upper_mz = np.zeros(total_spectra, dtype=np.float32)
 
-        # scan_id 反查表 (留 +10 余量, 防止极端 scan_id)
-        self._scan_id_to_index = np.zeros(total_spectra + 10, dtype=np.int64)
+        # scan_id 反查表: 按 max(scan_id) + 1 sizing, 避免 IndexError。
+        # max_scan_id == -1 (空 mzML 或所有 id 无 scan 号) 时退化为 size 1。
+        scan_id_table_size = max(max_scan_id + 1, 1)
+        self._scan_id_to_index = np.zeros(scan_id_table_size, dtype=np.int64)
 
     def _process_single_spectrum(
         self, spectrum,
@@ -420,17 +430,26 @@ class DIAData:
         """
         logging.info(f"Loading DIA data from {mzml_file_path} ...")
 
-        # 第一遍：只统计谱图数（不读 peaks）
+        # 第一遍：统计谱图数 + max(scan_id)。不读 peaks 数组（pyteomics
+        # 按需懒解码 m/z array 和 intensity array, 只访问 spectrum['id']
+        # 几乎不引入额外开销）。max_scan_id 用于正确 size _scan_id_to_index
+        # —— 在 pParse / ProteoWizard 过滤后 scan_id 可远大于 total_spectra。
         total_spectra = 0
+        max_scan_id = -1
         with mzml.read(mzml_file_path) as reader:
-            for _spectrum in reader:
+            for spectrum in reader:
                 total_spectra += 1
+                scan_id = self._extract_scan_number(spectrum['id'])
+                if scan_id > max_scan_id:
+                    max_scan_id = scan_id
 
         logging.info(
-            f"{mzml_file_path} Total spectra: {total_spectra}")
+            f"{mzml_file_path} Total spectra: {total_spectra}, "
+            f"max scan_id: {max_scan_id}")
 
-        # 按谱图数预分配定长数组（不再预分配 peak 数组）
-        self._preallocate_arrays(total_spectra=total_spectra)
+        # 按谱图数 + max_scan_id 预分配定长数组（不再预分配 peak 数组）
+        self._preallocate_arrays(total_spectra=total_spectra,
+                                 max_scan_id=max_scan_id)
 
         # 内存权衡（spec §5.1）：chunk + concat 模式下，concat 时同时持
         # 有 chunk list 与新数组，峰值内存约为最终 _mz_values 的 2 倍。

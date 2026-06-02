@@ -573,3 +573,129 @@ def test_load_from_mzml_centroid_below_threshold_yields_empty_chunk(monkeypatch)
     assert int(d._peak_stop_idx_list[0]) == 1
     assert int(d._peak_start_idx_list[1]) == 1
     assert int(d._peak_stop_idx_list[1]) == 1
+
+
+# ============================================================================
+# scan_id sizing fix (followup-scan-id-sizing, 2026-06-02).
+#
+# Pre-existing bug: _preallocate_arrays used `_scan_id_to_index =
+# np.zeros(total_spectra + 10)`. This assumed scan_ids ∈ [0, total_spectra+10),
+# which is false for real DIA mzML where:
+#   - pParse / ProteoWizard may filter out scans, leaving remaining ones with
+#     their ORIGINAL (larger) scan_nums.
+#   - Thermo raw has interleaved lock-mass / cal scans that get dropped,
+#     leaving scan_nums up to ~2-5x total_spectra in the mzML.
+# Symptom: `_scan_id_to_index[scan_id] = spectrum_idx` IndexError when
+# scan_id ≥ total_spectra + 10.
+#
+# Fix: size by `max(scan_id) + 1`, computed in the first pass of
+# _load_from_mzml. Drop the magic +10 band-aid.
+# ============================================================================
+
+
+def test_load_from_mzml_handles_sparse_scan_ids(monkeypatch):
+    """Reproducer for the pre-existing _scan_id_to_index sizing bug.
+
+    3 spectra with scan_nums 100, 200, 300 — much larger than
+    total_spectra (3). The old code allocated `_scan_id_to_index =
+    np.zeros(3 + 10) = size 13`, then `_scan_id_to_index[100] = 0`
+    raised IndexError. After the fix, the array is sized by
+    max(scan_id) + 1 = 301, and the writes succeed.
+    """
+    spectra = [
+        _make_spectrum(scan_num=100, ms_level=1, rt=1.0,
+                       mz_arr=[400.0, 401.0], int_arr=[10.0, 20.0]),
+        _make_spectrum(scan_num=200, ms_level=2, rt=1.05,
+                       mz_arr=[200.0], int_arr=[5.0],
+                       precursor_scan_num=100, precursor_mz=500.0,
+                       iso_lower_off=1.0, iso_upper_off=1.0),
+        _make_spectrum(scan_num=300, ms_level=2, rt=1.10,
+                       mz_arr=[300.0, 301.0], int_arr=[1.0, 2.0],
+                       precursor_scan_num=100, precursor_mz=600.0,
+                       iso_lower_off=2.0, iso_upper_off=2.0),
+    ]
+
+    from spectrum import dia_data as dd
+    monkeypatch.setattr(dd.mzml, 'read',
+                        lambda p: _FakeMzmlReader(spectra))
+
+    d = DIAData()
+    d._centroid_enabled = False
+    d._load_from_mzml('fake.mzML')  # must not raise IndexError
+
+    # Sanity: array sized to accommodate max scan_id
+    assert len(d._scan_id_to_index) >= 301, (
+        f"_scan_id_to_index should be sized by max(scan_id)+1, got "
+        f"{len(d._scan_id_to_index)}")
+
+    # Lookup: scan_id -> spectrum_idx mapping is correct
+    assert int(d._scan_id_to_index[100]) == 0
+    assert int(d._scan_id_to_index[200]) == 1
+    assert int(d._scan_id_to_index[300]) == 2
+
+
+def test_get_spectrum_works_for_sparse_scan_ids(monkeypatch):
+    """Round-trip: scan_id -> spectrum_idx -> peaks via public API.
+
+    Verifies that `get_spectrum(scan_id)` returns the correct peaks
+    for sparse scan_ids (not just dense 0..N-1).
+    """
+    spectra = [
+        _make_spectrum(scan_num=100, ms_level=1, rt=1.0,
+                       mz_arr=[400.0, 401.0], int_arr=[10.0, 20.0]),
+        _make_spectrum(scan_num=500, ms_level=2, rt=1.05,
+                       mz_arr=[200.0, 201.0, 202.0],
+                       int_arr=[5.0, 15.0, 25.0],
+                       precursor_scan_num=100, precursor_mz=500.0,
+                       iso_lower_off=1.0, iso_upper_off=1.0),
+    ]
+
+    from spectrum import dia_data as dd
+    monkeypatch.setattr(dd.mzml, 'read',
+                        lambda p: _FakeMzmlReader(spectra))
+
+    d = DIAData()
+    d._centroid_enabled = False
+    d._load_from_mzml('fake.mzML')
+
+    # scan_id 100 -> spec 0 -> [400.0, 401.0]
+    mz, intensity = d.get_spectrum(100)
+    np.testing.assert_array_equal(
+        mz, np.array([400.0, 401.0], dtype=np.float32))
+    np.testing.assert_array_equal(
+        intensity, np.array([10.0, 20.0], dtype=np.float32))
+
+    # scan_id 500 -> spec 1 -> [200.0, 201.0, 202.0]
+    mz, intensity = d.get_spectrum(500)
+    np.testing.assert_array_equal(
+        mz, np.array([200.0, 201.0, 202.0], dtype=np.float32))
+
+
+def test_sparse_scan_ids_npz_save_load_roundtrip(tmp_path, monkeypatch):
+    """The corrected _scan_id_to_index size must survive npz save/load."""
+    spectra = [
+        _make_spectrum(scan_num=42, ms_level=1, rt=1.0,
+                       mz_arr=[400.0], int_arr=[10.0]),
+        _make_spectrum(scan_num=999, ms_level=2, rt=1.05,
+                       mz_arr=[200.0], int_arr=[5.0],
+                       precursor_scan_num=42, precursor_mz=500.0,
+                       iso_lower_off=1.0, iso_upper_off=1.0),
+    ]
+
+    from spectrum import dia_data as dd
+    monkeypatch.setattr(dd.mzml, 'read',
+                        lambda p: _FakeMzmlReader(spectra))
+
+    d = DIAData()
+    d._centroid_enabled = False
+    d._load_from_mzml('fake.mzML')
+
+    npz_path = tmp_path / "sparse.dia.npz"
+    d.save_to_file(str(npz_path))
+
+    d2 = DIAData.load_from_file(str(npz_path), use_mmap=False)
+
+    # Lookup array survives round-trip with same size
+    assert len(d2._scan_id_to_index) == len(d._scan_id_to_index)
+    assert int(d2._scan_id_to_index[42]) == 0
+    assert int(d2._scan_id_to_index[999]) == 1
