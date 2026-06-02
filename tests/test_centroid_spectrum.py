@@ -393,3 +393,125 @@ def test_dia_data_defaults_have_centroid_fields():
     d = DIAData()
     assert d._centroid_enabled is True
     assert d._centroid_rel_threshold == pytest.approx(1e-3)
+
+
+# ============================================================================
+# Algorithm coverage extension (2026-06-01).
+#
+# Additional edge cases beyond the audit-time tests: idempotence on already-
+# centroid input, threshold extremes (0 and 1.0), large-input stability, and
+# already-centroid spectrum interaction. All algorithm-level — integration
+# with _load_from_mzml is covered in tests/test_dia_data_load_mzml.py.
+# ============================================================================
+
+
+def test_centroid_approximately_idempotent_on_centroid_input():
+    """When centroid_spectrum is called twice, the second call must not
+    invent new peaks outside the original m/z span. With one sample per
+    peak, some originals may be filtered (no longer local maxima in the
+    new array), but no extra peaks should appear.
+
+    Note on tolerance: the parabolic refinement uses
+    ``half_step = (mz_next - mz_prev) / 2`` based on the SECOND call's
+    input grid (which is the centroid output of the first call, spaced
+    by ~100 Da here). With |dx| <= 0.5 clipped, each second-call
+    centroid lands within half of the local centroid spacing of the
+    nearest original — i.e. the parabolic step on coarsely-spaced
+    centroids can shift the m/z by tens of Da. This test pins that
+    bounded-but-large-shift behavior: it confirms no centroid escapes
+    the original m/z range and that the count does not grow."""
+    centers = [400.0, 500.0, 600.0, 700.0, 800.0]
+    heights = [1000.0, 800.0, 1200.0, 600.0, 1500.0]
+    mz, intensity = _gaussian_profile(centers, heights, sigma=0.005,
+                                      n_per_peak=11)
+    out_mz_1, out_int_1 = centroid_spectrum(mz, intensity,
+                                            rel_threshold=1e-3)
+    assert len(out_mz_1) == 5
+
+    out_mz_2, out_int_2 = centroid_spectrum(out_mz_1, out_int_1,
+                                            rel_threshold=1e-3)
+
+    assert len(out_mz_2) <= len(out_mz_1), (
+        f"second call produced {len(out_mz_2)} peaks "
+        f"(> first call's {len(out_mz_1)})")
+
+    # No second-call centroid escapes the original m/z range.
+    assert np.all(out_mz_2 >= min(centers))
+    assert np.all(out_mz_2 <= max(centers))
+
+    # Each second-call centroid is bounded by half the local spacing
+    # of original peaks (the parabolic |dx|<=0.5 clip on the centroid
+    # grid). Spacing here is 100 Da → tolerance 50 Da.
+    centers_arr = np.asarray(centers, dtype=np.float32)
+    max_spacing = float(np.max(np.diff(np.sort(centers_arr))))
+    tol = max_spacing * 0.5 + 1e-3
+    for mz_val in out_mz_2:
+        closest = float(np.min(np.abs(centers_arr - mz_val)))
+        assert closest <= tol, (
+            f"centroid at {mz_val} too far from any original "
+            f"({closest} > {tol})")
+
+
+def test_rel_threshold_zero_keeps_all_local_maxima():
+    """rel_threshold=0 → cutoff=0 → keep every local-max with
+    intensity >= 0. All Gaussian peaks (even tiny ones) survive."""
+    centers = [500.0, 510.0, 520.0]
+    heights = [1000.0, 10.0, 0.1]
+    mz, intensity = _gaussian_profile(centers, heights, sigma=0.005,
+                                      n_per_peak=11)
+    out_mz, _ = centroid_spectrum(mz, intensity, rel_threshold=0.0)
+    assert len(out_mz) == 3, (
+        f"expected 3 peaks with rel_threshold=0, got {len(out_mz)}")
+
+
+def test_rel_threshold_one_keeps_only_base_peak():
+    """rel_threshold=1.0 → cutoff = max(intensity) → only the base peak
+    (and any peak with intensity == max) survives."""
+    centers = [400.0, 500.0, 600.0]
+    heights = [800.0, 1200.0, 600.0]  # base = 1200 at 500
+    mz, intensity = _gaussian_profile(centers, heights, sigma=0.005,
+                                      n_per_peak=11)
+    out_mz, out_int = centroid_spectrum(mz, intensity, rel_threshold=1.0)
+    assert len(out_mz) == 1, (
+        f"expected only the base peak with rel_threshold=1.0, "
+        f"got {len(out_mz)}")
+    assert abs(out_mz[0] - 500.0) < 0.01
+    # Apex-sample intensity should equal max(intensity).
+    assert out_int[0] == intensity.max()
+
+
+def test_large_input_stability():
+    """Stability on a large profile (~10k samples / 200 peaks): output
+    must be well-formed, peak count matches, all centroids near true
+    centers, no NaN/Inf, output strictly monotonic."""
+    rng = np.random.default_rng(42)
+    n_peaks = 200
+    # Well-separated centers across 350–1000 Da.
+    centers = np.sort(rng.uniform(360.0, 990.0, size=n_peaks)).tolist()
+    # Enforce minimum spacing so peaks don't overlap (sigma=0.005,
+    # span_sigmas=3 → each peak occupies ±0.015 Da; require >= 0.05 gap).
+    keep = [centers[0]]
+    for c in centers[1:]:
+        if c - keep[-1] >= 0.05:
+            keep.append(c)
+    centers = keep
+    heights = rng.uniform(100.0, 10000.0, size=len(centers)).tolist()
+
+    mz, intensity = _gaussian_profile(centers, heights, sigma=0.005,
+                                      n_per_peak=11)
+    assert len(mz) > 1000, "expected a large input array"
+
+    out_mz, out_int = centroid_spectrum(mz, intensity, rel_threshold=1e-3)
+
+    assert len(out_mz) == len(centers), (
+        f"expected {len(centers)} centroids, got {len(out_mz)}")
+    assert len(out_int) == len(out_mz)
+    assert np.all(np.isfinite(out_mz))
+    assert np.all(np.isfinite(out_int))
+    assert np.all(np.diff(out_mz) > 0), "output must be strictly monotonic"
+
+    centers_arr = np.asarray(centers, dtype=np.float32)
+    for c in centers_arr:
+        diffs = np.abs(out_mz - c)
+        assert diffs.min() < 0.001, (
+            f"no centroid within 0.001 of {c}; min diff = {diffs.min()}")
