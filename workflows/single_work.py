@@ -157,6 +157,10 @@ def multi_batch_work(
     fragment_heavy_cycle_offsets = []
     fragment_heavy_cycle_offsets_signed = []
     fragment_hl_ratios = {"all": [], "b": [], "y": []}
+    fragment_base_to_apex_ratios = []
+    fragment_apex_monotonicities = []
+    fragment_n_peaks_list = []
+    fragment_smoothnesses = []
 
     # --- Q1a setup: classify co/split-isolation for accumulator ---
     w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
@@ -237,6 +241,12 @@ def multi_batch_work(
                 float(ion_score["intensity_ratio"]))
             fragment_hl_ratios["all"].append(
                 float(ion_score["intensity_ratio"]))
+        fragment_base_to_apex_ratios.append(
+            ion_score["base_to_apex_ratio"])
+        fragment_apex_monotonicities.append(
+            ion_score["apex_monotonicity"])
+        fragment_n_peaks_list.append(ion_score["n_peaks"])
+        fragment_smoothnesses.append(ion_score["smoothness"])
 
         # logging.info(f"{ions_type} {ions_num} : person({pearson_corr})")
 
@@ -307,6 +317,16 @@ def multi_batch_work(
         std_v, mad_v = _calc_hl_ratio_consistency(ratios)
         features[f"{ion_type}_log_hl_ratio_std"] = std_v
         features[f"{ion_type}_log_hl_ratio_mad"] = mad_v
+
+    # 碎片级 peak-likeness 汇总（heavy XIC × {mean,p50,std,max}）
+    features.update(extract_ion_numeric_features(
+        fragment_base_to_apex_ratios, "all_base_to_apex_ratio"))
+    features.update(extract_ion_numeric_features(
+        fragment_apex_monotonicities, "all_apex_monotonicity"))
+    features.update(extract_ion_numeric_features(
+        fragment_n_peaks_list, "all_n_peaks"))
+    features.update(extract_ion_numeric_features(
+        fragment_smoothnesses, "all_smoothness"))
 
     # 序列级特征
     features["kr_count"] = psm1._sequence.count('K') + \
