@@ -179,7 +179,7 @@ def main():
     model.fit(X_train, y_train, X_val, y_val)
 
     # Save model
-    model_path = f"models/{args.name}.pkl"  # 或 .txt / .joblib，根据模型定
+    model_path = cfg['output']['model_path']
     model.save(model_path)
 
     # Predict
@@ -187,7 +187,7 @@ def main():
     y_pred = model.predict(X_test)
 
     # Evaluate
-    report_path = f"results/{args.name}_report.json"
+    report_path = cfg['output']['result_path']
     fig_path = f"runs/spec_trainer/figures/{args.name}_importance.png"
     roc_path = f"runs/spec_trainer/figures/{args.name}_roc_curve.png"
 
