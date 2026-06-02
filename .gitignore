@@ -60,15 +60,21 @@ workspace/
 *.eps
 
 # ---------------- ms2-met runtime artifacts ----------------
-runs/
-baseline_*/
+# runs/ 整体忽略，但保留每个 baseline 的 config.ini（人工 curated 输入）
+runs/*
+!runs/baseline_*/
+runs/baseline_*/*
+!runs/baseline_*/config.ini
+# 锚定 /：只匹配项目根的 baseline_*/，不影响 runs/baseline_*/
+/baseline_*/
 result_*.csv
 result.csv
 ms2*.log
 
 # ---------------- User-specific configs (commit *.example instead) ----------------
-config.ini
-extract_*.ini
+# 锚定 /：只匹配项目根的 config.ini，runs/baseline_*/config.ini 由上方白名单管理
+/config.ini
+/extract_*.ini
 !extract_common_config.ini.example
 
 # ---------------- AI / scratch / planning files ----------------
