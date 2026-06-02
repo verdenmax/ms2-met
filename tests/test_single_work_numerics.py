@@ -582,3 +582,21 @@ def test_calc_smoothness_edge_cases():
     assert _calc_smoothness(np.array([], dtype="f8")) == 0.0
     assert _calc_smoothness(np.array([1, 2], dtype="f8")) == 0.0
     assert _calc_smoothness(np.array([0, 0, 0, 0, 0], dtype="f8")) == 0.0
+
+
+def test_calc_base_to_apex_ratio_nan_returns_zero():
+    """NaN in XIC must return 0.0 (defensive consistent with sibling helpers).
+
+    Without a guard, np.max(NaN-containing) returns NaN, apex <= 0 is False
+    (NaN compares False), and nan / nan = nan would pollute downstream.
+    """
+    from workflows.single_work import _calc_base_to_apex_ratio
+    # NaN in middle
+    assert _calc_base_to_apex_ratio(
+        np.array([1, 5, np.nan, 100, 50, 5, 1], dtype="f8")) == 0.0
+    # All-NaN
+    assert _calc_base_to_apex_ratio(
+        np.array([np.nan, np.nan, np.nan], dtype="f8")) == 0.0
+    # Inf
+    assert _calc_base_to_apex_ratio(
+        np.array([1, 5, np.inf, 5, 1], dtype="f8")) == 0.0

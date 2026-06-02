@@ -866,8 +866,14 @@ def _calc_base_to_apex_ratio(intensity: np.ndarray) -> float:
 
     True peaks: edges decay to near 0 -> ratio close to 0.
     Plateau / background / multi-peak stacks -> ratio close to 1.
+
+    Returns 0.0 for empty / short / all-zero XIC, or if any value is
+    non-finite (NaN would silently propagate through np.max and produce
+    nan/nan, polluting downstream features).
     """
     if len(intensity) < 3:
+        return 0.0
+    if not np.all(np.isfinite(intensity)):
         return 0.0
     apex = float(np.max(intensity))
     if apex <= 0:
