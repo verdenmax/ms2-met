@@ -1,3 +1,12 @@
+import os
+import sys
+
+# 让 src/ 进入 sys.path，使得 main.py 可以从任何工作目录被调用
+# 仿照 tools/eval_baseline.py 的 pattern
+_SRC_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _SRC_ROOT not in sys.path:
+    sys.path.insert(0, _SRC_ROOT)
+
 from models.model_manager import ModelManager
 import pandas as pd
 import yaml
