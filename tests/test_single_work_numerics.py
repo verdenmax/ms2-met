@@ -499,3 +499,27 @@ def test_calc_apex_monotonicity_apex_at_edge():
     # Edge: empty / short
     assert _calc_apex_monotonicity(np.array([], dtype="f8")) == 0.0
     assert _calc_apex_monotonicity(np.array([1, 2], dtype="f8")) == 0.0
+
+
+def test_calc_apex_monotonicity_nan_returns_zero():
+    """NaN in XIC must return 0.0 (defensive), NOT silently return 1.0.
+
+    Without a finiteness guard, np.argmax(NaN-containing) returns the
+    NaN index and np.diff comparisons against NaN are always False,
+    making garbage input look like a perfect peak. This is exactly the
+    wrong direction for a peak-likeness metric.
+    """
+    import math
+    from workflows.single_work import _calc_apex_monotonicity
+    # NaN in middle
+    assert _calc_apex_monotonicity(
+        np.array([1, 5, np.nan, 100, 50, 5, 1], dtype="f8")) == 0.0
+    # All-NaN
+    assert _calc_apex_monotonicity(
+        np.array([np.nan, np.nan, np.nan], dtype="f8")) == 0.0
+    # NaN at edge
+    assert _calc_apex_monotonicity(
+        np.array([np.nan, 50, 100, 50, 10], dtype="f8")) == 0.0
+    # Inf also non-finite
+    assert _calc_apex_monotonicity(
+        np.array([1, 5, np.inf, 5, 1], dtype="f8")) == 0.0

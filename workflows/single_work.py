@@ -883,10 +883,16 @@ def _calc_apex_monotonicity(intensity: np.ndarray) -> float:
     non-increasing. Return = 1 - (violations / total_pairs) in [0, 1].
     True peaks -> ~1; zigzag / noise -> low.
 
+    Returns 0.0 for empty / short XIC, or if any value is non-finite
+    (NaN would silently inflate the score because nan compares False
+    against any number, so np.diff(...) < 0 yields False at NaN gaps).
+
     Note: right slice includes apex (intensity[apex_idx:]) so when apex
     is at the leftmost index there is still a meaningful right slice.
     """
     if len(intensity) < 3:
+        return 0.0
+    if not np.all(np.isfinite(intensity)):
         return 0.0
     apex_idx = int(np.argmax(intensity))
     left = intensity[:apex_idx + 1]
