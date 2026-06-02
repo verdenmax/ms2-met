@@ -3,25 +3,7 @@ data:
     - runs/baseline_2da_clean/features.csv
   test_files:
     - runs/baseline_2da_clean/features.csv
-  feature_cols:
-    - precursor_mz
-    - sequence_len
-    - precursor_pearson
-    - b_count
-    - b_p25
-    - b_p50
-    - b_p75
-    - b_mean
-    - y_count
-    - y_p50
-    - y_p75
-    - y_mean
-    - all_count
-    - all_p25
-    - all_p50
-    - all_p75
-    - all_mean
-    - matched_intensity_percent
+  feature_cols: []
   target_col: label  # 假设你的标签列叫 'label'
 
 model:
