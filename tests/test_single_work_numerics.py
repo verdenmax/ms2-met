@@ -555,3 +555,30 @@ def test_calc_n_peaks_edge_cases():
     assert _calc_n_peaks(np.array([], dtype="f8")) == 0
     assert _calc_n_peaks(np.array([1, 2], dtype="f8")) == 0
     assert _calc_n_peaks(np.array([0, 0, 0, 0, 0], dtype="f8")) == 0
+
+
+def test_calc_smoothness_smooth_curve_low_value():
+    """Smooth Gaussian-like peak has low smoothness value."""
+    from workflows.single_work import _calc_smoothness
+    intensity = np.array([1, 10, 40, 80, 100, 80, 40, 10, 1], dtype="f8")
+    # Compute: sum of (second diff)^2 / total^2 - should be small
+    s = _calc_smoothness(intensity)
+    assert 0 < s < 0.05
+
+
+def test_calc_smoothness_zigzag_high_value():
+    """Sharp zigzag / single-point spike has high smoothness value."""
+    from workflows.single_work import _calc_smoothness
+    smooth = _calc_smoothness(
+        np.array([1, 10, 40, 80, 100, 80, 40, 10, 1], dtype="f8"))
+    zigzag = _calc_smoothness(
+        np.array([1, 100, 1, 100, 1, 100, 1], dtype="f8"))
+    assert zigzag > 10 * smooth  # zigzag should be at least 10x smoother peak
+
+
+def test_calc_smoothness_edge_cases():
+    """Empty / short / all-zero XIC returns 0.0."""
+    from workflows.single_work import _calc_smoothness
+    assert _calc_smoothness(np.array([], dtype="f8")) == 0.0
+    assert _calc_smoothness(np.array([1, 2], dtype="f8")) == 0.0
+    assert _calc_smoothness(np.array([0, 0, 0, 0, 0], dtype="f8")) == 0.0

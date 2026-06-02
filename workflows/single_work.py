@@ -929,6 +929,26 @@ def _calc_n_peaks(
     return int(len(peaks))
 
 
+def _calc_smoothness(intensity: np.ndarray) -> float:
+    """Sum of squared second differences / total^2.
+
+    Smooth Gaussian-like peaks -> close to 0.
+    Sharp zigzag / single-point spikes -> large value.
+    Normalized by total^2 to make cross-sample comparable; note this
+    is NOT normalized by length, so different xic_cycle_window settings
+    produce different absolute values.
+    """
+    if len(intensity) < 3:
+        return 0.0
+    if not np.all(np.isfinite(intensity)):
+        return 0.0
+    total = float(np.sum(intensity))
+    if total <= 0:
+        return 0.0
+    second_diff = np.diff(intensity, n=2)
+    return float(np.sum(second_diff ** 2) / (total ** 2 + 1e-12))
+
+
 def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
     """Compute how far the intensity apex is from the center RT, in cycles.
 
