@@ -503,6 +503,10 @@ def single_pair_work(
     fragment_heavy_cycle_offsets = []
     fragment_heavy_cycle_offsets_signed = []
     fragment_hl_ratios = {"all": [], "b": [], "y": []}
+    fragment_base_to_apex_ratios = []
+    fragment_apex_monotonicities = []
+    fragment_n_peaks_list = []
+    fragment_smoothnesses = []
 
     ion_data = []  # 存储每个离子的完整数据
     # 枚举所有的信息
@@ -576,6 +580,12 @@ def single_pair_work(
                 float(ion_score["intensity_ratio"]))
             fragment_hl_ratios["all"].append(
                 float(ion_score["intensity_ratio"]))
+        fragment_base_to_apex_ratios.append(
+            ion_score["base_to_apex_ratio"])
+        fragment_apex_monotonicities.append(
+            ion_score["apex_monotonicity"])
+        fragment_n_peaks_list.append(ion_score["n_peaks"])
+        fragment_smoothnesses.append(ion_score["smoothness"])
 
         ion_data.append({
             'ion_type': f"{ions_type}-{ions_num}",
@@ -643,6 +653,16 @@ def single_pair_work(
         std_v, mad_v = _calc_hl_ratio_consistency(ratios)
         features[f"{ion_type}_log_hl_ratio_std"] = std_v
         features[f"{ion_type}_log_hl_ratio_mad"] = mad_v
+
+    # 碎片级 peak-likeness 汇总（heavy XIC × {mean,p50,std,max}）
+    features.update(extract_ion_numeric_features(
+        fragment_base_to_apex_ratios, "all_base_to_apex_ratio"))
+    features.update(extract_ion_numeric_features(
+        fragment_apex_monotonicities, "all_apex_monotonicity"))
+    features.update(extract_ion_numeric_features(
+        fragment_n_peaks_list, "all_n_peaks"))
+    features.update(extract_ion_numeric_features(
+        fragment_smoothnesses, "all_smoothness"))
 
     # 序列级特征
     features["kr_count"] = psm._sequence.count('K') + \
