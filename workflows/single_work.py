@@ -381,6 +381,10 @@ def single_pair_work(
         features["precursor_light_apex_cycle_offset_signed"] = 0
         features["precursor_heavy_apex_cycle_offset"] = 0
         features["precursor_heavy_apex_cycle_offset_signed"] = 0
+        features["precursor_base_to_apex_ratio"] = 0.0
+        features["precursor_apex_monotonicity"] = 0.0
+        features["precursor_n_peaks"] = 0
+        features["precursor_smoothness"] = 0.0
     else:
         precursor_score = calc_xic_score(
             light_xic, heavy_xic, center_rt=float(psm._rt))
@@ -403,6 +407,12 @@ def single_pair_work(
             precursor_score["heavy_apex_cycle_offset"])
         features["precursor_heavy_apex_cycle_offset_signed"] = (
             precursor_score["heavy_apex_cycle_offset_signed"])
+        features["precursor_base_to_apex_ratio"] = (
+            precursor_score["base_to_apex_ratio"])
+        features["precursor_apex_monotonicity"] = (
+            precursor_score["apex_monotonicity"])
+        features["precursor_n_peaks"] = precursor_score["n_peaks"]
+        features["precursor_smoothness"] = precursor_score["smoothness"]
 
     # 同位素模式匹配 + 质量偏移验证
     isotope_spacing = 1.003355 / psm._charge
