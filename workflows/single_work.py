@@ -861,6 +861,21 @@ def _calc_snr(intensity: np.ndarray) -> float:
     return max_int / noise
 
 
+def _calc_base_to_apex_ratio(intensity: np.ndarray) -> float:
+    """Edge average / apex intensity.
+
+    True peaks: edges decay to near 0 -> ratio close to 0.
+    Plateau / background / multi-peak stacks -> ratio close to 1.
+    """
+    if len(intensity) < 3:
+        return 0.0
+    apex = float(np.max(intensity))
+    if apex <= 0:
+        return 0.0
+    base = (float(intensity[0]) + float(intensity[-1])) / 2
+    return base / apex
+
+
 def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
     """Compute how far the intensity apex is from the center RT, in cycles.
 

@@ -438,3 +438,29 @@ def test_calc_cycle_offset_zero_intensity_with_nonzero_apex_still_works():
     # Center = cycle 12 (rt=22), apex = cycle 14 -> signed = 2
     assert signed == 2
     assert abs_off == 2
+
+
+def test_calc_base_to_apex_ratio_real_peak_returns_low_value():
+    """Real chromatographic peak: edges decay to near-zero -> ratio close to 0."""
+    from workflows.single_work import _calc_base_to_apex_ratio
+    intensity = np.array([1, 5, 50, 100, 50, 5, 1], dtype="f8")
+    ratio = _calc_base_to_apex_ratio(intensity)
+    # base = (1+1)/2 = 1, apex = 100, ratio = 0.01
+    assert ratio < 0.05
+
+
+def test_calc_base_to_apex_ratio_plateau_returns_high():
+    """Plateau / continuous background: edges are nearly as high as apex."""
+    from workflows.single_work import _calc_base_to_apex_ratio
+    intensity = np.array([80, 90, 100, 100, 90, 80, 80], dtype="f8")
+    ratio = _calc_base_to_apex_ratio(intensity)
+    # base = (80+80)/2 = 80, apex = 100, ratio = 0.8
+    assert ratio > 0.7
+
+
+def test_calc_base_to_apex_ratio_edge_cases():
+    """Empty / short / all-zero XIC returns 0.0."""
+    from workflows.single_work import _calc_base_to_apex_ratio
+    assert _calc_base_to_apex_ratio(np.array([], dtype="f8")) == 0.0
+    assert _calc_base_to_apex_ratio(np.array([1, 2], dtype="f8")) == 0.0
+    assert _calc_base_to_apex_ratio(np.array([0, 0, 0], dtype="f8")) == 0.0
