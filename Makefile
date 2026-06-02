@@ -70,6 +70,11 @@ help:
 	@echo "  make clean-5th       删除 5da features.csv / log"
 	@echo "  make clean-normal    删除 normal features.csv / log"
 	@echo "  make clean-all       上述三者全清"
+	@echo ""
+	@echo "  make train-exp1      训练 exp1（依赖 runs/baseline_2da_clean/features.csv）"
+	@echo "  make train-exp2      训练 exp2（combined: 依赖 2da + 5da features.csv）"
+	@echo "  make train-all       顺序跑 train-exp1 + train-exp2"
+	@echo "  make clean-train     清理 runs/spec_trainer/ 训练产出"
 	@echo "  make clean           旧式清理（checkpoint.pkl 等）"
 	@echo ""
 	@echo "  make run             旧 target：跑 main.py 使用根目录 config.ini"
@@ -157,6 +162,50 @@ clean-normal:
 	fi
 
 clean-all: clean-2th clean-5th clean-normal
+
+# ---------- spec_trainer 训练 target ----------
+#
+# train-exp1 / train-exp2: 调用 tools/spec_trainer/src/main.py 训练对应实验
+# 自动依赖 features.csv 存在；缺失时级联触发 make 2th / 5th。
+# 输出落到 runs/spec_trainer/{models,results,figures}/
+#
+# exp1: 2da only
+# exp2: combined (2da + 5da)
+
+.PHONY: train-exp1 train-exp2 train-all clean-train
+
+# features.csv 不存在时自动跑对应特征提取
+runs/baseline_2da_clean/features.csv:
+	$(MAKE) 2th
+
+runs/baseline_5da_clean/features.csv:
+	$(MAKE) 5th
+
+runs/baseline_normal_clean/features.csv:
+	$(MAKE) normal
+
+train-exp1: runs/baseline_2da_clean/features.csv tools/spec_trainer/config/exp1.yaml
+	$(call BANNER,train-exp1)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
+	$(PY) tools/spec_trainer/src/main.py --config tools/spec_trainer/config/exp1.yaml --name exp1
+	@echo "[done] train-exp1 finished"
+
+# train-exp2: exp2.yaml uses combined 2da + 5da, so depend on BOTH features.csv
+train-exp2: runs/baseline_2da_clean/features.csv runs/baseline_5da_clean/features.csv tools/spec_trainer/config/exp2.yaml
+	$(call BANNER,train-exp2)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
+	$(PY) tools/spec_trainer/src/main.py --config tools/spec_trainer/config/exp2.yaml --name exp2
+	@echo "[done] train-exp2 finished"
+
+train-all: train-exp1 train-exp2
+
+clean-train:
+	@if [ -d runs/spec_trainer ]; then \
+		find runs/spec_trainer -mindepth 1 -delete 2>/dev/null || true; \
+		echo "[cleaned] runs/spec_trainer/"; \
+	else \
+		echo "[skip] runs/spec_trainer/ does not exist"; \
+	fi
 
 # ---------- 兼容旧用法 ----------
 
