@@ -1027,6 +1027,10 @@ def _default_xic_score() -> dict:
         "light_apex_cycle_offset_signed": 0,
         "heavy_apex_cycle_offset": 0,
         "heavy_apex_cycle_offset_signed": 0,
+        "base_to_apex_ratio": 0.0,
+        "apex_monotonicity": 0.0,
+        "n_peaks": 0,
+        "smoothness": 0.0,
     }
 
 
@@ -1076,6 +1080,10 @@ def calc_xic_score(
     heavy_fwhm = _calc_fwhm(heavy_xic["rt"], heavy_xic["intensity"])
     peak_width_ratio = (heavy_fwhm / light_fwhm
                         if light_fwhm > 0 else 0.0)
+    base_to_apex_ratio = _calc_base_to_apex_ratio(heavy_xic["intensity"])
+    apex_monotonicity = _calc_apex_monotonicity(heavy_xic["intensity"])
+    n_peaks = _calc_n_peaks(heavy_xic["intensity"])
+    smoothness = _calc_smoothness(heavy_xic["intensity"])
 
     # 计算峰相关性
     # 统一时间轴
@@ -1090,6 +1098,13 @@ def calc_xic_score(
         result["light_max_int"] = light_max_int
         result["heavy_max_int"] = heavy_max_int
         result["intensity_ratio"] = intensity_ratio
+        result["snr"] = snr
+        result["peak_width_ratio"] = peak_width_ratio
+        result["peak_symmetry"] = peak_symmetry
+        result["base_to_apex_ratio"] = base_to_apex_ratio
+        result["apex_monotonicity"] = apex_monotonicity
+        result["n_peaks"] = n_peaks
+        result["smoothness"] = smoothness
         if center_rt is not None:
             l_abs, l_sig = _calc_cycle_offset(light_xic, center_rt)
             h_center = (heavy_center_rt
@@ -1162,6 +1177,10 @@ def calc_xic_score(
         "light_apex_cycle_offset_signed": l_sig,
         "heavy_apex_cycle_offset": h_abs,
         "heavy_apex_cycle_offset_signed": h_sig,
+        "base_to_apex_ratio": base_to_apex_ratio,
+        "apex_monotonicity": apex_monotonicity,
+        "n_peaks": n_peaks,
+        "smoothness": smoothness,
     }
 
 

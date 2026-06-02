@@ -600,3 +600,36 @@ def test_calc_base_to_apex_ratio_nan_returns_zero():
     # Inf
     assert _calc_base_to_apex_ratio(
         np.array([1, 5, np.inf, 5, 1], dtype="f8")) == 0.0
+
+
+def test_calc_xic_score_emits_peak_likeness_fields():
+    """calc_xic_score returns 4 new peak-likeness fields, all computed
+    on the heavy XIC (consistent with existing snr/peak_symmetry)."""
+    from workflows.single_work import calc_xic_score
+    dt = [("rt", "f8"), ("ppm_error", "f8"),
+          ("intensity", "f8"), ("cycle_idx", "i4")]
+    n = 7
+    light = np.zeros(n, dtype=dt)
+    light["rt"] = [10, 11, 12, 13, 14, 15, 16]
+    light["cycle_idx"] = [0, 1, 2, 3, 4, 5, 6]
+    light["intensity"] = [1, 5, 50, 100, 50, 5, 1]
+    heavy = light.copy()
+    result = calc_xic_score(light, heavy)
+    assert "base_to_apex_ratio" in result
+    assert result["base_to_apex_ratio"] < 0.05
+    assert "apex_monotonicity" in result
+    assert result["apex_monotonicity"] == 1.0
+    assert "n_peaks" in result
+    assert result["n_peaks"] == 1
+    assert "smoothness" in result
+    assert 0 < result["smoothness"] < 0.5
+
+
+def test_default_xic_score_has_peak_likeness_zero_fields():
+    """The default-zero dict must include all 4 new peak-likeness keys."""
+    from workflows.single_work import _default_xic_score
+    d = _default_xic_score()
+    assert d["base_to_apex_ratio"] == 0.0
+    assert d["apex_monotonicity"] == 0.0
+    assert d["n_peaks"] == 0
+    assert d["smoothness"] == 0.0
