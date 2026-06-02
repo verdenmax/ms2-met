@@ -523,3 +523,35 @@ def test_calc_apex_monotonicity_nan_returns_zero():
     # Inf also non-finite
     assert _calc_apex_monotonicity(
         np.array([1, 5, np.inf, 5, 1], dtype="f8")) == 0.0
+
+
+def test_calc_n_peaks_single_peak_returns_one():
+    """Classic unimodal peak: find_peaks returns 1 local maximum."""
+    from workflows.single_work import _calc_n_peaks
+    intensity = np.array([1, 5, 50, 100, 50, 5, 1], dtype="f8")
+    assert _calc_n_peaks(intensity) == 1
+
+
+def test_calc_n_peaks_bimodal_returns_two():
+    """Two well-separated peaks both with prominence > 0.3 * apex."""
+    from workflows.single_work import _calc_n_peaks
+    intensity = np.array([1, 100, 1, 1, 80, 1, 1], dtype="f8")
+    # Two peaks both >= 80 (>= 0.3 * 100 = 30) and dipping back to 1 between
+    assert _calc_n_peaks(intensity) == 2
+
+
+def test_calc_n_peaks_small_noise_suppressed_by_prominence():
+    """Small noise bump << 30% of apex should be filtered out."""
+    from workflows.single_work import _calc_n_peaks
+    # Main peak at idx 3 with apex=100; small bump at idx 6 with height=20 (20%)
+    intensity = np.array([1, 50, 100, 50, 1, 1, 20, 1], dtype="f8")
+    # Only the main peak should count
+    assert _calc_n_peaks(intensity) == 1
+
+
+def test_calc_n_peaks_edge_cases():
+    """Empty / short / all-zero XIC returns 0."""
+    from workflows.single_work import _calc_n_peaks
+    assert _calc_n_peaks(np.array([], dtype="f8")) == 0
+    assert _calc_n_peaks(np.array([1, 2], dtype="f8")) == 0
+    assert _calc_n_peaks(np.array([0, 0, 0, 0, 0], dtype="f8")) == 0

@@ -905,6 +905,30 @@ def _calc_apex_monotonicity(intensity: np.ndarray) -> float:
     return 1.0 - (left_viol + right_viol) / total_pairs
 
 
+def _calc_n_peaks(
+    intensity: np.ndarray, prominence_frac: float = 0.3
+) -> int:
+    """Count local maxima with prominence >= prominence_frac * apex.
+
+    True chromatographic peak -> 1; co-elution / interference -> 2+.
+    The prominence threshold filters out small bumps that are likely
+    noise rather than separate peaks. Endpoints are not counted.
+
+    Returns 0 for empty / short XIC, all-zero XIC, or non-finite input
+    (scipy.signal.find_peaks behavior on NaN is undefined).
+    """
+    if len(intensity) < 3:
+        return 0
+    if not np.all(np.isfinite(intensity)):
+        return 0
+    from scipy.signal import find_peaks
+    max_int = float(np.max(intensity))
+    if max_int <= 0:
+        return 0
+    peaks, _ = find_peaks(intensity, prominence=max_int * prominence_frac)
+    return int(len(peaks))
+
+
 def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
     """Compute how far the intensity apex is from the center RT, in cycles.
 
