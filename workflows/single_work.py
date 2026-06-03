@@ -21,6 +21,24 @@ from constant.keys import ConfigKeys
 from configparser import ConfigParser
 
 
+def _is_empty_xic_pair(light_xic: np.ndarray, heavy_xic: np.ndarray) -> bool:
+    """Return True if either XIC is empty OR has all-zero intensity.
+
+    Used by both single_pair_work / multi_batch_work to set the
+    `precursor_xic_empty` marker, AND by calc_xic_score to short-circuit
+    to default features. Consistent definition prevents the marker from
+    diverging from the data path (see P0-1 and P0-2 in
+    docs/specs/2026-06-03-deep-audit-fixes-design.md).
+    """
+    if len(light_xic) == 0 or len(heavy_xic) == 0:
+        return True
+    if not np.any(light_xic["intensity"] > 0):
+        return True
+    if not np.any(heavy_xic["intensity"] > 0):
+        return True
+    return False
+
+
 def multi_batch_work(
     psm1: PSMInfo,
     dia_data1: DIAData,
@@ -52,7 +70,7 @@ def multi_batch_work(
     # 计算出 person_corr
 
     features = {}
-    if len(light_xic) == 0 or len(heavy_xic) == 0:
+    if _is_empty_xic_pair(light_xic, heavy_xic):
         features["precursor_pearson"] = 0
         features["precursor_apex_delta"] = 0.0
         features["precursor_apex_delta_signed"] = 0.0
@@ -72,6 +90,7 @@ def multi_batch_work(
         features["precursor_apex_monotonicity"] = 0.0
         features["precursor_n_peaks"] = 0
         features["precursor_smoothness"] = 0.0
+        features["precursor_xic_empty"] = 1
     else:
         precursor_score = calc_xic_score(
             light_xic, heavy_xic,
@@ -102,6 +121,7 @@ def multi_batch_work(
             precursor_score["apex_monotonicity"])
         features["precursor_n_peaks"] = precursor_score["n_peaks"]
         features["precursor_smoothness"] = precursor_score["smoothness"]
+        features["precursor_xic_empty"] = 0
 
     # 同位素模式匹配 + 质量偏移验证
     isotope_spacing = 1.003355 / psm1._charge
@@ -171,6 +191,7 @@ def multi_batch_work(
     fragment_apex_monotonicities = []
     fragment_n_peaks_list = []
     fragment_smoothnesses = []
+    fragment_xic_empty_count = 0
 
     # --- Q1a setup: classify co/split-isolation for accumulator ---
     w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
@@ -216,6 +237,7 @@ def multi_batch_work(
             fragment_intensities.append(0.0)
             fragment_cosines.append(0.0)
             fragment_snrs.append(0.0)
+            fragment_xic_empty_count += 1
             continue
 
         if (np.max(light_ions_xic["intensity"]) > 0 and
@@ -274,6 +296,7 @@ def multi_batch_work(
         #          linewidth=2, markersize=8)
 
     features["valid_fragment_ions_num"] = len(pearsons_map["all"])
+    features["fragment_xic_empty_count"] = fragment_xic_empty_count
 
     # 分别提取出b离子，y离子，全部的三种特征
     for key, value_list in pearsons_map.items():
@@ -395,7 +418,7 @@ def single_pair_work(
     # 计算出 person_corr
 
     features = {}
-    if len(light_xic) == 0 or len(heavy_xic) == 0:
+    if _is_empty_xic_pair(light_xic, heavy_xic):
         features["precursor_pearson"] = 0
         features["precursor_apex_delta"] = 0.0
         features["precursor_apex_delta_signed"] = 0.0
@@ -415,6 +438,7 @@ def single_pair_work(
         features["precursor_apex_monotonicity"] = 0.0
         features["precursor_n_peaks"] = 0
         features["precursor_smoothness"] = 0.0
+        features["precursor_xic_empty"] = 1
     else:
         precursor_score = calc_xic_score(
             light_xic, heavy_xic, center_rt=float(psm._rt))
@@ -443,6 +467,7 @@ def single_pair_work(
             precursor_score["apex_monotonicity"])
         features["precursor_n_peaks"] = precursor_score["n_peaks"]
         features["precursor_smoothness"] = precursor_score["smoothness"]
+        features["precursor_xic_empty"] = 0
 
     # 同位素模式匹配 + 质量偏移验证
     isotope_spacing = 1.003355 / psm._charge
@@ -517,16 +542,21 @@ def single_pair_work(
     fragment_apex_monotonicities = []
     fragment_n_peaks_list = []
     fragment_smoothnesses = []
+    # Union count of fragments skipped or imputed-to-zero:
+    # {empty XIC, heavy_in_raw=False, identical light/heavy mass shift}.
+    fragment_xic_empty_count = 0
 
     ion_data = []  # 存储每个离子的完整数据
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
 
         if not heavy_in_raw:
+            fragment_xic_empty_count += 1
             continue
 
         # 如果在相同的区间，并且质量相同，说明重标不影响该碎片离子
         if np.abs(heavy_mass - light_mass) < SHIFT_EPSILON and is_same_ms2:
+            fragment_xic_empty_count += 1
             continue
 
         # 计算出 light 信息
@@ -557,6 +587,7 @@ def single_pair_work(
             fragment_intensities.append(0.0)
             fragment_cosines.append(0.0)
             fragment_snrs.append(0.0)
+            fragment_xic_empty_count += 1
             continue
 
         if (np.max(light_ions_xic["intensity"]) > 0 and
@@ -610,6 +641,7 @@ def single_pair_work(
 
     # plot_light_heavy_contract(ion_data)
     features["valid_fragment_ions_num"] = len(pearsons_map["all"])
+    features["fragment_xic_empty_count"] = fragment_xic_empty_count
 
     # 分别提取出b离子，y离子，全部的三种特征
     for key, value_list in pearsons_map.items():

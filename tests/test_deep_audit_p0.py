@@ -1,0 +1,154 @@
+"""Phase 0 (Critical) behavioral tests for deep audit fixes.
+
+See docs/specs/2026-06-03-deep-audit-fixes-design.md for design rationale.
+"""
+import configparser
+import numpy as np
+import pytest
+
+
+def _empty_xic():
+    """Return an empty XIC structured array matching dia_data dtype."""
+    dtype = [("rt", "f8"), ("ppm_error", "f8"),
+             ("intensity", "f8"), ("cycle_idx", "i4")]
+    return np.array([], dtype=dtype)
+
+
+def _real_xic(rts, intensities, cycle_idxs=None):
+    """Build a non-empty XIC for tests."""
+    n = len(rts)
+    if cycle_idxs is None:
+        cycle_idxs = list(range(n))
+    dtype = [("rt", "f8"), ("ppm_error", "f8"),
+             ("intensity", "f8"), ("cycle_idx", "i4")]
+    arr = np.zeros(n, dtype=dtype)
+    arr["rt"] = rts
+    arr["ppm_error"] = 0.0
+    arr["intensity"] = intensities
+    arr["cycle_idx"] = cycle_idxs
+    return arr
+
+
+class _FakePSM:
+    """Minimal PSM stub for triggering single_pair_work / multi_batch_work."""
+    def __init__(self, mz=500.0, rt=10.0, seq="AAAAK", charge=2):
+        self._precursor_mz = mz
+        self._rt = rt
+        self._sequence = seq
+        self._charge = charge
+        self._raw_title = "fake.mzML"
+        self._protein_names = "HUMAN"
+        self._label_type = "positive"
+        self._modify = []
+
+    def get_heavy_info(self, heavy_type):
+        # Synthetic fragment_ions: 2 b-ions + 2 y-ions with non-zero SILAC shift
+        # so they are NOT skipped by the same-mass guard in single_pair_work.
+        heavy_mz = self._precursor_mz + 4.0
+        fragment_ions = [
+            ("b", 1, 100.0, 108.014),
+            ("b", 2, 200.0, 208.014),
+            ("y", 1, 150.0, 158.014),
+            ("y", 2, 250.0, 258.014),
+        ]
+        return heavy_mz, fragment_ions
+
+
+class _FakeDIA:
+    """Minimal DIA stub. Returns empty XIC for any precursor_mz query
+    when force_empty=True; otherwise returns a small synthetic XIC."""
+    def __init__(self, force_empty=False, xic_intensity=None):
+        self._force_empty = force_empty
+        self._xic_intensity = xic_intensity
+        self._min_mz_value = 0.0
+        self._max_mz_value = 10000.0
+
+    def xic_peaks_extreact(self, rt, window, mz, mass_tol_ppm):
+        if self._force_empty:
+            return _empty_xic()
+        intensity = self._xic_intensity if self._xic_intensity is not None \
+            else [100.0, 200.0, 500.0, 300.0, 150.0]
+        return _real_xic([9.5, 9.7, 10.0, 10.3, 10.5], intensity)
+
+    def xic_ms2_peaks_extract(self, rt, window, precursor_mz, ions_mass,
+                              mass_tol_ppm):
+        if self._force_empty:
+            return _empty_xic(), 0.0
+        intensity = self._xic_intensity if self._xic_intensity is not None \
+            else [10.0, 20.0, 50.0, 30.0, 15.0]
+        return _real_xic([9.5, 9.7, 10.0, 10.3, 10.5], intensity), 100.0
+
+    def check_in_raw(self, mz):
+        return True
+
+    def check_in_same_ms2(self, p1, p2):
+        return False
+
+    def get_window_info(self, mz):
+        return {"width": 2.0, "centering": 0.5,
+                "lower": mz - 1.0, "upper": mz + 1.0,
+                "split_window": False}
+
+
+def _minimal_config():
+    cfg = configparser.ConfigParser()
+    cfg.read_dict({
+        "general": {
+            "mass_tol_ppm": "20",
+            "xic_cycle_window": "5",
+        },
+    })
+    return cfg
+
+
+def test_single_pair_work_marks_precursor_xic_empty_when_empty():
+    """single_pair_work empty-XIC branch must set precursor_xic_empty=1."""
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=True)
+    features = single_pair_work(psm, dia, _minimal_config())
+    assert features["precursor_xic_empty"] == 1, (
+        "P0-1: empty-XIC must set marker=1 in single_pair_work")
+
+
+def test_multi_batch_work_marks_precursor_xic_empty_when_empty():
+    """multi_batch_work empty-XIC branch must set precursor_xic_empty=1."""
+    from workflows.single_work import multi_batch_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=True)
+    features = multi_batch_work(psm, dia, psm, dia, _minimal_config())
+    assert features["precursor_xic_empty"] == 1, (
+        "P0-1: empty-XIC must set marker=1 in multi_batch_work")
+
+
+def test_single_pair_work_marks_precursor_xic_empty_zero_when_valid():
+    """Non-empty valid XIC must set precursor_xic_empty=0 (single_pair)."""
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=False)
+    features = single_pair_work(psm, dia, _minimal_config())
+    assert features["precursor_xic_empty"] == 0, (
+        "P0-1: valid XIC must set marker=0 in single_pair_work")
+
+
+def test_multi_batch_work_marks_precursor_xic_empty_zero_when_valid():
+    """Non-empty valid XIC must set precursor_xic_empty=0 (multi_batch)."""
+    from workflows.single_work import multi_batch_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=False)
+    features = multi_batch_work(psm, dia, psm, dia, _minimal_config())
+    assert features["precursor_xic_empty"] == 0, (
+        "P0-1: valid XIC must set marker=0 in multi_batch_work")
+
+
+def test_fragment_xic_empty_count_present_in_both_paths():
+    """Both code paths must emit fragment_xic_empty_count column."""
+    from workflows.single_work import single_pair_work, multi_batch_work
+    psm = _FakePSM()
+    dia_empty = _FakeDIA(force_empty=True)
+    f1 = single_pair_work(psm, dia_empty, _minimal_config())
+    f2 = multi_batch_work(psm, dia_empty, psm, dia_empty, _minimal_config())
+    assert "fragment_xic_empty_count" in f1, (
+        "P0-1: single_pair_work missing fragment_xic_empty_count")
+    assert "fragment_xic_empty_count" in f2, (
+        "P0-1: multi_batch_work missing fragment_xic_empty_count")
