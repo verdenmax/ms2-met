@@ -118,10 +118,15 @@ def test_fragment_empty_branch_aggregates_no_nan_when_all_empty():
 
     # All 3 fragments empty -> all aggregates should be 0.0, not NaN.
     # Pick representative aggregates from each per-fragment list family.
+    # Fragment-level aggregates that must be present and 0.0 (not NaN)
+    # when all fragments hit empty-XIC. List was cleaned up in P1-2
+    # review fix (2026-06-03): all_mz_avg_err_mean → all_mz_err_mean;
+    # dropped all_apex_delta_signed_mean (signed variant only emitted
+    # for cycle offsets and at precursor level, not for fragment
+    # apex_delta aggregates).
     for key in (
         "all_apex_delta_mean",
-        "all_apex_delta_signed_mean",
-        "all_mz_avg_err_mean",
+        "all_mz_err_mean",
         "all_light_apex_cycle_offset_mean",
         "all_heavy_apex_cycle_offset_mean",
         "all_base_to_apex_ratio_mean",
@@ -129,8 +134,11 @@ def test_fragment_empty_branch_aggregates_no_nan_when_all_empty():
         "all_n_peaks_mean",
         "all_smoothness_mean",
     ):
-        if key not in features:
-            continue  # skip if a column was renamed/missing in current code
+        # Fail loudly on missing keys so future renames don't silently
+        # weaken this test (P1-2 review feedback 2026-06-03).
+        assert key in features, (
+            f"P1-2 test contract: '{key}' missing from features dict. "
+            f"If column renamed, update this test.")
         v = features[key]
         assert not (isinstance(v, float) and np.isnan(v)), (
             f"P1-2: {key} should be 0.0 (not NaN) when all fragments "
@@ -151,8 +159,10 @@ def test_fragment_empty_branch_aggregates_no_nan_multi_batch():
         "all_base_to_apex_ratio_mean",
         "all_n_peaks_mean",
     ):
-        if key not in features:
-            continue
+        # Fail loudly on missing keys (P1-2 review feedback 2026-06-03).
+        assert key in features, (
+            f"P1-2 test contract: '{key}' missing from multi_batch_work "
+            f"features dict.")
         v = features[key]
         assert not (isinstance(v, float) and np.isnan(v)), (
             f"P1-2 multi_batch_work: {key} should be 0.0 not NaN; got {v}")
