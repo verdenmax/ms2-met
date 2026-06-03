@@ -77,6 +77,9 @@ help:
 	@echo "  make extract-5th     仅生成 5da 的 input JSON"
 	@echo "  make extract-normal  仅生成 normal 的 input JSON"
 	@echo ""
+	@echo "  注：extract-* 仅在对应 extract_*.ini 存在时可用。"
+	@echo "      5th / normal 的 ini 默认未提供，features.csv 须外部生成。"
+	@echo ""
 	@echo "  make clean-2th       删除 2da features.csv / log，强制下次重跑"
 	@echo "  make clean-5th       删除 5da features.csv / log"
 	@echo "  make clean-normal    删除 normal features.csv / log"
@@ -96,6 +99,13 @@ help:
 	@echo "  normal -> $(JSON_NORMAL)"
 
 # ---------- 2th ----------
+#
+# If extract_2da_pfind_diann.ini exists, declare full pipeline dependency
+# (JSON regenerated when ini changes). Otherwise the JSON / features.csv
+# is treated as externally-provided; we still run main.py if the user
+# explicitly invokes `make 2th`, but only after verifying the necessary
+# inputs already exist on disk.
+ifneq ($(wildcard $(INI_2TH)),)
 
 # JSON 缺失时自动跑 extract_common
 $(JSON_2TH): $(INI_2TH)
@@ -109,7 +119,31 @@ extract-2th: $(JSON_2TH)
 	$(PY) main.py --configpath $(DIR_2TH)/config.ini --logpath $(DIR_2TH)/extract.log
 	@echo "[done] features written under $(DIR_2TH)/"
 
+else  # $(INI_2TH) absent — features.csv must be externally provided
+
+extract-2th:
+	@echo "[error] $(INI_2TH) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+2th: $(DIR_2TH)/config.ini
+	$(call BANNER,2th)
+	@if [ ! -f "$(DIR_2TH)/features.csv" ]; then \
+		echo "[note] $(INI_2TH) absent — $(DIR_2TH)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_2TH)/config.ini --logpath $(DIR_2TH)/extract.log
+	@echo "[done] features written under $(DIR_2TH)/"
+
+endif
+
 # ---------- 5th ----------
+#
+# If extract_5da_pfind_diann.ini exists, declare full pipeline dependency
+# (JSON regenerated when ini changes). Otherwise the JSON / features.csv
+# is treated as externally-provided; we still run main.py if the user
+# explicitly invokes `make 5th`, but only after verifying the necessary
+# inputs already exist on disk.
+ifneq ($(wildcard $(INI_5TH)),)
 
 $(JSON_5TH): $(INI_5TH)
 	$(call BANNER,extract 5th)
@@ -122,7 +156,31 @@ extract-5th: $(JSON_5TH)
 	$(PY) main.py --configpath $(DIR_5TH)/config.ini --logpath $(DIR_5TH)/extract.log
 	@echo "[done] features written under $(DIR_5TH)/"
 
+else  # $(INI_5TH) absent — features.csv must be externally provided
+
+extract-5th:
+	@echo "[error] $(INI_5TH) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+5th: $(DIR_5TH)/config.ini
+	$(call BANNER,5th)
+	@if [ ! -f "$(DIR_5TH)/features.csv" ]; then \
+		echo "[note] $(INI_5TH) absent — $(DIR_5TH)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_5TH)/config.ini --logpath $(DIR_5TH)/extract.log
+	@echo "[done] features written under $(DIR_5TH)/"
+
+endif
+
 # ---------- normal ----------
+#
+# If extract_normal_pfind_diann.ini exists, declare full pipeline dependency
+# (JSON regenerated when ini changes). Otherwise the JSON / features.csv
+# is treated as externally-provided; we still run main.py if the user
+# explicitly invokes `make normal`, but only after verifying the necessary
+# inputs already exist on disk.
+ifneq ($(wildcard $(INI_NORMAL)),)
 
 $(JSON_NORMAL): $(INI_NORMAL)
 	$(call BANNER,extract normal)
@@ -134,6 +192,23 @@ normal: $(INI_NORMAL) $(JSON_NORMAL) $(DIR_NORMAL)/config.ini
 	$(call BANNER,normal)
 	$(PY) main.py --configpath $(DIR_NORMAL)/config.ini --logpath $(DIR_NORMAL)/extract.log
 	@echo "[done] features written under $(DIR_NORMAL)/"
+
+else  # $(INI_NORMAL) absent — features.csv must be externally provided
+
+extract-normal:
+	@echo "[error] $(INI_NORMAL) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+normal: $(DIR_NORMAL)/config.ini
+	$(call BANNER,normal)
+	@if [ ! -f "$(DIR_NORMAL)/features.csv" ]; then \
+		echo "[note] $(INI_NORMAL) absent — $(DIR_NORMAL)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_NORMAL)/config.ini --logpath $(DIR_NORMAL)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL)/"
+
+endif
 
 # ---------- 组合 ----------
 
