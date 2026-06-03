@@ -32,11 +32,22 @@ DIR_5TH    ?= runs/baseline_5da_clean
 DIR_NORMAL ?= runs/baseline_normal_clean
 
 # 从 extract_*.ini 中动态抽取 result_file 路径。
-# grep 找 ^result_file= 行 -> 取 = 右侧 -> 去前后空格
-# 如果 ini 不存在，结果为空，target 会在依赖检查时报缺失文件错。
-JSON_2TH    := $(strip $(shell test -f $(INI_2TH)    && grep -E '^[[:space:]]*result_file[[:space:]]*=' $(INI_2TH)    | head -1 | cut -d= -f2- | tr -d ' '))
-JSON_5TH    := $(strip $(shell test -f $(INI_5TH)    && grep -E '^[[:space:]]*result_file[[:space:]]*=' $(INI_5TH)    | head -1 | cut -d= -f2- | tr -d ' '))
-JSON_NORMAL := $(strip $(shell test -f $(INI_NORMAL) && grep -E '^[[:space:]]*result_file[[:space:]]*=' $(INI_NORMAL) | head -1 | cut -d= -f2- | tr -d ' '))
+# 行格式：result_file = ./path/to/output.json    # optional comment
+# 处理：
+#   1) grep 抓首行匹配 ^result_file=
+#   2) sed 砍掉 = 之前 + 行尾 #comment + 首尾空白 + 包围引号
+#   3) 若 ini 不存在 -> 结果为空字符串（target 会用 ifeq 显式检查）
+# 注意：保留路径中部的空格（用 sed 替代旧的 tr -d ' '）。
+# 已知限制：路径中不能含 '#'（会被当作注释截断）；引号必须配对。
+define EXTRACT_RESULT_FILE
+$(strip $(shell test -f $(1) && \
+    grep -E '^[[:space:]]*result_file[[:space:]]*=' $(1) | head -1 | \
+    sed -E -e 's/^[^=]*=[[:space:]]*//' -e 's/[[:space:]]*#.*$$//' -e 's/^["'"'"']//' -e 's/["'"'"']$$//' -e 's/[[:space:]]+$$//'))
+endef
+
+JSON_2TH    := $(call EXTRACT_RESULT_FILE,$(INI_2TH))
+JSON_5TH    := $(call EXTRACT_RESULT_FILE,$(INI_5TH))
+JSON_NORMAL := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL))
 
 # --------------------------- 工具 / banner ---------------------------
 
