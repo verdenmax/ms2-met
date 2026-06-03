@@ -160,3 +160,38 @@ def test_calc_smoothness_short_input_returns_zero():
     from workflows.single_work import _calc_smoothness
     assert _calc_smoothness(np.array([])) == 0.0
     assert _calc_smoothness(np.array([1.0, 2.0])) == 0.0
+
+
+def test_sequence_controlled_shuffle_deterministic_with_seed():
+    """Same seed produces identical shuffle output (P2-4, Pipeline-I2)."""
+    from spectrum.psm_info import sequence_controlled_shuffle
+    seq = "ABCDEFGHIK"
+    out1 = sequence_controlled_shuffle(seq, anchor_len=2, shuffle_ratio=0.5,
+                                        seed=42)
+    out2 = sequence_controlled_shuffle(seq, anchor_len=2, shuffle_ratio=0.5,
+                                        seed=42)
+    assert out1 == out2, (
+        f"P2-4: same seed must produce same output; got {out1!r} vs {out2!r}")
+
+
+def test_sequence_controlled_shuffle_preserves_anchor_with_seed():
+    """Last anchor_len chars stay at the end (no regression with seed kwarg)."""
+    from spectrum.psm_info import sequence_controlled_shuffle
+    seq = "ABCDEFGHIK"
+    out = sequence_controlled_shuffle(seq, anchor_len=2, shuffle_ratio=0.5,
+                                       seed=42)
+    assert out.endswith("IK"), (
+        f"P2-4: anchor 'IK' must be preserved; got {out!r}")
+    assert len(out) == len(seq)
+
+
+def test_sequence_controlled_shuffle_back_compat_no_seed():
+    """seed=None falls back to module random (back-compat for callers
+    that haven't been updated)."""
+    from spectrum.psm_info import sequence_controlled_shuffle
+    seq = "ABCDEFGHIK"
+    out = sequence_controlled_shuffle(seq, anchor_len=2, shuffle_ratio=0.5)
+    # No assertion on exact value (non-deterministic without seed); just
+    # verify it doesn't crash and preserves anchor.
+    assert out.endswith("IK")
+    assert len(out) == len(seq)

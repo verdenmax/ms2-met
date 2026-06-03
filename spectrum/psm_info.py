@@ -264,11 +264,19 @@ def get_theoretical_isotope_ratios(sequence: str) -> list:
     return [1.0, lam, lam * lam / 2.0]
 
 
-def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5):
+def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5,
+                                 seed=None):
     """
     anchor_len=1: 保留C端K/R（标准做法）
     anchor_len=2: 保留C端"XK"或"XR"（保留y1+y2离子）
+
+    seed: int or None. If provided, use a fresh random.Random(seed)
+        instance for deterministic shuffle. If None, use module-level
+        random (backward compat, non-deterministic).
+        (P2-4, Pipeline-I2, 2026-06-03 audit.)
     """
+    rng = random.Random(seed) if seed is not None else random
+
     # 安全检查：anchor_len 不能超过肽段长度
     anchor_len = min(anchor_len, len(peptide) - 1)  # 至少留1个字符用于shuffle
 
@@ -277,10 +285,10 @@ def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5):
 
     # 部分shuffle核心区域
     n_shuffle = max(1, int(len(core) * shuffle_ratio))
-    indices = random.sample(range(len(core)), n_shuffle)
+    indices = rng.sample(range(len(core)), n_shuffle)
     chars = list(core)
     shuffled_vals = [chars[i] for i in indices]
-    random.shuffle(shuffled_vals)
+    rng.shuffle(shuffled_vals)
     for idx, val in zip(indices, shuffled_vals):
         chars[idx] = val
 

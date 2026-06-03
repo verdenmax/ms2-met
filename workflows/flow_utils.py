@@ -251,9 +251,20 @@ def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, co
             psm1 = PSMInfo.from_dict(psm1_dict)
             psm2 = PSMInfo.from_dict(psm2_dict)
             if label == 0:
+                # P2-4, Pipeline-I2 (2026-06-03 audit): seed shuffle from
+                # config for reproducible negatives. Default 42 if missing.
+                try:
+                    seed_base = int(config.get("general", "random_seed",
+                                               fallback="42"))
+                except (configparser.NoSectionError, ValueError):
+                    seed_base = 42
+                # Per-PSM unique seed = base + hash(sequence) to avoid
+                # every PSM producing identical shuffles.
+                per_psm_seed = (seed_base + hash(psm1._sequence)) % (2**31)
                 new_sequence = sequence_controlled_shuffle(
                     psm1._sequence,
-                    anchor_len=2, shuffle_ratio=0.5
+                    anchor_len=2, shuffle_ratio=0.5,
+                    seed=per_psm_seed,
                 )
                 psm1._sequence = new_sequence
                 psm2._sequence = new_sequence
