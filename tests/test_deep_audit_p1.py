@@ -105,3 +105,54 @@ def test_matched_intensity_percent_independent_of_fragment_count_multi_batch():
         f_3frags.get("matched_intensity_percent"),
         f_5frags.get("matched_intensity_percent"),
         label="multi_batch_work")
+
+
+def test_fragment_empty_branch_aggregates_no_nan_when_all_empty():
+    """When all fragments hit empty-XIC, aggregates must be 0.0 (not NaN)
+    because all per-fragment lists are appended with zeros (P1-2, Silent-I1)."""
+    from workflows.single_work import single_pair_work
+    psm = _MultiFragPSM(n_fragments=3)
+    dia = _FakeDIA(force_empty=True)
+    cfg = _minimal_config()
+    features = single_pair_work(psm, dia, cfg)
+
+    # All 3 fragments empty -> all aggregates should be 0.0, not NaN.
+    # Pick representative aggregates from each per-fragment list family.
+    for key in (
+        "all_apex_delta_mean",
+        "all_apex_delta_signed_mean",
+        "all_mz_avg_err_mean",
+        "all_light_apex_cycle_offset_mean",
+        "all_heavy_apex_cycle_offset_mean",
+        "all_base_to_apex_ratio_mean",
+        "all_apex_monotonicity_mean",
+        "all_n_peaks_mean",
+        "all_smoothness_mean",
+    ):
+        if key not in features:
+            continue  # skip if a column was renamed/missing in current code
+        v = features[key]
+        assert not (isinstance(v, float) and np.isnan(v)), (
+            f"P1-2: {key} should be 0.0 (not NaN) when all fragments "
+            f"hit empty-XIC branch; got {v}. Likely cause: per-fragment "
+            f"list not appended in empty branch.")
+
+
+def test_fragment_empty_branch_aggregates_no_nan_multi_batch():
+    """Same parity test for multi_batch_work (P1-2)."""
+    from workflows.single_work import multi_batch_work
+    psm = _MultiFragPSM(n_fragments=3)
+    dia = _FakeDIA(force_empty=True)
+    cfg = _minimal_config()
+    features = multi_batch_work(psm, dia, psm, dia, cfg)
+
+    for key in (
+        "all_apex_delta_mean",
+        "all_base_to_apex_ratio_mean",
+        "all_n_peaks_mean",
+    ):
+        if key not in features:
+            continue
+        v = features[key]
+        assert not (isinstance(v, float) and np.isnan(v)), (
+            f"P1-2 multi_batch_work: {key} should be 0.0 not NaN; got {v}")

@@ -237,11 +237,29 @@ def multi_batch_work(
         )
 
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
+            # P1-2 (Silent-I1, 2026-06-03 audit): append default zeros to
+            # ALL per-fragment lists so aggregates have consistent
+            # denominator with valid_fragment_ions_num. Previously only
+            # 4 lists were appended; ~10 others were missing entries,
+            # making all_*_mean/p50/std/max compute over a smaller
+            # implicit N.
             pearsons_map[ions_type].append(0)
             pearsons_map["all"].append(0)
             fragment_intensities.append(0.0)
             fragment_cosines.append(0.0)
             fragment_snrs.append(0.0)
+            fragment_apex_deltas.append(0.0)
+            fragment_mz_errs.append(0.0)
+            fragment_light_cycle_offsets.append(0)
+            fragment_light_cycle_offsets_signed.append(0)
+            fragment_heavy_cycle_offsets.append(0)
+            fragment_heavy_cycle_offsets_signed.append(0)
+            fragment_base_to_apex_ratios.append(0.0)
+            fragment_apex_monotonicities.append(0.0)
+            fragment_n_peaks_list.append(0)
+            fragment_smoothnesses.append(0.0)
+            # fragment_hl_ratios intentionally NOT appended — by design
+            # only contains real (heavy>0 AND light>0) ratios.
             fragment_xic_empty_count += 1
             continue
 
@@ -612,11 +630,29 @@ def single_pair_work(
         )
 
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
+            # P1-2 (Silent-I1, 2026-06-03 audit): append default zeros to
+            # ALL per-fragment lists so aggregates have consistent
+            # denominator with valid_fragment_ions_num. Previously only
+            # 4 lists were appended; ~10 others were missing entries,
+            # making all_*_mean/p50/std/max compute over a smaller
+            # implicit N.
             pearsons_map[ions_type].append(0)
             pearsons_map["all"].append(0)
             fragment_intensities.append(0.0)
             fragment_cosines.append(0.0)
             fragment_snrs.append(0.0)
+            fragment_apex_deltas.append(0.0)
+            fragment_mz_errs.append(0.0)
+            fragment_light_cycle_offsets.append(0)
+            fragment_light_cycle_offsets_signed.append(0)
+            fragment_heavy_cycle_offsets.append(0)
+            fragment_heavy_cycle_offsets_signed.append(0)
+            fragment_base_to_apex_ratios.append(0.0)
+            fragment_apex_monotonicities.append(0.0)
+            fragment_n_peaks_list.append(0)
+            fragment_smoothnesses.append(0.0)
+            # fragment_hl_ratios intentionally NOT appended — by design
+            # only contains real (heavy>0 AND light>0) ratios.
             fragment_xic_empty_count += 1
             continue
 
