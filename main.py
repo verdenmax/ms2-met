@@ -53,8 +53,18 @@ def main():
     banner.show_start_banner()
 
     # 进入 workflow , 系统的处理
+    # work_directory 从 [general] 读取，缺省 ./workspace。允许每个 baseline
+    # config.ini 设置独立路径，避免并行 make 时多个 pipeline 写同一目录
+    # (review finding I-MK2, 2026-06-03 audit)。
+    # 显式抓 NoSectionError 因为 configparser 的 fallback 只覆盖缺失 option，
+    # 不覆盖缺失 section（rubber-duck B2，2026-06-03）。
+    try:
+        work_path = config.get("general", "work_directory",
+                                fallback="./workspace")
+    except configparser.NoSectionError:
+        work_path = "./workspace"
     workflow = PairFlow(workname="main", config=config,
-                        work_path="./workspace")
+                        work_path=work_path)
 
     # 运行
     workflow.run()
