@@ -174,10 +174,18 @@ def main():
         feature_cols,
         target_col,
     )
-    X_test, y_test = load_data(
-        cfg['data']['test_files'],
-        feature_cols,
-        target_col,
+
+    # Held-out set resolution (review finding I-ST2, 2026-06-03 audit).
+    # Helper extracted to holdout.py for testability (rubber-duck N4).
+    from holdout import resolve_holdout
+    X_train, X_test, y_train, y_test = resolve_holdout(
+        X_train, y_train,
+        train_files=cfg['data']['train_files'],
+        test_files=cfg['data'].get('test_files') or [],
+        test_size=cfg['data'].get('test_size', 0.0),
+        feature_cols=feature_cols,
+        target_col=target_col,
+        loader=load_data,
     )
 
     # 划分验证集

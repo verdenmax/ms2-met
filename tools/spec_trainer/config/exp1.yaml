@@ -1,8 +1,11 @@
 data:
   train_files:
     - runs/baseline_2da_clean/features.csv
-  test_files:
-    - runs/baseline_2da_clean/features.csv
+  # test_files 留空 -> 自动从 train_files 用 sklearn train_test_split
+  # 切出 held-out（stratify by label, random_state=42）。
+  # 见 I-ST2 (2026-06-03 audit)。
+  test_files: []
+  test_size: 0.2
   feature_cols: []
   target_col: label  # 假设你的标签列叫 'label'
 
