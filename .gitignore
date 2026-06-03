@@ -76,6 +76,11 @@ ms2*.log
 /config.ini
 /extract_*.ini
 !extract_common_config.ini.example
+# Neg-FDR variants are tracked (they're derived from the gitignored
+# _pfind_diann templates via dual-FDR additions; sharing them across
+# the team keeps neg-FDR experiments reproducible).
+!/extract_*_neg05.ini
+!/extract_*_neg10.ini
 
 # ---------------- AI / scratch / planning files ----------------
 PLAN.md
