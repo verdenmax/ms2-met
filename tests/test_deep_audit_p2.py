@@ -237,11 +237,15 @@ def test_multi_batch_work_writes_heavy_in_raw_column():
         "Sanity check: single_pair_work should already have heavy_in_raw")
     # Dtype parity: both functions must emit int 0/1 (not bool True/False)
     # so CSV serialization is consistent across flows (final review 2026-06-03).
-    assert isinstance(multi_features["heavy_in_raw"], int), (
+    # Use 'type() is int' instead of isinstance() because bool subclasses int,
+    # so isinstance(True, int) returns True — wouldn't catch a missing int() cast.
+    assert type(multi_features["heavy_in_raw"]) is int, (
         f"P2-5: multi_batch_work heavy_in_raw must be int (got "
-        f"{type(multi_features['heavy_in_raw']).__name__})")
-    assert isinstance(single_features["heavy_in_raw"], int), (
-        f"single_pair_work heavy_in_raw should be int (sanity check)")
+        f"{type(multi_features['heavy_in_raw']).__name__}). "
+        f"Likely missing int() cast — bool serializes as True/False in CSV.")
+    assert type(single_features["heavy_in_raw"]) is int, (
+        f"single_pair_work heavy_in_raw should be int (sanity check), "
+        f"got {type(single_features['heavy_in_raw']).__name__}")
 
 
 def test_spec_trainer_main_creates_logpath_parent():
