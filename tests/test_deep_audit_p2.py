@@ -119,28 +119,40 @@ def test_calc_smoothness_zero_for_linear_ramp():
 
 
 def test_calc_smoothness_per_unit_value_independent_of_length():
-    """Mean squared second-diff is comparable across window sizes (P2-3, Units-I4).
+    """Length normalization makes smoothness comparable across xic_cycle_window
+    sizes (P2-3, Units-I4).
 
-    Same triangle peak shape padded with zeros at different lengths.
-    Without normalization the buggy version sums more squared terms
-    for longer windows; the fix divides by N=len-2 so values are
-    comparable.
+    Pre-fix: sum of squared second-diffs scales with the number of terms,
+    but identical-shape inputs at different lengths produce IDENTICAL
+    sums (zero-padded second-diffs are zero) → ratio always 1.0.
+
+    Post-fix: divide by N=len-2. Same identical-shape inputs now have
+    ratio = N_long / N_short, exercising the normalization.
+
+    Concretely: triangle [1,2,1] pre-padded with 3 zeros each side gives
+    short=len-9 (n_diff=7); padding 6 more zeros each side gives long=len-21
+    (n_diff=19). Because the triangle is already surrounded by zeros, the
+    boundary second-diffs are unchanged, so sum(second_diff**2)=6 and
+    total=4 for both inputs.
+
+    Pre-fix _calc_smoothness = sum_sq / total^2, identical for both → ratio = 1.0.
+    Post-fix divides by n_diff: ratio = N_long / N_short = 19/7 ≈ 2.71.
+    We assert 2.0 < ratio < 3.0 — fails on the buggy code, passes on the fix.
     """
     from workflows.single_work import _calc_smoothness
-    # Identical triangle inserted at center of differently-sized arrays
-    triangle = [0.0, 1.0, 2.0, 1.0, 0.0]
-    short = np.array(triangle)  # len 5
-    long = np.array([0.0, 0.0] + triangle + [0.0, 0.0])  # len 9
+    triangle = [1.0, 2.0, 1.0]
+    short = np.array([0.0] * 3 + triangle + [0.0] * 3)   # len 9,  n_diff=7
+    long = np.array([0.0] * 9 + triangle + [0.0] * 9)    # len 21, n_diff=19
     s_short = _calc_smoothness(short)
     s_long = _calc_smoothness(long)
-    if s_short > 0 and s_long > 0:
-        ratio = max(s_short, s_long) / min(s_short, s_long)
-        # Without P2-3 fix, unnormalized values would diverge ~7/3.
-        # With fix, ratio should stay under 3 (different totals still affect
-        # the total^2 normalization, but length impact is gone).
-        assert ratio < 3.0, (
-            f"P2-3: smoothness should be less length-dependent after norm. "
-            f"short={s_short}, long={s_long}, ratio={ratio}")
+    assert s_short > 0 and s_long > 0, (
+        f"Need non-zero smoothness; got short={s_short}, long={s_long}")
+    ratio = s_short / s_long
+    # Pre-fix: ratio = 1.0 (no length normalization; sum_sq and total identical).
+    # Post-fix: ratio = N_long/N_short = 19/7 ≈ 2.71.
+    assert 2.0 < ratio < 3.0, (
+        f"P2-3: post-normalization s_short/s_long should be ~2.71; "
+        f"got {ratio}. Pre-fix bug would give ratio=1.0.")
 
 
 def test_calc_smoothness_short_input_returns_zero():
