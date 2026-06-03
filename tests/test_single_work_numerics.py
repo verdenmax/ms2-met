@@ -633,3 +633,60 @@ def test_default_xic_score_has_peak_likeness_zero_fields():
     assert d["apex_monotonicity"] == 0.0
     assert d["n_peaks"] == 0
     assert d["smoothness"] == 0.0
+
+
+def test_multi_batch_work_emits_R4_precursor_keys_in_empty_xic_branch():
+    """multi_batch_work must emit the 4 R4 precursor keys (I-F1 regression).
+
+    Trigger the empty-XIC branch using fake DIAData / PSMInfo stubs whose
+    xic_peaks_extreact returns an empty structured array. Behavioral test
+    (not source-string match), so a typo in the key name would be caught.
+    """
+    import configparser
+    import numpy as np
+    from workflows.single_work import multi_batch_work
+
+    XIC_DTYPE = [("rt", "f8"), ("ppm_error", "f8"),
+                 ("intensity", "f8"), ("cycle_idx", "i4")]
+
+    class FakeDIA:
+        def xic_peaks_extreact(self, *a, **kw):
+            return np.array([], dtype=XIC_DTYPE)
+
+        def xic_ms2_peaks_extract(self, *a, **kw):
+            return np.array([], dtype=XIC_DTYPE), 0.0
+
+        def get_window_info(self, precursor_mz):
+            return {"width": 0.0, "centering": 0.0,
+                    "lower": 0.0, "upper": 0.0, "center": 0.0}
+
+    class FakePSM:
+        _sequence = "AAAA"
+        _charge = 2
+        _modify = []
+        _rt = np.float32(10.0)
+        _precursor_mz = np.float32(1e9)
+
+        def get_heavy_info(self, heavy_type):
+            return self._precursor_mz, []
+
+    cfg = configparser.ConfigParser()
+    cfg.read_dict({
+        "general": {
+            "mass_tol_ppm": "20",
+            "xic_cycle_window": "5",
+        },
+    })
+
+    features = multi_batch_work(FakePSM(), FakeDIA(), FakePSM(), FakeDIA(), cfg)
+
+    R4_PRECURSOR_KEYS = {
+        "precursor_base_to_apex_ratio",
+        "precursor_apex_monotonicity",
+        "precursor_n_peaks",
+        "precursor_smoothness",
+    }
+    missing = R4_PRECURSOR_KEYS - set(features.keys())
+    assert not missing, (
+        f"multi_batch_work missing R4 precursor keys {missing} (I-F1). "
+        f"Schema drift with single_pair_work — concat will produce NaN columns.")
