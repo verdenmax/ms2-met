@@ -156,3 +156,85 @@ def test_fragment_empty_branch_aggregates_no_nan_multi_batch():
         v = features[key]
         assert not (isinstance(v, float) and np.isnan(v)), (
             f"P1-2 multi_batch_work: {key} should be 0.0 not NaN; got {v}")
+
+
+class _MixedFragDIA(_FakeDIA):
+    """DIA stub where the FIRST fragment returns empty XIC (test the
+    bug's mixed case), but subsequent fragments return real XIC.
+
+    Used to verify list-length parity: without the P1-2 fix, the empty
+    fragment doesn't append to per-fragment lists, so aggregate mean is
+    computed over (N-1) instead of N → biased.
+    """
+    def __init__(self):
+        super().__init__(force_empty=False)
+        self._call_count = 0
+
+    def xic_ms2_peaks_extract(self, rt, window, precursor_mz, ions_mass,
+                              mass_tol_ppm):
+        self._call_count += 1
+        # First TWO calls = empty (1 fragment = 2 calls: light + heavy)
+        # Subsequent calls = real XIC.
+        if self._call_count <= 2:
+            return _empty_xic(), 0.0
+        return super().xic_ms2_peaks_extract(rt, window, precursor_mz,
+                                              ions_mass, mass_tol_ppm)
+
+
+def test_mixed_empty_and_valid_fragments_list_parity():
+    """When some fragments hit empty-XIC and others produce real values,
+    per-fragment list lengths must match valid_fragment_ions_num (P1-2).
+
+    Strategy: trigger empty-XIC for the FIRST fragment of 3, valid for
+    the other 2. valid_fragment_ions_num counts all 3 (the fragments
+    that reached the XIC extraction stage). With the P1-2 fix, the
+    empty fragment appends 0 to all per-fragment lists, so aggregates
+    are computed over 3 fragments. Without the fix, only 2 would be
+    aggregated for the missing lists.
+
+    We verify by computing the expected all_apex_delta_mean: 0 (empty
+    fragment) + 0 (real, both peaks at rt=10.0 -> apex_delta=0) + 0
+    = 0 / 3 = 0. That's the same as without the fix (0+0/2 = 0).
+    So we use n_peaks instead: empty fragment's n_peaks=0; valid
+    fragment's n_peaks > 0 because the XIC has a real peak.
+    Without fix: n_peaks_mean = (n_real + n_real) / 2 = real value.
+    With fix: n_peaks_mean = (0 + n_real + n_real) / 3 = real * 2/3.
+    Ratio: with fix is smaller than without fix.
+
+    Instead of asserting exact values (brittle), we monkey-patch
+    extract_ion_numeric_features to capture the list lengths.
+    """
+    from workflows.single_work import single_pair_work
+    import workflows.single_work as sw_mod
+    captured = {}
+
+    orig_extract = sw_mod.extract_ion_numeric_features
+
+    def spy_extract(values, prefix):
+        if prefix == "all_apex_delta":
+            captured["apex_delta_len"] = len(values)
+        if prefix == "all_n_peaks":
+            captured["n_peaks_len"] = len(values)
+        return orig_extract(values, prefix)
+
+    psm = _MultiFragPSM(n_fragments=3)
+    dia = _MixedFragDIA()
+
+    sw_mod.extract_ion_numeric_features = spy_extract
+    try:
+        features = single_pair_work(psm, dia, _minimal_config())
+    finally:
+        sw_mod.extract_ion_numeric_features = orig_extract
+
+    n_valid = features["valid_fragment_ions_num"]
+    assert n_valid == 3, (
+        f"expected valid_fragment_ions_num=3 (1 empty + 2 valid both "
+        f"reach XIC stage); got {n_valid}")
+    # P1-2 contract: per-fragment list lengths == valid_fragment_ions_num
+    assert captured["apex_delta_len"] == n_valid, (
+        f"P1-2: fragment_apex_deltas length ({captured['apex_delta_len']}) "
+        f"must equal valid_fragment_ions_num ({n_valid}). Empty-XIC "
+        f"fragment was not appended.")
+    assert captured["n_peaks_len"] == n_valid, (
+        f"P1-2: fragment_n_peaks_list length ({captured['n_peaks_len']}) "
+        f"must equal valid_fragment_ions_num ({n_valid}).")
