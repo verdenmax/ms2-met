@@ -221,3 +221,17 @@ def test_per_psm_seed_is_stable_across_invocations(monkeypatch):
     s2 = sequence_controlled_shuffle(seq, anchor_len=2,
                                       shuffle_ratio=0.5, seed=per_psm_seed)
     assert s1 == s2
+
+
+def test_multi_batch_work_writes_heavy_in_raw_column():
+    """multi_batch_work must emit heavy_in_raw column for schema parity
+    with single_pair_work (P2-5, Pipeline-I4 + Silent-I9)."""
+    from workflows.single_work import multi_batch_work, single_pair_work
+    psm = _FakePSM()
+    dia = _FakeDIA()
+    multi_features = multi_batch_work(psm, dia, psm, dia, _minimal_config())
+    single_features = single_pair_work(psm, dia, _minimal_config())
+    assert "heavy_in_raw" in multi_features, (
+        "P2-5: multi_batch_work missing heavy_in_raw column")
+    assert "heavy_in_raw" in single_features, (
+        "Sanity check: single_pair_work should already have heavy_in_raw")

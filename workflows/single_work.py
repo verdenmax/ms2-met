@@ -70,6 +70,10 @@ def multi_batch_work(
     # 计算出 person_corr
 
     features = {}
+    # P2-5 (Pipeline-I4 + Silent-I9, 2026-06-03 audit): emit heavy_in_raw
+    # for schema parity with single_pair_work. In cross-run mode "heavy"
+    # is the second DIA file's precursor.
+    features["heavy_in_raw"] = dia_data2.check_in_raw(psm2._precursor_mz)
     if _is_empty_xic_pair(light_xic, heavy_xic):
         features["precursor_pearson"] = 0
         features["precursor_apex_delta"] = 0.0

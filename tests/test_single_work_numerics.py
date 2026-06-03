@@ -660,6 +660,9 @@ def test_multi_batch_work_emits_R4_precursor_keys_in_empty_xic_branch():
             return {"width": 0.0, "centering": 0.0,
                     "lower": 0.0, "upper": 0.0, "center": 0.0}
 
+        def check_in_raw(self, precursor_mz):
+            return False
+
     class FakePSM:
         _sequence = "AAAA"
         _charge = 2
