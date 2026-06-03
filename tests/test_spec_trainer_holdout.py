@@ -144,3 +144,21 @@ def test_exp_yamls_do_not_have_in_sample_test_files():
                 f"{name}: when test_files is empty, must set data.test_size (I-ST2)")
             assert 0.0 < cfg["data"]["test_size"] < 1.0, (
                 f"{name}: test_size must be in (0, 1)")
+
+
+def test_both_exp_yamls_set_is_unbalance_for_imbalanced_data():
+    """Both exp1 and exp2 must set is_unbalance: True for ~1% positive
+    data (P1-4, Pipeline-I3)."""
+    import os
+    import yaml
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in ("exp1.yaml", "exp2.yaml"):
+        p = os.path.join(project_root, "tools", "spec_trainer", "config", name)
+        with open(p) as f:
+            cfg = yaml.safe_load(f)
+        params = cfg.get("model", {}).get("params", {})
+        is_unbalance = params.get("is_unbalance", False)
+        assert is_unbalance is True, (
+            f"{name}: lightgbm is_unbalance must be True for imbalanced "
+            f"SILAC data (~1% positives). Got {is_unbalance}. "
+            f"See P1-4, Pipeline-I3 (2026-06-03 audit).")
