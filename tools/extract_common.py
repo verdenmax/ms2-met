@@ -42,30 +42,41 @@ VALID_ENTRAPMENT_LEVELS = frozenset({"L0", "L1", "L2", "L3", "L4"})
 _LEVEL_SEVERITY = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4}
 
 
+def _load_engine(engine_name: str, path: str, qvalue_threshold: float) -> list:
+    """Internal dispatch: load PSMs from one engine with a single FDR threshold.
+
+    Returns the list of PSMInfo from the chosen engine's LightResult loader.
+    Raises ValueError on unknown engine name.
+    """
+    lr = LightResult()
+    if engine_name == "pfind":
+        lr._load_from_pfind_input(path, qvalue_threshold=qvalue_threshold)
+    elif engine_name == "diann":
+        lr._load_from_dia_nn_input(path, qvalue_threshold=qvalue_threshold)
+    elif engine_name == "alphadia":
+        lr._load_from_alphadia_input(path, qvalue_threshold=qvalue_threshold)
+    else:
+        raise ValueError(
+            f"不支持的引擎: {engine_name}（支持 {SUPPORTED_ENGINES}）")
+    return lr.psm_info
+
+
 def load_engine_psms(engine_name: str, config: configparser.ConfigParser) -> list:
-    """根据引擎名加载对应 PSM 列表。"""
+    """根据引擎名加载对应 PSM 列表（单 FDR 阈值，向后兼容入口）。
+
+    Note: New code should use load_engine_psms_dual (Task 2) which
+    supports separate tight/loose FDR thresholds for positive/negative
+    candidate pools. This single-threshold variant is retained as a
+    thin wrapper for any external callers.
+    """
     section = f"engine.{engine_name}"
     if section not in config:
         raise ValueError(f"配置中缺少 [{section}] 段")
     path = config[section].get("path")
     if not path:
         raise ValueError(f"[{section}] 缺少 path 配置")
-
-    lr = LightResult()
-    if engine_name == "pfind":
-        qvalue = config[section].getfloat("qvalue_threshold", fallback=0.01)
-        lr._load_from_pfind_input(path, qvalue_threshold=qvalue)
-    elif engine_name == "diann":
-        qvalue = config[section].getfloat("qvalue_threshold", fallback=0.01)
-        lr._load_from_dia_nn_input(path, qvalue_threshold=qvalue)
-    elif engine_name == "alphadia":
-        qvalue = config[section].getfloat("qvalue_threshold", fallback=0.01)
-        lr._load_from_alphadia_input(path, qvalue_threshold=qvalue)
-    else:
-        raise ValueError(
-            f"不支持的引擎: {engine_name}（支持 {SUPPORTED_ENGINES}）")
-
-    return lr.psm_info
+    qvalue = config[section].getfloat("qvalue_threshold", fallback=0.01)
+    return _load_engine(engine_name, path, qvalue)
 
 
 def extract_n_engines_from_psms(
