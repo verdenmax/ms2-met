@@ -327,3 +327,26 @@ def test_dia_data_check_in_raw_increments_counter_no_warn_per_call(caplog):
         "P1-6: DIAData must expose _n_out_of_window_xic counter")
     assert dia._n_out_of_window_xic == 10, (
         f"P1-6: counter expected 10, got {dia._n_out_of_window_xic}")
+
+
+def test_dia_data_has_n_centroid_empty_counter():
+    """DIAData must expose _n_centroid_empty counter (P1-7, Silent-I8)."""
+    from spectrum.dia_data import DIAData
+    dia = DIAData()
+    assert hasattr(dia, "_n_centroid_empty"), (
+        "P1-7: DIAData must expose _n_centroid_empty counter")
+    assert dia._n_centroid_empty == 0
+
+
+def test_centroid_spectrum_returns_empty_for_short_input():
+    """centroid_spectrum returns empty arrays for len<3 input (pure function,
+    no side-effect — caller is responsible for counting; P1-7 verifies
+    the function contract is unchanged)."""
+    from spectrum.spectrum_utils import centroid_spectrum
+    mz, intensity = centroid_spectrum(
+        np.array([100.0, 200.0]),
+        np.array([10.0, 20.0]),
+        rel_threshold=1e-3,
+    )
+    assert len(mz) == 0
+    assert len(intensity) == 0

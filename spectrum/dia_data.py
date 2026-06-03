@@ -176,6 +176,11 @@ class DIAData:
         # end in workflows/flow_utils.py.
         self._n_out_of_window_xic: int = 0
 
+        # P1-7 (Silent-I8, 2026-06-03 audit): counter incremented in
+        # _load_from_mzml when centroid_spectrum returns empty for a
+        # short/all-zero spectrum; summary logged at end of load.
+        self._n_centroid_empty: int = 0
+
     # 在 DIAData 类中添加
     def save_to_file(self, filepath: str):
         """将所有 NumPy 数组和标量保存到 .npz 文件"""
@@ -439,6 +444,10 @@ class DIAData:
                 mz_array, intensity_array,
                 rel_threshold=self._centroid_rel_threshold,
             )
+            # P1-7 (Silent-I8, 2026-06-03 audit): count empty-return so
+            # we can log a summary at end of load.
+            if len(mz_array) == 0:
+                self._n_centroid_empty += 1
 
         # 记录谱图信息
         # _spectrum_info = {
@@ -592,6 +601,13 @@ class DIAData:
                 self._precursor_lower_mz,
                 tolerance=0.1
             )
+
+        # P1-7 (Silent-I8, 2026-06-03 audit): centroid-to-empty summary.
+        if self._n_centroid_empty > 0:
+            logging.info(
+                "[centroid] %d spectra returned empty (likely <3 peaks "
+                "or all-zero intensity)",
+                self._n_centroid_empty)
 
     def check_in_raw(self, precursor_mz) -> bool:
         """ 检查这个 mz 是否在当前 raw 中"""
