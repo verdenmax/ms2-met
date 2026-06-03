@@ -44,11 +44,13 @@ def test_neg_fdr_baseline_config_has_correct_paths(dataset, fdr):
         f"hela_{dataset}_{fdr}.json")
 
     work = cfg.get("general", "work_directory")
-    assert f"baseline_{dataset}_{fdr}" in work, (
-        f"{cfg_path}: work_directory={work!r} should include "
-        f"baseline_{dataset}_{fdr}")
-    assert work.endswith("workspace"), (
-        f"{cfg_path}: work_directory should end with /workspace; got {work}")
+    # Shared workspace at project root (./workspace), side-by-side with
+    # runs/. All 9 baselines share the same .dia.npz cache (safe because
+    # all baselines use identical centroid params; P0-3 version+params
+    # validation handles invalidation if anyone changes centroid config).
+    assert work == "./workspace", (
+        f"{cfg_path}: work_directory={work!r} should be './workspace' "
+        f"(shared across all 9 baselines for cache reuse)")
 
     result = cfg.get("general", "result_file")
     assert f"baseline_{dataset}_{fdr}" in result, (
