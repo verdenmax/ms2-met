@@ -174,6 +174,13 @@ def process_batch_single(shared_path: str, batch_psm_dicts: list, config):
                           f"charge={psm_dict.get('charge','?')}: "
                           f"{traceback.format_exc()}")
             n_errors += 1
+    # P1-6 (Silent-I3, 2026-06-03 audit): per-worker summary of
+    # out-of-window XIC requests (now counted, not per-call warned).
+    n_oow = getattr(dia_data, "_n_out_of_window_xic", 0)
+    if n_oow > 0:
+        logging.info(
+            "[batch summary] %d out-of-window XIC requests in %s",
+            n_oow, os.path.basename(shared_path))
     return results, n_errors
 
 
@@ -219,6 +226,13 @@ def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
                           f"charge={psm1_dict.get('charge','?')}: "
                           f"{traceback.format_exc()}")
             n_errors += 1
+    # P1-6 (Silent-I3, 2026-06-03 audit): per-worker summary, both DIA files.
+    for tag, dia, path in (("dia1", dia1, shared1), ("dia2", dia2, shared2)):
+        n_oow = getattr(dia, "_n_out_of_window_xic", 0)
+        if n_oow > 0:
+            logging.info(
+                "[batch summary] %d out-of-window XIC requests in %s (%s)",
+                n_oow, os.path.basename(path), tag)
     return results, n_errors
 
 
@@ -269,4 +283,11 @@ def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, co
                           f"charge={psm1_dict.get('charge','?')}: "
                           f"{traceback.format_exc()}")
             n_errors += 1
+    # P1-6 (Silent-I3, 2026-06-03 audit): per-worker summary, both DIA files.
+    for tag, dia, path in (("dia1", dia1, shared1), ("dia2", dia2, shared2)):
+        n_oow = getattr(dia, "_n_out_of_window_xic", 0)
+        if n_oow > 0:
+            logging.info(
+                "[batch summary] %d out-of-window XIC requests in %s (%s)",
+                n_oow, os.path.basename(path), tag)
     return results, n_errors

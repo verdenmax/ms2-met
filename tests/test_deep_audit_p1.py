@@ -298,3 +298,32 @@ def test_make_result_row_single_accepts_negative():
     row = _make_result_row_single(_PSMNeg(), {"f1": 1.0})
     assert row["label"] == 0
     assert row["label_type"] == "negative"
+
+
+def test_dia_data_check_in_raw_increments_counter_no_warn_per_call(caplog):
+    """check_in_raw must NOT logging.warn each call; should increment
+    counter (P1-6, Silent-I3)."""
+    import logging as py_logging
+    from spectrum.dia_data import DIAData
+    dia = DIAData()
+    dia._max_mz_value = 1000.0
+    dia._min_mz_value = 100.0
+    dia._cycle_left_precursor = np.array([400.0, 500.0])
+
+    caplog.clear()
+    with caplog.at_level(py_logging.DEBUG, logger="root"):
+        for _ in range(10):
+            result = dia.check_in_raw(1500.0)  # out of range
+            assert result is False
+
+    # Should NOT have any WARNING-level records for these
+    warn_records = [r for r in caplog.records if r.levelno >= py_logging.WARNING]
+    assert len(warn_records) == 0, (
+        f"P1-6: check_in_raw should not emit WARNING per call; "
+        f"got {len(warn_records)}: {[r.message for r in warn_records]}")
+
+    # Counter should be 10
+    assert hasattr(dia, "_n_out_of_window_xic"), (
+        "P1-6: DIAData must expose _n_out_of_window_xic counter")
+    assert dia._n_out_of_window_xic == 10, (
+        f"P1-6: counter expected 10, got {dia._n_out_of_window_xic}")

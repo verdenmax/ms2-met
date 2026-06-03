@@ -171,6 +171,11 @@ class DIAData:
         self._centroid_enabled: bool = DEFAULT_CENTROID_ENABLED
         self._centroid_rel_threshold: float = DEFAULT_CENTROID_REL_THRESHOLD
 
+        # P1-6 (Silent-I3, 2026-06-03 audit): counter incremented on each
+        # out-of-window XIC request; per-worker summary logged at batch
+        # end in workflows/flow_utils.py.
+        self._n_out_of_window_xic: int = 0
+
     # 在 DIAData 类中添加
     def save_to_file(self, filepath: str):
         """将所有 NumPy 数组和标量保存到 .npz 文件"""
@@ -594,9 +599,13 @@ class DIAData:
                 and precursor_mz >= self._min_mz_value - 0.1):
             return True
 
-        logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
-        logging.warn(f"{self._max_mz_value} {self._min_mz_value} precursor_mz: {precursor_mz}  left: {
-            self._cycle_left_precursor}")
+        # P1-6 (Silent-I3, 2026-06-03 audit): was logging.warn per call
+        # (deprecated alias); now debug + counter. Per-worker summary
+        # logged at batch end in workflows/flow_utils.py.
+        self._n_out_of_window_xic += 1
+        logging.debug(
+            "out-of-window XIC: max=%s min=%s mz=%s",
+            self._max_mz_value, self._min_mz_value, precursor_mz)
         return False
 
     def check_in_same_ms2(self, p1, p2) -> bool:
@@ -770,19 +779,20 @@ class DIAData:
                     center_idx = i  # 在 _ms2_indices 中的位置
 
         if center_idx is None:
-            # 没有找到任何窗口匹配的 MS2 谱图
             dtype = [("rt", "f8"), ("ppm_error", "f8"),
                      ("intensity", "f8"), ("cycle_idx", "i4")]
-            logging.warn("没有找到任何匹配ms2 窗口，可能是重标超出当前 raw 的范围了")
-            logging.warn(f"precursor_mz: {precursor_mz}  left: {
-                         self._cycle_left_precursor}")
-
+            # P1-6 (Silent-I3, 2026-06-03 audit): debug + counter instead
+            # of per-call warn.
+            self._n_out_of_window_xic += 1
+            logging.debug(
+                "no MS2 window match: precursor_mz=%s", precursor_mz)
             for i in candidates:
                 gidx = self.ms2_indexs[i]
                 lower = self._precursor_lower_mz[gidx]
                 upper = self._precursor_upper_mz[gidx]
-                logging.warn(f"precursor_mz: {precursor_mz} candidate idx={i}, global={gidx}, rt={
-                             self.ms2_indexs_rt[i]:.3f}, window=[{lower:.3f}, {upper:.3f})")
+                logging.debug(
+                    "candidate idx=%s global=%s rt=%.3f window=[%.3f, %.3f)",
+                    i, gidx, self.ms2_indexs_rt[i], lower, upper)
             return np.array([], dtype=dtype), 0.0
 
         # Step 2: 向左收集 xic_cycle_window 个有效谱图
