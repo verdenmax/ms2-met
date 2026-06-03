@@ -164,7 +164,7 @@ def main():
     target_col = cfg['data']['target_col']
     feature_cols = _resolve_feature_cols(
         explicit=cfg['data'].get('feature_cols'),
-        sample_csv_path=cfg['data']['train_files'][0],
+        sample_csv_paths=cfg['data']['train_files'],
         target_col=target_col,
     )
     logging.info(f"using {len(feature_cols)} feature columns")
