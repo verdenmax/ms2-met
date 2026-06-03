@@ -31,13 +31,15 @@ def data_to_npz(
     # centroid params from raw_file_manager's config; validate any existing
     # cache against them. Mismatch -> delete cache -> rebuild with current
     # params. Without this, changing centroid params has no effect.
-    expected_enabled, expected_thresh = _get_expected_centroid_params(
-        raw_file_manager)
+    # P0-3 (2026-06-03 audit + review I1/I4):
+    # 1) single source of truth for current params via DataManager helper
+    # 2) lightweight validate_cache_params (mmap'd scalar reads, no array load)
+    expected_enabled, expected_thresh = raw_file_manager.get_centroid_params()
 
     if os.path.exists(shared_path):
         try:
-            DIAData.load_from_file(
-                shared_path, use_mmap=False,
+            DIAData.validate_cache_params(
+                shared_path,
                 expected_centroid_enabled=expected_enabled,
                 expected_centroid_rel_threshold=expected_thresh,
             )
@@ -55,24 +57,7 @@ def data_to_npz(
     return name, shared_path
 
 
-def _get_expected_centroid_params(raw_file_manager):
-    """Read centroid params from raw_file_manager's config, mirroring
-    manager/data_manager.py:get_dia_data_object's injection logic.
-    Returns (enabled, rel_threshold) or (None, None) if config absent.
-    """
-    cfg = getattr(raw_file_manager, "_config", None)
-    if cfg is None:
-        return None, None
-    from constant.keys import ConfigKeys
-    if not cfg.has_section(ConfigKeys.GENERAL):
-        return None, None
-    # Defaults match DIAData.__init__: True / 1e-3
-    enabled = cfg.getboolean(ConfigKeys.GENERAL, ConfigKeys.CENTROID_ENABLED,
-                              fallback=True)
-    threshold = cfg.getfloat(ConfigKeys.GENERAL,
-                              ConfigKeys.CENTROID_REL_THRESHOLD,
-                              fallback=1e-3)
-    return enabled, threshold
+# (deleted — moved to DataManager.get_centroid_params, P0-3 review I4)
 
 
 def process_psm_pair_shared(

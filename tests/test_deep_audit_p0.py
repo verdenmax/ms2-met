@@ -365,3 +365,55 @@ def test_cache_load_rejects_old_v2_format(tmp_path):
 
     with pytest.raises(ValueError, match="_format_version"):
         DIAData.load_from_file(cache_path, use_mmap=False)
+
+
+def test_validate_cache_params_lightweight_no_array_load(tmp_path):
+    """validate_cache_params reads scalars only — no array materialization
+    (P0-3 review I1)."""
+    from spectrum.dia_data import DIAData
+    src = DIAData()
+    src._centroid_enabled = True
+    src._centroid_rel_threshold = 1e-3
+    _populate_minimal_dia(src)
+    cache = str(tmp_path / "validate.npz")
+    src.save_to_file(cache)
+
+    # Matching params: returns silently.
+    DIAData.validate_cache_params(cache,
+                                   expected_centroid_enabled=True,
+                                   expected_centroid_rel_threshold=1e-3)
+
+    # Mismatched: raises.
+    with pytest.raises(ValueError, match="centroid"):
+        DIAData.validate_cache_params(cache,
+                                       expected_centroid_enabled=False,
+                                       expected_centroid_rel_threshold=1e-3)
+
+
+def test_data_manager_get_centroid_params_uses_config(tmp_path):
+    """DataManager.get_centroid_params reads from config (P0-3 review I4)."""
+    import configparser
+    from manager.data_manager import DataManager
+    cfg = configparser.ConfigParser()
+    cfg.read_dict({
+        "general": {
+            "centroid_enabled": "false",
+            "centroid_rel_threshold": "0.005",
+        },
+    })
+    mgr = DataManager(config=cfg, path=None, load_from_file=False)
+    enabled, thresh = mgr.get_centroid_params()
+    assert enabled is False
+    assert thresh == 0.005
+
+
+def test_data_manager_get_centroid_params_defaults_when_no_config():
+    """Defaults match DIAData module-level constants (P0-3 review I3)."""
+    from manager.data_manager import DataManager
+    from spectrum.dia_data import (
+        DEFAULT_CENTROID_ENABLED, DEFAULT_CENTROID_REL_THRESHOLD,
+    )
+    mgr = DataManager(config=None, path=None, load_from_file=False)
+    enabled, thresh = mgr.get_centroid_params()
+    assert enabled is DEFAULT_CENTROID_ENABLED
+    assert thresh == DEFAULT_CENTROID_REL_THRESHOLD

@@ -10,6 +10,12 @@ from spectrum.spectrum_utils import match_peak_ppm, centroid_spectrum
 
 DEFAULT_VALUE_NO_MOBILITY = 1e-6
 
+# Centroid params default (P0-3, Silent-C3, 2026-06-03 audit).
+# Single source of truth shared by DIAData.__init__, DataManager
+# config injection, and flow_utils cache validation.
+DEFAULT_CENTROID_ENABLED: bool = True
+DEFAULT_CENTROID_REL_THRESHOLD: float = 1e-3
+
 
 def deduplicate_with_tolerance(arr, tolerance=0.1):
     """
@@ -162,8 +168,8 @@ class DIAData:
         self.frame_max_index: int | None = None
 
         """ 加载时 centroiding 配置 (由 DataManager 从 config 注入；这里给默认值) """
-        self._centroid_enabled: bool = True
-        self._centroid_rel_threshold: float = 1e-3
+        self._centroid_enabled: bool = DEFAULT_CENTROID_ENABLED
+        self._centroid_rel_threshold: float = DEFAULT_CENTROID_REL_THRESHOLD
 
     # 在 DIAData 类中添加
     def save_to_file(self, filepath: str):
@@ -237,13 +243,35 @@ class DIAData:
                                           expected_centroid_rel_threshold)
                 _load_attrs(obj, data)
         else:
-            data = np.load(filepath)
-            cls._check_format_version(filepath, data,
-                                      expected_centroid_enabled,
-                                      expected_centroid_rel_threshold)
-            _load_attrs(obj, data)
+            with np.load(filepath) as data:
+                cls._check_format_version(filepath, data,
+                                          expected_centroid_enabled,
+                                          expected_centroid_rel_threshold)
+                _load_attrs(obj, data)
 
         return obj
+
+    @staticmethod
+    def validate_cache_params(filepath: str,
+                              expected_centroid_enabled: bool,
+                              expected_centroid_rel_threshold: float) -> None:
+        """Lightweight cache validation: open npz with mmap, read ONLY the
+        3 scalars needed for version + centroid checks, then close.
+
+        Avoids materializing multi-GB arrays just to validate metadata
+        (P0-3 review I1). Uses `with np.load(...)` to guarantee handle
+        closure before any subsequent os.remove (P0-3 review I2 —
+        Windows file-handle race).
+
+        Raises:
+            ValueError: if _format_version != 3 OR centroid params mismatch.
+        """
+        with np.load(filepath, mmap_mode='r') as data:
+            DIAData._check_format_version(
+                filepath, data,
+                expected_centroid_enabled=expected_centroid_enabled,
+                expected_centroid_rel_threshold=expected_centroid_rel_threshold,
+            )
 
     @staticmethod
     def _check_format_version(filepath: str, data,
