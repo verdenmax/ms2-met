@@ -193,6 +193,11 @@ def multi_batch_work(
     fragment_smoothnesses = []
     fragment_xic_empty_count = 0
 
+    # P1-1 hoist (Units-I1, 2026-06-03 audit): captured during fragment
+    # loop, used once after loop for matched_intensity_percent denominator.
+    last_light_all = 0.0
+    last_heavy_all = 0.0
+
     # --- Q1a setup: classify co/split-isolation for accumulator ---
     w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
     heavy_precursor_mz, fragment_ions = psm1.get_heavy_info(HeavyType.SILAC)
@@ -244,8 +249,12 @@ def multi_batch_work(
                 np.max(heavy_ions_xic["intensity"]) > 0):
             intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
             intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
-            intensitys_map["all"] += light_all_intensity + \
-                heavy_all_intensity
+            # Capture per-PSM all-intensity for hoisted denominator
+            # (P1-1, Units-I1, 2026-06-03 audit). light_all_intensity /
+            # heavy_all_intensity are per-PSM (per RT-window) constants;
+            # accumulating inside the loop multiplied by N_fragments.
+            last_light_all = light_all_intensity
+            last_heavy_all = heavy_all_intensity
 
         ion_score = calc_xic_score(
             light_ions_xic, heavy_ions_xic,
@@ -324,6 +333,12 @@ def multi_batch_work(
         ) / total_weight
     else:
         features["frag_corr_weighted"] = 0.0
+
+    # P1-1, Units-I1 (2026-06-03 audit): hoisted denominator.
+    # last_light_all / last_heavy_all are per-PSM constants captured
+    # inside the fragment loop; accumulating per-fragment previously
+    # multiplied the denominator by N_fragments.
+    intensitys_map["all"] = last_light_all + last_heavy_all
 
     features["matched_intensity_percent"] = (
         (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"] if intensitys_map["all"] > 0 else 0.0)
@@ -556,6 +571,11 @@ def single_pair_work(
     fragment_heavy_absent_count = 0    # heavy precursor not in raw window
     fragment_same_mass_count = 0       # same MS2 window AND no SILAC shift
 
+    # P1-1 hoist (Units-I1, 2026-06-03 audit): captured during fragment
+    # loop, used once after loop for matched_intensity_percent denominator.
+    last_light_all = 0.0
+    last_heavy_all = 0.0
+
     ion_data = []  # 存储每个离子的完整数据
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
@@ -604,8 +624,12 @@ def single_pair_work(
                 np.max(heavy_ions_xic["intensity"]) > 0):
             intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
             intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
-            intensitys_map["all"] += light_all_intensity + \
-                heavy_all_intensity
+            # Capture per-PSM all-intensity for hoisted denominator
+            # (P1-1, Units-I1, 2026-06-03 audit). light_all_intensity /
+            # heavy_all_intensity are per-PSM (per RT-window) constants;
+            # accumulating inside the loop multiplied by N_fragments.
+            last_light_all = light_all_intensity
+            last_heavy_all = heavy_all_intensity
 
         ion_score = calc_xic_score(
             light_ions_xic, heavy_ions_xic, center_rt=float(psm._rt))
@@ -677,6 +701,12 @@ def single_pair_work(
         ) / total_weight
     else:
         features["frag_corr_weighted"] = 0.0
+
+    # P1-1, Units-I1 (2026-06-03 audit): hoisted denominator.
+    # last_light_all / last_heavy_all are per-PSM constants captured
+    # inside the fragment loop; accumulating per-fragment previously
+    # multiplied the denominator by N_fragments.
+    intensitys_map["all"] = last_light_all + last_heavy_all
 
     features["matched_intensity_percent"] = (
         (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"] if intensitys_map["all"] > 0 else 0.0)
