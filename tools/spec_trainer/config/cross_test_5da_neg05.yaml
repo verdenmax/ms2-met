@@ -1,0 +1,32 @@
+data:
+  train_files:
+    - runs/baseline_2da_neg05/features.csv
+    - runs/baseline_normal_neg05/features.csv
+  test_files:
+    - runs/baseline_5da_neg05/features.csv
+  test_size: 0.0
+  feature_cols: []
+  target_col: label
+
+model:
+  type: lightgbm
+  params:
+    boosting_type: gbdt
+    objective: binary
+    metric: [auc, binary_logloss]
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    is_unbalance: True
+    verbose: -1
+
+training:
+  num_boost_round: 1000
+  early_stopping_rounds: 50
+  valid_size: 0.2
+
+output:
+  model_path: runs/spec_trainer/models/cross_test_5da_neg05.txt
+  result_path: runs/spec_trainer/results/cross_test_5da_neg05.json
+  figures_dir: runs/spec_trainer/figures
