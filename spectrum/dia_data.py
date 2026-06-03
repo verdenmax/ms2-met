@@ -324,13 +324,30 @@ class DIAData:
                 )
 
     def _get_retention_time(self, spectrum) -> float:
-        """从谱图中提取保留时间（转换为秒）"""
+        """Return retention time in MINUTES (canonical pipeline unit).
 
+        pyteomics attaches a `unit_info` attribute to the scalar (e.g.,
+        'minute' from MS CV UO:0000031, 'second' from UO:0000010).
+        If unit is 'second', convert to minutes. Plain floats without
+        unit_info are assumed to be minutes (back-compat).
+
+        Returns 0.0 if no scan-start-time field is present.
+
+        (P2-2, Units-I3, 2026-06-03 deep audit.)
+        """
         if 'scanList' in spectrum:
             scan = spectrum['scanList']['scan'][0]
             if 'scan start time' in scan:
                 rt = scan['scan start time']
-                return float(rt)
+                unit = getattr(rt, 'unit_info', None)
+                value = float(rt)
+                if unit == 'second':
+                    return value / 60.0
+                if unit is None or unit == 'minute':
+                    return value
+                raise ValueError(
+                    f"Unsupported RT unit {unit!r}; expected 'minute' or "
+                    f"'second'. (P2-2, Units-I3)")
         return 0.0
 
     def _extract_scan_number(self, scan_id_str):
