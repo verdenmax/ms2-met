@@ -227,6 +227,105 @@ def extract_n_engines_from_psms(
     return result
 
 
+def extract_n_engines_from_psms_dual(
+    engine_psms_dual: dict,
+    engine_order: list,
+    positive_marker: Optional[str] = None,
+) -> list:
+    """Dual-pool variant of extract_n_engines_from_psms.
+
+    Args:
+        engine_psms_dual: dict[engine_name -> {"tight": [PSMInfo], "loose": [PSMInfo]}]
+        engine_order: list[engine_name]
+        positive_marker: species marker string; None ⇒ intersection only,
+                         no label assignment.
+
+    Algorithm:
+      - Positives: intersection of TIGHT key sets across engines, then
+        species marker match against authoritative PSM (looked up in
+        LOOSE pool to ensure we always find a PSM — loose ⊇ tight).
+      - Negatives: union of LOOSE key sets across engines, then species
+        marker mismatch. Same authoritative-PSM rule as positives.
+
+    Returns:
+        list[PSMInfo] with _label_type set to "positive"/"negative" (or
+        None when positive_marker is None).
+
+    See docs/specs/2026-06-03-dual-fdr-threshold-design.md.
+    """
+    for pools in engine_psms_dual.values():
+        for pool_psms in pools.values():
+            for psm in pool_psms:
+                psm._label_type = None
+
+    tight_keys = {
+        name: {p.get_key_with_raw() for p in pools["tight"]}
+        for name, pools in engine_psms_dual.items()
+    }
+    intersection_keys = (set.intersection(*tight_keys.values())
+                         if tight_keys else set())
+
+    loose_keys = {
+        name: {p.get_key_with_raw() for p in pools["loose"]}
+        for name, pools in engine_psms_dual.items()
+    }
+    union_keys = set.union(*loose_keys.values()) if loose_keys else set()
+
+    if "diann" in engine_order:
+        authoritative_order = ["diann"] + [e for e in engine_order if e != "diann"]
+    else:
+        authoritative_order = list(engine_order)
+
+    key_to_psm = {}
+    for engine_name in authoritative_order:
+        for psm in engine_psms_dual.get(engine_name, {}).get("loose", []):
+            key = psm.get_key_with_raw()
+            if key not in key_to_psm:
+                key_to_psm[key] = psm
+
+    result = []
+
+    if not positive_marker:
+        for key in intersection_keys:
+            psm = key_to_psm.get(key)
+            if psm is not None:
+                psm._label_type = None
+                result.append(psm)
+        logging.info(
+            f"无 marker 模式：intersection size={len(result)}")
+        return result
+
+    pos_count = 0
+    neg_count = 0
+    positive_keys = set()
+    for key in intersection_keys:
+        psm = key_to_psm.get(key)
+        if psm is None:
+            continue
+        if matches_species_marker(psm._protein_names, positive_marker):
+            psm._label_type = "positive"
+            result.append(psm)
+            positive_keys.add(key)
+            pos_count += 1
+
+    for key in union_keys:
+        if key in positive_keys:
+            continue
+        psm = key_to_psm.get(key)
+        if psm is None:
+            continue
+        if not matches_species_marker(psm._protein_names, positive_marker):
+            psm._label_type = "negative"
+            result.append(psm)
+            neg_count += 1
+
+    logging.info(
+        f"marker='{positive_marker}' (dual-FDR): "
+        f"positive={pos_count}, negative={neg_count}, total={len(result)}"
+    )
+    return result
+
+
 def load_entrapment_classifications(tsv_path: str) -> dict:
     """从 proteinCopilot 输出的 classified.tsv 加载 PSM 级别分类。
 

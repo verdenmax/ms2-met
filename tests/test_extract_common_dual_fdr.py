@@ -99,3 +99,120 @@ def test_load_engine_psms_dual_raises_when_path_missing(monkeypatch):
     cfg.read_dict({"engine.pfind": {"qvalue_threshold": "0.01"}})
     with pytest.raises(ValueError, match="path"):
         extract_common.load_engine_psms_dual("pfind", cfg)
+
+
+def _make_psm(seq: str, charge: int, raw: str, proteins: str):
+    """Build a minimal PSMInfo for tests.
+
+    NOTE: modify=[] (empty LIST, not string) — get_key_with_raw iterates
+    modify with tuple(tuple(pair) for pair in self._modify), which would
+    break on string chars.
+    """
+    from spectrum.psm_info import PSMInfo
+    return PSMInfo(
+        sequence=seq, charge=charge, modify=[],
+        rt=10.0, precursor_mz=500.0,
+        raw_title=raw, protein_names=proteins,
+        q_value=0.0,
+    )
+
+
+def test_extract_dual_default_matches_single_threshold():
+    """When tight == loose (single pool), extract_n_engines_from_psms_dual
+    output identical to extract_n_engines_from_psms."""
+    from tools import extract_common
+
+    p_human = _make_psm("PEPTIDEK", 2, "run1", "sp|P00000|HUMAN")
+    p_ecoli = _make_psm("AAAAAAAR", 2, "run1", "sp|Q00000|ECOLI")
+    p_unique = _make_psm("UNIQUEK", 2, "run1", "sp|P11111|HUMAN")
+
+    engines_single = {
+        "pfind": [p_human, p_ecoli, p_unique],
+        "diann": [p_human, p_ecoli],
+    }
+    engines_dual = {
+        "pfind": {"tight": engines_single["pfind"],
+                  "loose": engines_single["pfind"]},
+        "diann": {"tight": engines_single["diann"],
+                  "loose": engines_single["diann"]},
+    }
+
+    out_single = extract_common.extract_n_engines_from_psms(
+        engines_single, ["pfind", "diann"], positive_marker="HUMAN")
+    out_dual = extract_common.extract_n_engines_from_psms_dual(
+        engines_dual, ["pfind", "diann"], positive_marker="HUMAN")
+
+    def _key(p):
+        return (p._sequence, p._charge, p._raw_title, p._label_type)
+
+    assert sorted(_key(p) for p in out_single) == sorted(
+        _key(p) for p in out_dual)
+
+
+def test_extract_dual_expanded_loose_adds_negatives_only():
+    """When loose pool > tight pool, additional negatives appear; positives
+    invariant."""
+    from tools import extract_common
+
+    p_human_tight = _make_psm("PEPTIDEK", 2, "run1", "sp|P00000|HUMAN")
+    p_ecoli_tight = _make_psm("AAAAAAAR", 2, "run1", "sp|Q00000|ECOLI")
+    p_ecoli_loose1 = _make_psm("EXTRAONE", 2, "run1", "sp|Q11111|ECOLI")
+    p_ecoli_loose2 = _make_psm("EXTRATWO", 2, "run1", "sp|Q22222|ECOLI")
+
+    engines_dual = {
+        "pfind": {
+            "tight": [p_human_tight, p_ecoli_tight],
+            "loose": [p_human_tight, p_ecoli_tight, p_ecoli_loose1,
+                      p_ecoli_loose2],
+        },
+        "diann": {
+            "tight": [p_human_tight, p_ecoli_tight],
+            "loose": [p_human_tight, p_ecoli_tight, p_ecoli_loose1],
+        },
+    }
+
+    out = extract_common.extract_n_engines_from_psms_dual(
+        engines_dual, ["pfind", "diann"], positive_marker="HUMAN")
+
+    positives = [p for p in out if p._label_type == "positive"]
+    negatives = [p for p in out if p._label_type == "negative"]
+
+    assert len(positives) == 1
+    assert positives[0]._sequence == "PEPTIDEK"
+
+    neg_seqs = sorted(p._sequence for p in negatives)
+    assert neg_seqs == ["AAAAAAAR", "EXTRAONE", "EXTRATWO"]
+
+
+def test_extract_dual_positives_invariant_when_only_loose_changes():
+    """Varying loose pool size must NEVER change positive count or sequences."""
+    from tools import extract_common
+
+    p_human = _make_psm("PEPTIDEK", 2, "run1", "sp|P00000|HUMAN")
+    p_ecoli_tight = _make_psm("AAAAAAAR", 2, "run1", "sp|Q00000|ECOLI")
+    p_extra1 = _make_psm("EXTRA1K", 2, "run1", "sp|Q11111|ECOLI")
+    p_extra2 = _make_psm("EXTRA2K", 2, "run1", "sp|Q22222|ECOLI")
+
+    tight_only = {
+        "pfind": {"tight": [p_human, p_ecoli_tight],
+                  "loose": [p_human, p_ecoli_tight]},
+        "diann": {"tight": [p_human, p_ecoli_tight],
+                  "loose": [p_human, p_ecoli_tight]},
+    }
+    plus_loose = {
+        "pfind": {"tight": [p_human, p_ecoli_tight],
+                  "loose": [p_human, p_ecoli_tight, p_extra1, p_extra2]},
+        "diann": {"tight": [p_human, p_ecoli_tight],
+                  "loose": [p_human, p_ecoli_tight, p_extra1]},
+    }
+
+    out_a = extract_common.extract_n_engines_from_psms_dual(
+        tight_only, ["pfind", "diann"], positive_marker="HUMAN")
+    out_b = extract_common.extract_n_engines_from_psms_dual(
+        plus_loose, ["pfind", "diann"], positive_marker="HUMAN")
+
+    pos_a = sorted(p._sequence for p in out_a if p._label_type == "positive")
+    pos_b = sorted(p._sequence for p in out_b if p._label_type == "positive")
+    assert pos_a == pos_b == ["PEPTIDEK"], (
+        f"Positives must be invariant when only loose pool changes; "
+        f"got {pos_a} vs {pos_b}")
