@@ -62,3 +62,16 @@ def test_resolve_feature_cols_none_triggers_auto_detect(tmp_path):
         target_col="label",
     )
     assert result == ["precursor_pearson", "b_mean"]
+
+
+def test_main_creates_model_output_directory():
+    """main.py must mkdir -p the model output directory before save().
+
+    Regression for review finding I-ST3 (2026-06-03): model.save() had no
+    mkdir, so direct python invocation crashed when runs/spec_trainer/models/
+    didn't exist (Makefile pre-created it, masking the bug).
+    """
+    src_path = os.path.join(_SPEC_TRAINER_SRC, "main.py")
+    src = open(src_path).read()
+    assert "os.makedirs(os.path.dirname(model_path)" in src, (
+        "main.py is missing mkdir guard before model.save (I-ST3)")

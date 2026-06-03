@@ -195,8 +195,10 @@ def main():
     # Train
     model.fit(X_train, y_train, X_val, y_val)
 
-    # Save model
+    # Save model (ensure parent dir exists; direct python invocation must
+    # not rely on Makefile pre-creating runs/spec_trainer/models/).
     model_path = cfg['output']['model_path']
+    os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
     model.save(model_path)
 
     # Predict
