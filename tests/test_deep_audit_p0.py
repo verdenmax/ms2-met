@@ -224,3 +224,42 @@ def test_multi_batch_work_heavy_absent_count_always_zero():
     features = multi_batch_work(psm, dia, psm, dia, _minimal_config())
     assert features["fragment_heavy_absent_count"] == 0
     assert features["fragment_same_mass_count"] == 0
+
+
+def test_calc_xic_score_short_circuits_on_all_zero_intensity():
+    """All-zero non-empty XIC must return _default_xic_score (P0-2, Silent-C2)."""
+    from workflows.single_work import calc_xic_score, _default_xic_score
+    light = _real_xic([9.5, 9.7, 10.0, 10.3, 10.5], [0, 0, 0, 0, 0])
+    heavy = _real_xic([9.5, 9.7, 10.0, 10.3, 10.5], [0, 0, 0, 0, 0])
+    result = calc_xic_score(light, heavy)
+    default = _default_xic_score()
+    # All keys in default should be present in result with the default value.
+    for k, v in default.items():
+        assert result[k] == v, (
+            f"P0-2: all-zero XIC must produce default for {k}: "
+            f"got {result[k]}, expected {v}")
+
+
+def test_calc_xic_score_unchanged_on_valid_input():
+    """Valid non-empty XIC should still produce computed (non-default) features."""
+    from workflows.single_work import calc_xic_score
+    light = _real_xic([9.5, 9.7, 10.0, 10.3, 10.5], [10, 20, 100, 30, 15])
+    heavy = _real_xic([9.5, 9.7, 10.0, 10.3, 10.5], [5, 10, 50, 15, 8])
+    result = calc_xic_score(light, heavy)
+    # Both peaks at rt=10.0 -> apex_delta should be exactly 0 (real value).
+    # Sanity-check pearson is high since shape is identical.
+    assert result["pearson"] > 0.9, (
+        f"P0-2: valid XIC should compute real pearson, got {result['pearson']}")
+    assert result["light_max_int"] == 100.0
+    assert result["heavy_max_int"] == 50.0
+
+
+def test_single_pair_work_marks_precursor_xic_empty_on_all_zero_xic():
+    """All-zero non-empty precursor XIC routes to empty branch via
+    _is_empty_xic_pair → marker=1 (P0-1+P0-2 interaction)."""
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=False, xic_intensity=[0, 0, 0, 0, 0])
+    features = single_pair_work(psm, dia, _minimal_config())
+    assert features["precursor_xic_empty"] == 1, (
+        "P0-1+P0-2: all-zero XIC must trigger marker=1")

@@ -1154,6 +1154,14 @@ def calc_xic_score(
     if len(heavy_xic) > 0:
         heavy_xic = heavy_xic[np.argsort(heavy_xic["rt"])]
 
+    # Short-circuit if either XIC is empty or all-zero intensity.
+    # Without this, np.argmax on zeros silently returns index 0 and
+    # produces apex_delta=0 — indistinguishable from perfect coelution
+    # (P0-2, Silent-C2 in 2026-06-03 deep audit). Uses the same helper
+    # as P0-1's marker logic for definition consistency.
+    if _is_empty_xic_pair(light_xic, heavy_xic):
+        return _default_xic_score()
+
     # 计算重标平均误差
     ppm_errors = heavy_xic["ppm_error"]
     if np.all(np.isnan(ppm_errors)):
