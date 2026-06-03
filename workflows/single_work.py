@@ -1107,13 +1107,14 @@ def _calc_n_peaks(
 
 
 def _calc_smoothness(intensity: np.ndarray) -> float:
-    """Sum of squared second differences / total^2.
+    """Mean squared second-difference / total^2 — length-normalized.
 
     Smooth Gaussian-like peaks -> close to 0.
     Sharp zigzag / single-point spikes -> large value.
-    Normalized by total^2 to make cross-sample comparable; note this
-    is NOT normalized by length, so different xic_cycle_window settings
-    produce different absolute values.
+
+    Normalized by total^2 (cross-sample scale) AND by N = len-2 (number
+    of second-difference terms, cross-config-window comparability).
+    See P2-3 / Units-I4 / 2026-06-03 deep audit.
     """
     if len(intensity) < 3:
         return 0.0
@@ -1123,7 +1124,13 @@ def _calc_smoothness(intensity: np.ndarray) -> float:
     if total <= 0:
         return 0.0
     second_diff = np.diff(intensity, n=2)
-    return float(np.sum(second_diff ** 2) / (total ** 2 + 1e-12))
+    # P2-3 (Units-I4, 2026-06-03 audit): divide by N = number of
+    # second-difference terms (= len - 2). Without this, different
+    # xic_cycle_window configs produce non-comparable absolute values
+    # (the function returned a SUM that scales with window length;
+    # now returns the MEAN squared second-difference per cycle).
+    n_terms = len(second_diff)
+    return float(np.sum(second_diff ** 2) / (n_terms * (total ** 2 + 1e-12)))
 
 
 def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:

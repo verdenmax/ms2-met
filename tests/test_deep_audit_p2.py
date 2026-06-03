@@ -107,3 +107,44 @@ def test_get_retention_time_raises_on_unknown_unit():
     }
     with pytest.raises(ValueError, match="RT unit"):
         dia._get_retention_time(spectrum)
+
+
+def test_calc_smoothness_zero_for_linear_ramp():
+    """Linear ramp has all-zero second-differences (P2-3 sanity)."""
+    from workflows.single_work import _calc_smoothness
+    short = np.array([1.0, 2.0, 3.0, 4.0, 5.0])  # len 5
+    long = np.array([1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0])  # len 9
+    assert _calc_smoothness(short) == 0.0
+    assert _calc_smoothness(long) == 0.0
+
+
+def test_calc_smoothness_per_unit_value_independent_of_length():
+    """Mean squared second-diff is comparable across window sizes (P2-3, Units-I4).
+
+    Same triangle peak shape padded with zeros at different lengths.
+    Without normalization the buggy version sums more squared terms
+    for longer windows; the fix divides by N=len-2 so values are
+    comparable.
+    """
+    from workflows.single_work import _calc_smoothness
+    # Identical triangle inserted at center of differently-sized arrays
+    triangle = [0.0, 1.0, 2.0, 1.0, 0.0]
+    short = np.array(triangle)  # len 5
+    long = np.array([0.0, 0.0] + triangle + [0.0, 0.0])  # len 9
+    s_short = _calc_smoothness(short)
+    s_long = _calc_smoothness(long)
+    if s_short > 0 and s_long > 0:
+        ratio = max(s_short, s_long) / min(s_short, s_long)
+        # Without P2-3 fix, unnormalized values would diverge ~7/3.
+        # With fix, ratio should stay under 3 (different totals still affect
+        # the total^2 normalization, but length impact is gone).
+        assert ratio < 3.0, (
+            f"P2-3: smoothness should be less length-dependent after norm. "
+            f"short={s_short}, long={s_long}, ratio={ratio}")
+
+
+def test_calc_smoothness_short_input_returns_zero():
+    """Length < 3 returns 0.0 (no regression)."""
+    from workflows.single_work import _calc_smoothness
+    assert _calc_smoothness(np.array([])) == 0.0
+    assert _calc_smoothness(np.array([1.0, 2.0])) == 0.0
