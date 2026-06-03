@@ -129,10 +129,17 @@ help:
 	@echo "  make clean-normal    删除 normal features.csv / log"
 	@echo "  make clean-all       上述三者全清"
 	@echo ""
-	@echo "  make train-exp1      训练 exp1（依赖 runs/baseline_2da_clean/features.csv）"
-	@echo "  make train-exp2      训练 exp2（combined: 依赖 2da + 5da features.csv）"
-	@echo "  make train-all       顺序跑 train-exp1 + train-exp2"
-	@echo "  make clean-train     清理 runs/spec_trainer/ 训练产出"
+	@echo "  make train-exp1         旧实验：训练 exp1（2da 单独）"
+	@echo "  make train-exp2         旧实验：训练 exp2（2da + 5da combined）"
+	@echo "  make train-legacy-all   旧组合：train-exp1 + train-exp2"
+	@echo ""
+	@echo "  Systematic training matrix（18 实验：3 FDR × 2 schemes × 3 datasets）："
+	@echo "  make train-clean-all    6 个 clean（1% FDR）实验"
+	@echo "  make train-neg05-all    6 个 neg05 实验"
+	@echo "  make train-neg10-all    6 个 neg10 实验"
+	@echo "  make train-all          所有 18 个实验（顺序：clean → neg05 → neg10）"
+	@echo ""
+	@echo "  make clean-train        清理 runs/spec_trainer/ 训练产出"
 	@echo "  make clean           旧式清理（checkpoint.pkl 等）"
 	@echo ""
 	@echo "  make run             旧 target：跑 main.py 使用根目录 config.ini"
@@ -546,7 +553,8 @@ all-neg10: 2th-neg10 5th-neg10 normal-neg10
 # exp1: 2da only
 # exp2: combined (2da + 5da)
 
-.PHONY: train-exp1 train-exp2 train-all clean-train
+.PHONY: train-exp1 train-exp2 clean-train
+.PHONY: train-legacy-all train-clean-all train-neg05-all train-neg10-all train-all
 
 # features.csv 不存在时自动跑对应特征提取
 runs/baseline_2da_clean/features.csv:
@@ -571,7 +579,67 @@ train-exp2: runs/baseline_2da_clean/features.csv runs/baseline_5da_clean/feature
 	$(PY) tools/spec_trainer/src/main.py --config tools/spec_trainer/config/exp2.yaml --name exp2
 	@echo "[done] train-exp2 finished"
 
-train-all: train-exp1 train-exp2
+# Legacy train-all (now exposed as train-legacy-all to free 'train-all'
+# for the 18-experiment matrix; see docs/specs/2026-06-03-systematic-
+# training-matrix-design.md).
+train-legacy-all: train-exp1 train-exp2
+
+# Systematic training matrix (18 experiments)
+# 3 FDR conditions × 2 schemes × 3 datasets.
+# Each yaml is invoked via 'python tools/spec_trainer/src/main.py
+# --config <yaml> --name <basename>'.
+
+SPEC_CFG := tools/spec_trainer/config
+
+CLEAN_YAMLS := $(SPEC_CFG)/in_2da_clean.yaml \
+               $(SPEC_CFG)/in_5da_clean.yaml \
+               $(SPEC_CFG)/in_normal_clean.yaml \
+               $(SPEC_CFG)/cross_test_2da_clean.yaml \
+               $(SPEC_CFG)/cross_test_5da_clean.yaml \
+               $(SPEC_CFG)/cross_test_normal_clean.yaml
+
+NEG05_YAMLS := $(SPEC_CFG)/in_2da_neg05.yaml \
+               $(SPEC_CFG)/in_5da_neg05.yaml \
+               $(SPEC_CFG)/in_normal_neg05.yaml \
+               $(SPEC_CFG)/cross_test_2da_neg05.yaml \
+               $(SPEC_CFG)/cross_test_5da_neg05.yaml \
+               $(SPEC_CFG)/cross_test_normal_neg05.yaml
+
+NEG10_YAMLS := $(SPEC_CFG)/in_2da_neg10.yaml \
+               $(SPEC_CFG)/in_5da_neg10.yaml \
+               $(SPEC_CFG)/in_normal_neg10.yaml \
+               $(SPEC_CFG)/cross_test_2da_neg10.yaml \
+               $(SPEC_CFG)/cross_test_5da_neg10.yaml \
+               $(SPEC_CFG)/cross_test_normal_neg10.yaml
+
+train-clean-all:
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
+	@for yaml in $(CLEAN_YAMLS); do \
+		name=$$(basename $$yaml .yaml); \
+		echo "==================== train $$name ===================="; \
+		$(PY) tools/spec_trainer/src/main.py --config $$yaml --name $$name || exit 1; \
+	done
+	@echo "[done] train-clean-all finished (6 experiments)"
+
+train-neg05-all:
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
+	@for yaml in $(NEG05_YAMLS); do \
+		name=$$(basename $$yaml .yaml); \
+		echo "==================== train $$name ===================="; \
+		$(PY) tools/spec_trainer/src/main.py --config $$yaml --name $$name || exit 1; \
+	done
+	@echo "[done] train-neg05-all finished (6 experiments)"
+
+train-neg10-all:
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
+	@for yaml in $(NEG10_YAMLS); do \
+		name=$$(basename $$yaml .yaml); \
+		echo "==================== train $$name ===================="; \
+		$(PY) tools/spec_trainer/src/main.py --config $$yaml --name $$name || exit 1; \
+	done
+	@echo "[done] train-neg10-all finished (6 experiments)"
+
+train-all: train-clean-all train-neg05-all train-neg10-all
 
 clean-train:
 	@if [ -d runs/spec_trainer ]; then \
