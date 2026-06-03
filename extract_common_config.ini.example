@@ -19,9 +19,15 @@ result_file = ./datasets/hela-2da-pfind-diann.json
 [engine.pfind]
 path = ./pfind-dia/2th/
 qvalue_threshold = 0.01
+# Optional dual-FDR: 取消下行注释以将负例池放宽到 10% FDR
+# （正例仍用 qvalue_threshold=0.01，互不影响）
+# 见 docs/specs/2026-06-03-dual-fdr-threshold-design.md
+# negative_qvalue_threshold = 0.10
 
 [engine.diann]
 path = ./hela-mix-2da_report.parquet
+# Optional dual-FDR: 同上，DIA-NN 也可独立设置
+# negative_qvalue_threshold = 0.10
 
 [engine.alphadia]
 # 如需启用 alphadia 引擎，把 engines 改为 "pfind, diann, alphadia" 并取消下面注释
