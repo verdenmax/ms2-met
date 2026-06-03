@@ -263,3 +263,105 @@ def test_single_pair_work_marks_precursor_xic_empty_on_all_zero_xic():
     features = single_pair_work(psm, dia, _minimal_config())
     assert features["precursor_xic_empty"] == 1, (
         "P0-1+P0-2: all-zero XIC must trigger marker=1")
+
+
+def _populate_minimal_dia(dia):
+    """Populate a DIAData instance with the minimal attrs save_to_file needs."""
+    dia.has_mobility = False
+    dia.has_ms1 = True
+    dia._max_mz_value = 1000.0
+    dia._min_mz_value = 100.0
+    dia.ms1_indexs = np.array([0], dtype=np.int64)
+    dia.ms1_indexs_rt = np.array([0.0])
+    dia.ms2_indexs = np.array([1], dtype=np.int64)
+    dia.ms2_indexs_rt = np.array([0.1])
+    dia.precursor_scan_ids = np.array([0], dtype=np.int64)
+    dia._mz_values = np.array([500.0])
+    dia.rt_values = np.array([0.0, 0.1])
+    dia._intensity_values = np.array([100.0])
+    dia.mobility_values = np.array([])
+    dia._cycle_left_precursor = np.array([400.0])
+    dia._quad_max_mz_value = np.array([600.0])
+    dia._quad_min_mz_value = np.array([400.0])
+    dia._scan_id_to_index = np.array([0, 1], dtype=np.int64)
+    dia._peak_start_idx_list = np.array([0], dtype=np.int64)
+    dia._peak_stop_idx_list = np.array([1], dtype=np.int64)
+    dia._precursor_lower_mz = np.array([400.0])
+    dia._precursor_upper_mz = np.array([600.0])
+    return dia
+
+
+def test_cache_load_rejects_mismatched_centroid_threshold(tmp_path):
+    """Cache saved with one rel_threshold must be rejected when loaded with
+    a different expected_centroid_rel_threshold (P0-3, Silent-C3)."""
+    from spectrum.dia_data import DIAData
+    src = DIAData()
+    src._centroid_enabled = True
+    src._centroid_rel_threshold = 1e-3
+    _populate_minimal_dia(src)
+    cache_path = str(tmp_path / "cache_thresh.npz")
+    src.save_to_file(cache_path)
+
+    with pytest.raises(ValueError, match="centroid"):
+        DIAData.load_from_file(cache_path, use_mmap=False,
+                                expected_centroid_enabled=True,
+                                expected_centroid_rel_threshold=1e-2)
+
+
+def test_cache_load_rejects_mismatched_centroid_enabled(tmp_path):
+    """Cache saved with centroid_enabled=True must be rejected if expected=False."""
+    from spectrum.dia_data import DIAData
+    src = DIAData()
+    src._centroid_enabled = True
+    src._centroid_rel_threshold = 1e-3
+    _populate_minimal_dia(src)
+    cache_path = str(tmp_path / "cache_enabled.npz")
+    src.save_to_file(cache_path)
+
+    with pytest.raises(ValueError, match="centroid"):
+        DIAData.load_from_file(cache_path, use_mmap=False,
+                                expected_centroid_enabled=False,
+                                expected_centroid_rel_threshold=1e-3)
+
+
+def test_cache_load_accepts_matching_centroid_params(tmp_path):
+    """Cache with matching params loads successfully and restores params."""
+    from spectrum.dia_data import DIAData
+    src = DIAData()
+    src._centroid_enabled = True
+    src._centroid_rel_threshold = 1e-3
+    _populate_minimal_dia(src)
+    cache_path = str(tmp_path / "cache_match.npz")
+    src.save_to_file(cache_path)
+
+    loaded = DIAData.load_from_file(cache_path, use_mmap=False,
+                                     expected_centroid_enabled=True,
+                                     expected_centroid_rel_threshold=1e-3)
+    assert loaded._centroid_enabled is True
+    assert loaded._centroid_rel_threshold == 1e-3
+
+
+def test_cache_load_no_expectations_accepts_any_params(tmp_path):
+    """When neither expected_* arg is given, accept cache (back-compat for
+    workers that trust the cache rather than re-validating)."""
+    from spectrum.dia_data import DIAData
+    src = DIAData()
+    src._centroid_enabled = False  # arbitrary
+    src._centroid_rel_threshold = 5e-4
+    _populate_minimal_dia(src)
+    cache_path = str(tmp_path / "cache_noexp.npz")
+    src.save_to_file(cache_path)
+
+    loaded = DIAData.load_from_file(cache_path, use_mmap=False)
+    assert loaded._centroid_enabled is False
+    assert loaded._centroid_rel_threshold == 5e-4
+
+
+def test_cache_load_rejects_old_v2_format(tmp_path):
+    """Old _format_version=2 caches (no centroid params) are rejected."""
+    from spectrum.dia_data import DIAData
+    cache_path = str(tmp_path / "v2_cache.npz")
+    np.savez(cache_path, _format_version=np.int32(2))
+
+    with pytest.raises(ValueError, match="_format_version"):
+        DIAData.load_from_file(cache_path, use_mmap=False)

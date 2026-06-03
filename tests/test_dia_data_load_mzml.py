@@ -39,6 +39,9 @@ def _make_minimal_dia_for_save():
     # Optional fields - None
     d._quad_max_mz_value = None
     d._quad_min_mz_value = None
+    # Centroid params (required by save_to_file since P0-3 / format v3).
+    d._centroid_enabled = True
+    d._centroid_rel_threshold = 1e-3
     return d
 
 
@@ -81,7 +84,7 @@ def _save_legacy_npz(path, dia, version=None):
 
 
 def test_save_writes_format_version_2(tmp_path):
-    """save_to_file persists _format_version=2."""
+    """save_to_file persists _format_version=3 (bumped from 2 in P0-3)."""
     d = _make_minimal_dia_for_save()
     out = tmp_path / "x.dia.npz"
     d.save_to_file(str(out))
@@ -89,7 +92,7 @@ def test_save_writes_format_version_2(tmp_path):
     with np.load(str(out)) as data:
         assert '_format_version' in data, \
             "expected '_format_version' key in saved npz"
-        assert int(data['_format_version']) == 2
+        assert int(data['_format_version']) == 3
 
 
 def test_load_roundtrip_succeeds(tmp_path):
@@ -117,7 +120,7 @@ def test_load_rejects_missing_format_version(tmp_path):
 
 
 def test_load_rejects_wrong_format_version(tmp_path):
-    """npz with _format_version != 2 must be rejected."""
+    """npz with _format_version != 3 must be rejected."""
     d = _make_minimal_dia_for_save()
     out = tmp_path / "wrong.dia.npz"
     _save_legacy_npz(out, d, version=99)

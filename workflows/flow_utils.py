@@ -26,12 +26,53 @@ def data_to_npz(
     name = get_filename_stem(filepath)
 
     shared_path = os.path.join(_workpath, f"{name}.dia.npz")
+
+    # P0-3, Silent-C3 (2026-06-03 audit): read currently-configured
+    # centroid params from raw_file_manager's config; validate any existing
+    # cache against them. Mismatch -> delete cache -> rebuild with current
+    # params. Without this, changing centroid params has no effect.
+    expected_enabled, expected_thresh = _get_expected_centroid_params(
+        raw_file_manager)
+
+    if os.path.exists(shared_path):
+        try:
+            DIAData.load_from_file(
+                shared_path, use_mmap=False,
+                expected_centroid_enabled=expected_enabled,
+                expected_centroid_rel_threshold=expected_thresh,
+            )
+            logging.info(f"DIA cache {shared_path} 命中（params 匹配）")
+        except ValueError as e:
+            logging.warning(
+                f"DIA cache {shared_path} 失效（{e}）；删除并重建")
+            os.remove(shared_path)
+
     if not os.path.exists(shared_path):
         dia_data = raw_file_manager.get_dia_data_object(filepath)
         dia_data.save_to_file(shared_path)
 
     logging.info(f"生成 DIA data {shared_path} 完成")
     return name, shared_path
+
+
+def _get_expected_centroid_params(raw_file_manager):
+    """Read centroid params from raw_file_manager's config, mirroring
+    manager/data_manager.py:get_dia_data_object's injection logic.
+    Returns (enabled, rel_threshold) or (None, None) if config absent.
+    """
+    cfg = getattr(raw_file_manager, "_config", None)
+    if cfg is None:
+        return None, None
+    from constant.keys import ConfigKeys
+    if not cfg.has_section(ConfigKeys.GENERAL):
+        return None, None
+    # Defaults match DIAData.__init__: True / 1e-3
+    enabled = cfg.getboolean(ConfigKeys.GENERAL, ConfigKeys.CENTROID_ENABLED,
+                              fallback=True)
+    threshold = cfg.getfloat(ConfigKeys.GENERAL,
+                              ConfigKeys.CENTROID_REL_THRESHOLD,
+                              fallback=1e-3)
+    return enabled, threshold
 
 
 def process_psm_pair_shared(

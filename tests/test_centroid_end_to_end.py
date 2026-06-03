@@ -224,7 +224,7 @@ def test_e2e_config_disable_path_preserves_profile_peaks(monkeypatch):
 @_skip_no_mzml
 def test_e2e_save_load_roundtrip_after_real_centroid_load(tmp_path):
     """Real mzML → centroid load → save_to_file → np.load shows
-    _format_version=2 → DIAData.load_from_file returns byte-identical
+    _format_version=3 → DIAData.load_from_file returns byte-identical
     arrays and scalars."""
     cfg = _make_config(centroid_enabled=True)  # default threshold = 1e-3
     dm = DataManager(config=cfg)
@@ -236,7 +236,7 @@ def test_e2e_save_load_roundtrip_after_real_centroid_load(tmp_path):
     # Format version persisted.
     with np.load(str(out)) as data:
         assert '_format_version' in data
-        assert int(data['_format_version']) == 2
+        assert int(data['_format_version']) == 3
 
     reloaded = DIAData.load_from_file(str(out), use_mmap=False)
 

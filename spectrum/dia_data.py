@@ -90,6 +90,12 @@ def _load_attrs(obj, data):
     obj._precursor_lower_mz = data['_precursor_lower_mz'] if '_precursor_lower_mz' in data else None
     obj._precursor_upper_mz = data['_precursor_upper_mz'] if '_precursor_upper_mz' in data else None
 
+    # Centroid params (P0-3, added in _format_version=3).
+    if '_centroid_enabled' in data:
+        obj._centroid_enabled = bool(data['_centroid_enabled'])
+    if '_centroid_rel_threshold' in data:
+        obj._centroid_rel_threshold = float(data['_centroid_rel_threshold'])
+
 
 class DIAData:
     def __init__(self):
@@ -164,8 +170,8 @@ class DIAData:
         """将所有 NumPy 数组和标量保存到 .npz 文件"""
 
         data = {
-            # 格式版本号 (2 = centroided peaks; 见 docs/specs/2026-06-01-...)
-            '_format_version': np.int32(2),
+            # 格式版本号 (3 = centroided peaks + embedded centroid params; 见 P0-3)
+            '_format_version': np.int32(3),
             # 标量属性
             'has_mobility': self.has_mobility,
             'has_ms1': self.has_ms1,
@@ -193,6 +199,10 @@ class DIAData:
             '_peak_stop_idx_list': self._peak_stop_idx_list,
             '_precursor_lower_mz': self._precursor_lower_mz,
             '_precursor_upper_mz': self._precursor_upper_mz,
+
+            # Centroid params for cache invalidation (P0-3, Silent-C3, 2026-06-03).
+            '_centroid_enabled': np.bool_(self._centroid_enabled),
+            '_centroid_rel_threshold': np.float64(self._centroid_rel_threshold),
         }
 
         # 过滤掉 None 值（np.savez 不支持 None）
@@ -201,32 +211,50 @@ class DIAData:
         logging.info(f"Saved DIAData to {filepath}")
 
     @classmethod
-    def load_from_file(cls, filepath: str, use_mmap: bool = True):
+    def load_from_file(cls, filepath: str, use_mmap: bool = True,
+                       expected_centroid_enabled: bool | None = None,
+                       expected_centroid_rel_threshold: float | None = None):
         """从 .npz 文件加载 DIAData，支持内存映射（只读）
 
+        Args:
+            filepath: npz cache path.
+            use_mmap: zero-copy mmap mode.
+            expected_centroid_enabled: if provided, reject cache if mismatched
+                (P0-3, Silent-C3 in 2026-06-03 deep audit).
+            expected_centroid_rel_threshold: if provided, reject cache if
+                |delta| > 1e-12.
+
         Raises:
-            ValueError: 若 npz 没有 `_format_version` 字段或版本号 != 2。
-                这通常意味着旧版本生成的 profile-peaks 缓存。请删除文件
-                让 workflows/flow_utils.py:data_to_npz 重新生成。
+            ValueError: if _format_version != 3 OR centroid params mismatch
+                expected values.
         """
         obj = cls()
 
         if use_mmap:
-            # 使用 mmap_mode='r' 实现零拷贝共享
             with np.load(filepath, mmap_mode='r') as data:
-                cls._check_format_version(filepath, data)
+                cls._check_format_version(filepath, data,
+                                          expected_centroid_enabled,
+                                          expected_centroid_rel_threshold)
                 _load_attrs(obj, data)
         else:
-            # 普通加载（用于主进程预处理）
             data = np.load(filepath)
-            cls._check_format_version(filepath, data)
+            cls._check_format_version(filepath, data,
+                                      expected_centroid_enabled,
+                                      expected_centroid_rel_threshold)
             _load_attrs(obj, data)
 
         return obj
 
     @staticmethod
-    def _check_format_version(filepath: str, data) -> None:
-        """Reject npz files without `_format_version=2`."""
+    def _check_format_version(filepath: str, data,
+                              expected_centroid_enabled: bool | None = None,
+                              expected_centroid_rel_threshold: float | None = None) -> None:
+        """Reject npz files without `_format_version=3` or mismatched centroid params.
+
+        Bumped from 2 -> 3 in P0-3 (Silent-C3) to embed centroid params
+        in the cache. Caller passes the currently-configured centroid
+        params; mismatch raises (forcing rebuild).
+        """
         if '_format_version' not in data:
             raise ValueError(
                 f"npz 缓存 {filepath} 没有 _format_version 字段——这是 "
@@ -234,11 +262,28 @@ class DIAData:
                 f"运行以生成 centroided 缓存。"
             )
         version = int(data['_format_version'])
-        if version != 2:
+        if version != 3:
             raise ValueError(
                 f"npz 缓存 {filepath} 的 _format_version={version}，"
-                f"当前代码只支持 version=2。请删除该文件后重新运行。"
+                f"当前代码只支持 version=3。请删除该文件后重新运行。"
             )
+        if expected_centroid_enabled is not None:
+            stored_enabled = bool(data['_centroid_enabled']) \
+                if '_centroid_enabled' in data else None
+            if stored_enabled != expected_centroid_enabled:
+                raise ValueError(
+                    f"npz 缓存 {filepath} 的 _centroid_enabled={stored_enabled}, "
+                    f"配置要求 {expected_centroid_enabled}。请删除该文件后重新运行。"
+                )
+        if expected_centroid_rel_threshold is not None:
+            stored_threshold = float(data['_centroid_rel_threshold']) \
+                if '_centroid_rel_threshold' in data else None
+            if (stored_threshold is None
+                    or abs(stored_threshold - expected_centroid_rel_threshold) > 1e-12):
+                raise ValueError(
+                    f"npz 缓存 {filepath} 的 _centroid_rel_threshold={stored_threshold}, "
+                    f"配置要求 {expected_centroid_rel_threshold}。请删除该文件后重新运行。"
+                )
 
     def _get_retention_time(self, spectrum) -> float:
         """从谱图中提取保留时间（转换为秒）"""
