@@ -193,3 +193,31 @@ def test_resolve_feature_cols_raises_when_result_empty(tmp_path):
             sample_csv_paths=[str(csv)],
             target_col="label",
         )
+
+
+def test_main_propagates_resolved_feature_cols_to_modelmanager():
+    """ModelManager.create must receive the resolved feature_cols list,
+    not the empty yaml literal.
+
+    Regression for 2026-06-03 runtime bug: user running
+    'make train-clean-all' got
+        ValueError: Length of feature_name(0) and num_feature(118) don't match
+    because main.py:206 called ModelManager.create(cfg) but cfg['data']
+    ['feature_cols'] is still [] (the yaml default) — resolve_feature_cols
+    returned 118 columns into a LOCAL variable that wasn't propagated.
+
+    This test enforces the call signature: ModelManager.create must
+    accept the resolved list as an explicit argument so the local
+    `feature_cols` variable flows through to LGBModel.feature_names.
+    """
+    src_path = os.path.join(_SPEC_TRAINER_SRC, "main.py")
+    src = open(src_path).read()
+    assert "ModelManager.create(cfg, feature_cols" in src or \
+           "ModelManager.create(cfg, feature_names" in src or \
+           "cfg['data']['feature_cols'] = feature_cols" in src, (
+        "main.py must propagate the resolved feature_cols to ModelManager. "
+        "Either pass it as an explicit second arg, or write it back into "
+        "cfg['data']['feature_cols'] BEFORE ModelManager.create(cfg). "
+        "Current code calls ModelManager.create(cfg) only, which reads "
+        "the empty yaml default."
+    )

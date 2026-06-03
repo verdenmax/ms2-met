@@ -10,9 +10,9 @@ class SklearnLRModel(BaseModel):
         super().__init__(feature_names)
         # 合并 params（sklearn 不需要 training_params，但保留接口）
         if training_params.get('valid_size', 0.0) > 0:
-            logging.warn(f"sklearn 训练过程不需要验证集，但是参数设置中验证集划分非0 {
-                         training_params.get('valid_size', 0.0)}")
-
+            logging.warning(
+                "sklearn 训练过程不需要验证集，但是参数设置中验证集划分非0 %s",
+                training_params.get('valid_size', 0.0))
         self.model_params = model_params
         self.model = None
 

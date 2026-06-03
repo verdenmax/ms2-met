@@ -54,6 +54,6 @@ class BaseModel(ABC):
         else:
             raise ValueError(
                 f"Cannot align feature importance: "
-                f"expected {len(self.feature_names)} features, got {
-                    len(raw_imp)}"
+                f"expected {len(self.feature_names)} features, "
+                f"got {len(raw_imp)}"
             )

@@ -203,7 +203,11 @@ def main():
         )
 
     # 创建模型（关键改动）
-    model = ModelManager.create(cfg)
+    # Pass resolved feature_cols explicitly so LGBModel.feature_names
+    # matches the 118 columns auto-detected by resolve_feature_cols
+    # (fix for 2026-06-03 runtime ValueError: Length of feature_name(0)
+    # and num_feature(N) don't match).
+    model = ModelManager.create(cfg, feature_names=feature_cols)
 
     # Train
     model.fit(X_train, y_train, X_val, y_val)
