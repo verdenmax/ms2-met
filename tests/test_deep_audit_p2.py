@@ -235,3 +235,14 @@ def test_multi_batch_work_writes_heavy_in_raw_column():
         "P2-5: multi_batch_work missing heavy_in_raw column")
     assert "heavy_in_raw" in single_features, (
         "Sanity check: single_pair_work should already have heavy_in_raw")
+
+
+def test_spec_trainer_main_creates_logpath_parent():
+    """spec_trainer main.py must mkdir -p the logpath parent dir
+    (P2-8, Silent-I4)."""
+    src_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "tools", "spec_trainer", "src", "main.py")
+    src = open(src_path).read()
+    assert "os.makedirs(os.path.dirname(args.logpath)" in src, (
+        "P2-8: spec_trainer main.py missing mkdir for logpath parent")

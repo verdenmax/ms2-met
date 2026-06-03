@@ -145,6 +145,11 @@ def main():
 
     args = parser.parse_args()
 
+    # P2-8 (Silent-I4, 2026-06-03 audit): ensure logpath parent dir
+    # exists. Mirror of main.py:37-39 pattern.
+    if os.path.dirname(args.logpath):
+        os.makedirs(os.path.dirname(args.logpath), exist_ok=True)
+
     # 设置日志文件handle
     file_handler = logging.FileHandler(args.logpath, encoding="utf-8")
     file_formatter = logging.Formatter(
