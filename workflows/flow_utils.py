@@ -102,8 +102,10 @@ def process_psm_pair_shared(
 def _make_result_row_single(psm, features: dict) -> dict:
     """Build the result dict for a single-flow PSM.
 
-    Maps psm._label_type ("positive"/"negative"/None) to label int (1/0/None)
-    so the CSV's `label` column is numeric — matching the pair-flow convention.
+    Maps psm._label_type ("positive"/"negative") to label int (1/0).
+    Raises ValueError if _label_type is None — silently writing None
+    leads to NaN labels in features.csv that crash LightGBM during
+    training (P1-3, Pipeline-I1 in 2026-06-03 deep audit).
     """
     label_type = psm._label_type
     if label_type == "positive":
@@ -111,7 +113,12 @@ def _make_result_row_single(psm, features: dict) -> dict:
     elif label_type == "negative":
         label = 0
     else:
-        label = None
+        raise ValueError(
+            f"PSM {getattr(psm, '_sequence', '?')} has _label_type={label_type!r}; "
+            f"expected 'positive' or 'negative'. Check extract_common.py — "
+            f"running without positive_species_marker produces None labels "
+            f"that crash LightGBM training (P1-3, Pipeline-I1, 2026-06-03 audit)."
+        )
     return {
         "sequence": psm._sequence,
         "charge": psm._charge,

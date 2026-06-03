@@ -248,3 +248,53 @@ def test_mixed_empty_and_valid_fragments_list_parity():
     assert captured["n_peaks_len"] == n_valid, (
         f"P1-2: fragment_n_peaks_list length ({captured['n_peaks_len']}) "
         f"must equal valid_fragment_ions_num ({n_valid}).")
+
+
+def test_make_result_row_single_raises_on_none_label_type():
+    """_make_result_row_single must raise when _label_type is None (P1-3, Pipeline-I1)."""
+    from workflows.flow_utils import _make_result_row_single
+
+    class _PSMNoLabel:
+        _sequence = "AAAA"
+        _charge = 2
+        _precursor_mz = 500.0
+        _raw_title = "fake"
+        _protein_names = "HUMAN"
+        _label_type = None
+
+    with pytest.raises(ValueError, match="label_type"):
+        _make_result_row_single(_PSMNoLabel(), {"f1": 1.0})
+
+
+def test_make_result_row_single_accepts_positive():
+    """_make_result_row_single produces label=1 for 'positive' (no regression)."""
+    from workflows.flow_utils import _make_result_row_single
+
+    class _PSMPos:
+        _sequence = "AAAA"
+        _charge = 2
+        _precursor_mz = 500.0
+        _raw_title = "fake"
+        _protein_names = "HUMAN"
+        _label_type = "positive"
+
+    row = _make_result_row_single(_PSMPos(), {"f1": 1.0})
+    assert row["label"] == 1
+    assert row["label_type"] == "positive"
+
+
+def test_make_result_row_single_accepts_negative():
+    """_make_result_row_single produces label=0 for 'negative' (no regression)."""
+    from workflows.flow_utils import _make_result_row_single
+
+    class _PSMNeg:
+        _sequence = "AAAA"
+        _charge = 2
+        _precursor_mz = 500.0
+        _raw_title = "fake"
+        _protein_names = "HUMAN"
+        _label_type = "negative"
+
+    row = _make_result_row_single(_PSMNeg(), {"f1": 1.0})
+    assert row["label"] == 0
+    assert row["label_type"] == "negative"

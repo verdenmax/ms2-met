@@ -17,28 +17,30 @@ def _psm(seq, label_type, raw="r1", protein_names="X_HUMAN"):
 
 
 def test_single_flow_writes_numeric_label_from_label_type():
-    """`label` column in single-flow result must be 0/1/None
-    (not the protein name string)."""
+    """`label` column in single-flow result must be 0/1
+    (not the protein name string). `None` label_type now raises
+    (P1-3, Pipeline-I1, 2026-06-03 audit) — see dedicated raise test."""
     from workflows.flow_utils import _make_result_row_single
 
     row_pos = _make_result_row_single(
         _psm("HUMAN_PEP", "positive"), features={"feat1": 1.0})
     row_neg = _make_result_row_single(
         _psm("BAD_PEP", "negative"), features={"feat1": 2.0})
-    row_unk = _make_result_row_single(
-        _psm("UNKNOWN", None), features={"feat1": 3.0})
 
     assert row_pos["label"] == 1
     assert row_neg["label"] == 0
-    assert row_unk["label"] is None
     assert row_pos["label_type"] == "positive"
     assert row_neg["label_type"] == "negative"
-    assert row_unk["label_type"] is None
     # features merged into row
     assert row_pos["feat1"] == 1.0
     # other required keys still present
     assert row_pos["sequence"] == "HUMAN_PEP"
     assert "raw_title1" in row_pos
+
+    # None label_type must raise (no silent NaN labels)
+    with pytest.raises(ValueError, match="label_type"):
+        _make_result_row_single(
+            _psm("UNKNOWN", None), features={"feat1": 3.0})
 
 
 def test_single_flow_dict_used_by_process_batch_single():
