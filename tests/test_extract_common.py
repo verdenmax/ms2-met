@@ -597,13 +597,13 @@ def test_extract_n_engines_with_entrapment_section_e2e(tmp_path, monkeypatch):
 
     # monkey-patch extract_n_engines_from_psms 不执行真引擎加载
     def fake_load_engine_psms(engine_name, config):
-        return []  # 不用真引擎
+        return {"tight": [], "loose": []}  # 不用真引擎
     def fake_extract(engine_psms, engine_order, marker):
         return [psm_l0_neg, psm_l4_neg, psm_pos]
 
-    monkeypatch.setattr(extract_common, "load_engine_psms",
+    monkeypatch.setattr(extract_common, "load_engine_psms_dual",
                         fake_load_engine_psms)
-    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms_dual",
                         fake_extract)
 
     # 构造 classified.tsv
@@ -639,9 +639,9 @@ def test_extract_n_engines_no_entrapment_section_skips(tmp_path, monkeypatch):
     psm_neg = _make_psm("L0X", 2, "TRAP", raw="r1")
     psm_neg._label_type = "negative"
 
-    monkeypatch.setattr(extract_common, "load_engine_psms",
-                        lambda n, c: [])
-    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+    monkeypatch.setattr(extract_common, "load_engine_psms_dual",
+                        lambda n, c: {"tight": [], "loose": []})
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms_dual",
                         lambda ep, eo, m: [psm_neg])
 
     cfg = configparser.ConfigParser()
@@ -661,9 +661,9 @@ def test_extract_n_engines_empty_classified_tsv_path(tmp_path, monkeypatch):
     psm_neg = _make_psm("X", 2, "TRAP", raw="r1")
     psm_neg._label_type = "negative"
 
-    monkeypatch.setattr(extract_common, "load_engine_psms",
-                        lambda n, c: [])
-    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+    monkeypatch.setattr(extract_common, "load_engine_psms_dual",
+                        lambda n, c: {"tight": [], "loose": []})
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms_dual",
                         lambda ep, eo, m: [psm_neg])
 
     cfg = configparser.ConfigParser()
@@ -693,9 +693,9 @@ def test_extract_with_target_fasta_runs_classifier_inline(tmp_path, monkeypatch)
     psm_pos = _make_psm("HUM", 2, "X_HUMAN", raw="r1")
     psm_pos._label_type = "positive"
 
-    monkeypatch.setattr(extract_common, "load_engine_psms",
-                        lambda n, c: [])
-    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+    monkeypatch.setattr(extract_common, "load_engine_psms_dual",
+                        lambda n, c: {"tight": [], "loose": []})
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms_dual",
                         lambda ep, eo, m: [psm_l0_neg, psm_l4_neg, psm_pos])
 
     fasta = tmp_path / "tiny.fasta"
@@ -727,9 +727,9 @@ def test_extract_with_both_classified_tsv_and_fasta_prefers_tsv(tmp_path, monkey
     psm_l4 = _make_psm("L4PEP", 2, "TRAP", raw="r1")
     psm_l4._label_type = "negative"
 
-    monkeypatch.setattr(extract_common, "load_engine_psms",
-                        lambda n, c: [])
-    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+    monkeypatch.setattr(extract_common, "load_engine_psms_dual",
+                        lambda n, c: {"tight": [], "loose": []})
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms_dual",
                         lambda ep, eo, m: [psm_neg, psm_l4])
 
     # FASTA says SEQONE is L0; TSV says it's L4 — TSV wins
@@ -762,9 +762,9 @@ def test_extract_with_neither_classified_tsv_nor_fasta_skips_filter(monkeypatch)
 
     psm = _make_psm("ANY", 2, "X", raw="r1")
     psm._label_type = "negative"
-    monkeypatch.setattr(extract_common, "load_engine_psms",
-                        lambda n, c: [])
-    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms",
+    monkeypatch.setattr(extract_common, "load_engine_psms_dual",
+                        lambda n, c: {"tight": [], "loose": []})
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms_dual",
                         lambda ep, eo, m: [psm])
 
     cfg = configparser.ConfigParser()

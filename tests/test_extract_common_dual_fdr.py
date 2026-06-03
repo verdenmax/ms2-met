@@ -216,3 +216,40 @@ def test_extract_dual_positives_invariant_when_only_loose_changes():
     assert pos_a == pos_b == ["PEPTIDEK"], (
         f"Positives must be invariant when only loose pool changes; "
         f"got {pos_a} vs {pos_b}")
+
+
+def test_extract_n_engines_uses_dual_loader(monkeypatch):
+    """extract_n_engines(config) calls load_engine_psms_dual and
+    extract_n_engines_from_psms_dual under the hood."""
+    from tools import extract_common
+
+    captured = {"loader": None, "extractor": None}
+
+    def fake_loader(engine_name, config):
+        captured["loader"] = engine_name
+        return {"tight": [], "loose": []}
+
+    def fake_extractor(engine_psms_dual, engine_order, positive_marker=None):
+        captured["extractor"] = {
+            "shape": {k: list(v.keys()) for k, v in engine_psms_dual.items()},
+            "engine_order": engine_order,
+            "positive_marker": positive_marker,
+        }
+        return []
+
+    monkeypatch.setattr(extract_common, "load_engine_psms_dual", fake_loader)
+    monkeypatch.setattr(extract_common, "extract_n_engines_from_psms_dual",
+                         fake_extractor)
+
+    cfg = configparser.ConfigParser()
+    cfg.read_dict({
+        "extract": {"engines": "pfind", "positive_species_marker": "HUMAN"},
+        "engine.pfind": {"path": "/x.qry.res", "qvalue_threshold": "0.01"},
+    })
+    extract_common.extract_n_engines(cfg)
+
+    assert captured["loader"] == "pfind"
+    assert captured["extractor"] is not None
+    assert captured["extractor"]["shape"] == {"pfind": ["tight", "loose"]}
+    assert captured["extractor"]["engine_order"] == ["pfind"]
+    assert captured["extractor"]["positive_marker"] == "HUMAN"

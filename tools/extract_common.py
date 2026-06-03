@@ -526,10 +526,16 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
     engine_psms = {}
     for name in engine_order:
         logging.info(f"加载引擎: {name}")
-        engine_psms[name] = load_engine_psms(name, config)
-        logging.info(f"  → {name} 共 {len(engine_psms[name])} 条 PSM")
+        engine_psms[name] = load_engine_psms_dual(name, config)
+        n_tight = len(engine_psms[name]["tight"])
+        n_loose = len(engine_psms[name]["loose"])
+        if engine_psms[name]["tight"] is engine_psms[name]["loose"]:
+            logging.info(f"  → {name} 共 {n_tight} 条 PSM (单 FDR 池)")
+        else:
+            logging.info(
+                f"  → {name} tight={n_tight}, loose={n_loose} (双 FDR 池)")
 
-    psms = extract_n_engines_from_psms(
+    psms = extract_n_engines_from_psms_dual(
         engine_psms, engine_order, positive_marker)
 
     if "entrapment" in config:
