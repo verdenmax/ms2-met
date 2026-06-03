@@ -216,33 +216,31 @@ all: 2th 5th normal
 
 # ---------- 清理 ----------
 #
-# clean-2th / clean-5th / clean-normal: 删除对应 baseline 目录下除根部
-# config.ini 以外的所有内容（递归）。这保证未来添加新输出文件（如新 eval
-# 子目录、新 metric json）也会被自动清理，不会因为漏写 rm 列表而残留旧产物。
-#
-# 实现：find -depth 深度优先删除（先删文件再删空目录），并显式排除根部的
-# config.ini（用 -path 全路径匹配，子目录里同名文件不会被保护）。
+# clean-2th / clean-5th / clean-normal: 仅删除对应 baseline 目录下的
+# features.csv（含 .PARTIAL_INCOMPLETE）和 *.log，强制下次重跑特征提取。
+# 保留 config.ini、eval/（手工维护的指标）和 workspace/（缓存的中间数据，
+# I-MK2 之后 per-baseline workspace 就在这里）。
 
 clean-2th:
 	@if [ -d $(DIR_2TH) ]; then \
-		find $(DIR_2TH) -mindepth 1 -depth ! -path '$(DIR_2TH)/config.ini' -delete; \
-		echo "[cleaned] $(DIR_2TH)/ (kept config.ini)"; \
+		rm -f $(DIR_2TH)/features.csv $(DIR_2TH)/features.csv.PARTIAL_INCOMPLETE $(DIR_2TH)/*.log; \
+		echo "[cleaned] $(DIR_2TH)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
 	else \
 		echo "[skip] $(DIR_2TH)/ does not exist"; \
 	fi
 
 clean-5th:
 	@if [ -d $(DIR_5TH) ]; then \
-		find $(DIR_5TH) -mindepth 1 -depth ! -path '$(DIR_5TH)/config.ini' -delete; \
-		echo "[cleaned] $(DIR_5TH)/ (kept config.ini)"; \
+		rm -f $(DIR_5TH)/features.csv $(DIR_5TH)/features.csv.PARTIAL_INCOMPLETE $(DIR_5TH)/*.log; \
+		echo "[cleaned] $(DIR_5TH)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
 	else \
 		echo "[skip] $(DIR_5TH)/ does not exist"; \
 	fi
 
 clean-normal:
 	@if [ -d $(DIR_NORMAL) ]; then \
-		find $(DIR_NORMAL) -mindepth 1 -depth ! -path '$(DIR_NORMAL)/config.ini' -delete; \
-		echo "[cleaned] $(DIR_NORMAL)/ (kept config.ini)"; \
+		rm -f $(DIR_NORMAL)/features.csv $(DIR_NORMAL)/features.csv.PARTIAL_INCOMPLETE $(DIR_NORMAL)/*.log; \
+		echo "[cleaned] $(DIR_NORMAL)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
 	else \
 		echo "[skip] $(DIR_NORMAL)/ does not exist"; \
 	fi
