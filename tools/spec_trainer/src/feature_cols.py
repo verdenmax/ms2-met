@@ -17,9 +17,29 @@ META_COLUMNS = {
     "precursor_mz", "sequence_len",
 }
 
-# 额外排除的特征列：modification_count 在训练时倾向于过拟合非物理信号
-# （负样本 entrapment 大多带修饰），见 PLAN.md 三-2 分析。
-EXCLUDED_EXTRA = {"modification_count"}
+# 额外排除的特征列。理由分两类:
+#
+# (A) 非物理过拟合信号:
+#   - modification_count: 负样本 entrapment 大多带修饰，模型容易学到
+#     "带修饰 → 负例" 这种非物理规则。见 PLAN.md 三-2 分析。
+#
+# (B) 数据集 ID / 跨数据集泄露 (cross_test 场景必排):
+#   - window_width: 在每个数据集内是常量 (2da=2, 5da=5, normal=20)，
+#     本质上等价于 "哪个数据集" 标签。cross_test 场景下训练时该列变成
+#     dataset ID，测试时取 OOD 值，树模型行为不可控。
+#   - fragment_xic_empty_count: 在所有 3 个数据集均为常量 0，无信息。
+#   - fragment_same_mass_count: 跨数据集均值 0.097/2.0/8.7，直接被 DIA
+#     窗宽决定 (窗越宽，落在同窗内的同质量碎片越多)。cross_test 场景下
+#     成为 dataset 代理特征。
+#   - fragment_heavy_absent_count: 跨数据集均值 1.8/1.8/0.1，窗变窄后
+#     漏检率剧变；同样是 dataset 代理。
+EXCLUDED_EXTRA = {
+    "modification_count",
+    "window_width",
+    "fragment_xic_empty_count",
+    "fragment_same_mass_count",
+    "fragment_heavy_absent_count",
+}
 
 
 def resolve_feature_cols(explicit, sample_csv_paths, target_col):

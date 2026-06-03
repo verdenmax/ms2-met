@@ -66,6 +66,38 @@ def test_resolve_feature_cols_none_triggers_auto_detect(tmp_path):
     assert result == ["precursor_pearson", "b_mean"]
 
 
+def test_resolve_feature_cols_excludes_dataset_id_columns(tmp_path):
+    """Columns that act as dataset-ID proxies must be excluded.
+
+    Regression for 2026-06-03 audit finding: window_width and the three
+    fragment_*_count columns either (a) are constant within each dataset
+    and differ across datasets (dataset ID leak in cross_test), or (b)
+    drift heavily across DIA window widths (dataset proxy in cross_test).
+    See EXCLUDED_EXTRA documentation in feature_cols.py for the full
+    physical justification.
+    """
+    csv = tmp_path / "fake.csv"
+    csv.write_text(
+        "label,window_width,fragment_xic_empty_count,"
+        "fragment_same_mass_count,fragment_heavy_absent_count,"
+        "precursor_pearson,b_mean\n"
+    )
+    result = resolve_feature_cols(
+        explicit=[],
+        sample_csv_paths=str(csv),
+        target_col="label",
+    )
+    assert "window_width" not in result, (
+        "window_width is constant per dataset (2/5/20) and leaks dataset ID")
+    assert "fragment_xic_empty_count" not in result, (
+        "fragment_xic_empty_count is constant 0 in all datasets — no signal")
+    assert "fragment_same_mass_count" not in result, (
+        "fragment_same_mass_count drifts 0.097→2.0→8.7 across datasets")
+    assert "fragment_heavy_absent_count" not in result, (
+        "fragment_heavy_absent_count drifts 1.8→1.8→0.1 across datasets")
+    assert result == ["precursor_pearson", "b_mean"]
+
+
 def test_main_creates_model_output_directory():
     """main.py must mkdir -p the model output directory before save().
 
