@@ -114,7 +114,12 @@ def evaluate_and_report(
         "auc": float(roc_auc_score(y_true, y_proba)) if y_proba is not None else None,
         "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),  # 混淆矩阵
         # 详细分类报告
-        "classification_report": classification_report(y_true, y_pred, output_dict=True),
+        # zero_division=0: SILAC 测试集极度不均衡 + is_unbalance + 阈值 0.5
+        # 时，模型可能将所有样本预测为正，负类无预测样本 → precision = 0/0。
+        # 显式设为 0 以消除 sklearn 的 UndefinedMetricWarning（指标值
+        # 行为不变，本就是 0/0 → 报告为 0.0）。
+        "classification_report": classification_report(
+            y_true, y_pred, output_dict=True, zero_division=0),
     }
 
     # 计算ROC曲线和最佳阈值（约登指数）
