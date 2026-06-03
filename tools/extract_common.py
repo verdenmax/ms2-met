@@ -79,6 +79,57 @@ def load_engine_psms(engine_name: str, config: configparser.ConfigParser) -> lis
     return _load_engine(engine_name, path, qvalue)
 
 
+def load_engine_psms_dual(
+    engine_name: str,
+    config: configparser.ConfigParser,
+) -> dict:
+    """Load engine PSMs with optional dual FDR (tight for positives,
+    loose for negatives).
+
+    Reads two thresholds from [engine.<name>]:
+      - qvalue_threshold          (tight, gates positive candidates)
+      - negative_qvalue_threshold (loose, gates negative candidates)
+
+    When negative_qvalue_threshold is absent, defaults to qvalue_threshold
+    (single-threshold behavior, backward compatible).
+
+    Returns:
+        dict {"tight": [PSMInfo], "loose": [PSMInfo]}
+        When the two thresholds are equal, both keys point to the SAME
+        list (no redundant I/O).
+
+    Raises:
+        ValueError: if [engine.<name>] is missing, path is missing,
+                    or negative_qvalue_threshold < qvalue_threshold.
+
+    See docs/specs/2026-06-03-dual-fdr-threshold-design.md.
+    """
+    section = f"engine.{engine_name}"
+    if section not in config:
+        raise ValueError(f"配置中缺少 [{section}] 段")
+    path = config[section].get("path")
+    if not path:
+        raise ValueError(f"[{section}] 缺少 path 配置")
+
+    tight = config[section].getfloat("qvalue_threshold", fallback=0.01)
+    loose = config[section].getfloat(
+        "negative_qvalue_threshold", fallback=tight)
+
+    if loose < tight:
+        raise ValueError(
+            f"[{section}] negative_qvalue_threshold={loose} 不能小于 "
+            f"qvalue_threshold={tight} (negative pool must be ⊇ positive pool)"
+        )
+
+    tight_psms = _load_engine(engine_name, path, tight)
+    if loose == tight:
+        loose_psms = tight_psms
+    else:
+        loose_psms = _load_engine(engine_name, path, loose)
+
+    return {"tight": tight_psms, "loose": loose_psms}
+
+
 def extract_n_engines_from_psms(
     engine_psms: dict,
     engine_order: list,
