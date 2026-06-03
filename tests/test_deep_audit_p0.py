@@ -142,13 +142,85 @@ def test_multi_batch_work_marks_precursor_xic_empty_zero_when_valid():
 
 
 def test_fragment_xic_empty_count_present_in_both_paths():
-    """Both code paths must emit fragment_xic_empty_count column."""
+    """Both code paths must emit all 3 fragment-skip-cause columns."""
     from workflows.single_work import single_pair_work, multi_batch_work
     psm = _FakePSM()
     dia_empty = _FakeDIA(force_empty=True)
     f1 = single_pair_work(psm, dia_empty, _minimal_config())
     f2 = multi_batch_work(psm, dia_empty, psm, dia_empty, _minimal_config())
-    assert "fragment_xic_empty_count" in f1, (
-        "P0-1: single_pair_work missing fragment_xic_empty_count")
-    assert "fragment_xic_empty_count" in f2, (
-        "P0-1: multi_batch_work missing fragment_xic_empty_count")
+    for key in ("fragment_xic_empty_count",
+                "fragment_heavy_absent_count",
+                "fragment_same_mass_count"):
+        assert key in f1, (
+            f"P0-1: single_pair_work missing {key}")
+        assert key in f2, (
+            f"P0-1: multi_batch_work missing {key}")
+
+
+class _FakePSM_4Frags:
+    """PSM stub returning 4 fragments with different mass shifts so we can
+    count skip behavior precisely. Override _FakePSM.get_heavy_info."""
+    def __init__(self, mz=500.0, rt=10.0):
+        self._precursor_mz = mz
+        self._rt = rt
+        self._sequence = "AAAAK"
+        self._charge = 2
+        self._raw_title = "fake.mzML"
+        self._protein_names = "HUMAN"
+        self._label_type = "positive"
+        self._modify = []
+
+    def get_heavy_info(self, heavy_type):
+        # 4 SILAC y-ions, each with non-zero mass shift between light/heavy
+        return self._precursor_mz + 4.0, [
+            ("y", 1, 100.0, 108.0),
+            ("y", 2, 200.0, 208.0),
+            ("y", 3, 300.0, 308.0),
+            ("y", 4, 400.0, 408.0),
+        ]
+
+
+class _FakeDIA_NoHeavy(_FakeDIA):
+    """DIA where heavy precursor is outside raw range — triggers
+    heavy_in_raw=False fragment-skip path in single_pair_work."""
+    def check_in_raw(self, mz):
+        return False
+
+
+def test_single_pair_work_counts_empty_xic_fragments():
+    """fragment_xic_empty_count == number of fragments with empty XIC."""
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM_4Frags()
+    # heavy_in_raw=True so we get past that guard; force_empty so XIC
+    # extraction returns empty for all 4 fragments.
+    dia = _FakeDIA(force_empty=True)
+    features = single_pair_work(psm, dia, _minimal_config())
+    assert features["fragment_xic_empty_count"] == 4, (
+        f"Expected 4 empty-XIC fragments, got {features['fragment_xic_empty_count']}")
+    assert features["fragment_heavy_absent_count"] == 0
+    assert features["fragment_same_mass_count"] == 0
+
+
+def test_single_pair_work_counts_heavy_absent_fragments():
+    """fragment_heavy_absent_count == number of fragments skipped via
+    heavy_in_raw=False."""
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM_4Frags()
+    dia = _FakeDIA_NoHeavy(force_empty=False)
+    features = single_pair_work(psm, dia, _minimal_config())
+    assert features["fragment_heavy_absent_count"] == 4, (
+        f"Expected 4 heavy_absent fragments, got "
+        f"{features['fragment_heavy_absent_count']}")
+    assert features["fragment_xic_empty_count"] == 0
+    assert features["fragment_same_mass_count"] == 0
+
+
+def test_multi_batch_work_heavy_absent_count_always_zero():
+    """multi_batch_work has no heavy_in_raw guard so heavy_absent_count
+    is always 0 (schema parity column)."""
+    from workflows.single_work import multi_batch_work
+    psm = _FakePSM_4Frags()
+    dia = _FakeDIA(force_empty=False)
+    features = multi_batch_work(psm, dia, psm, dia, _minimal_config())
+    assert features["fragment_heavy_absent_count"] == 0
+    assert features["fragment_same_mass_count"] == 0

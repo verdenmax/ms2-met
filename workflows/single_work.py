@@ -297,6 +297,11 @@ def multi_batch_work(
 
     features["valid_fragment_ions_num"] = len(pearsons_map["all"])
     features["fragment_xic_empty_count"] = fragment_xic_empty_count
+    # P0-1 schema parity (per 2026-06-03 review): multi_batch_work has
+    # no heavy_in_raw / same_ms2 guards so these are always 0; emitted
+    # for schema parity with single_pair_work.
+    features["fragment_heavy_absent_count"] = 0
+    features["fragment_same_mass_count"] = 0
 
     # 分别提取出b离子，y离子，全部的三种特征
     for key, value_list in pearsons_map.items():
@@ -542,21 +547,26 @@ def single_pair_work(
     fragment_apex_monotonicities = []
     fragment_n_peaks_list = []
     fragment_smoothnesses = []
-    # Union count of fragments skipped or imputed-to-zero:
-    # {empty XIC, heavy_in_raw=False, identical light/heavy mass shift}.
-    fragment_xic_empty_count = 0
+    # P0-1: count fragments lost at each skip stage. Three orthogonal
+    # categories give LightGBM unambiguous signal vs a single-bucket
+    # count. Reviewer noted (2026-06-03): the original union-count
+    # semantics differed from multi_batch_work's empty-only count,
+    # making the column ambiguous across code paths.
+    fragment_xic_empty_count = 0       # both XICs empty after extraction
+    fragment_heavy_absent_count = 0    # heavy precursor not in raw window
+    fragment_same_mass_count = 0       # same MS2 window AND no SILAC shift
 
     ion_data = []  # 存储每个离子的完整数据
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
 
         if not heavy_in_raw:
-            fragment_xic_empty_count += 1
+            fragment_heavy_absent_count += 1
             continue
 
         # 如果在相同的区间，并且质量相同，说明重标不影响该碎片离子
         if np.abs(heavy_mass - light_mass) < SHIFT_EPSILON and is_same_ms2:
-            fragment_xic_empty_count += 1
+            fragment_same_mass_count += 1
             continue
 
         # 计算出 light 信息
@@ -641,7 +651,10 @@ def single_pair_work(
 
     # plot_light_heavy_contract(ion_data)
     features["valid_fragment_ions_num"] = len(pearsons_map["all"])
+    # P0-1 (fix per 2026-06-03 review): 3 orthogonal skip-cause columns.
     features["fragment_xic_empty_count"] = fragment_xic_empty_count
+    features["fragment_heavy_absent_count"] = fragment_heavy_absent_count
+    features["fragment_same_mass_count"] = fragment_same_mass_count
 
     # 分别提取出b离子，y离子，全部的三种特征
     for key, value_list in pearsons_map.items():
