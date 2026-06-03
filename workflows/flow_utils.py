@@ -3,12 +3,14 @@ import os
 import configparser
 import logging
 import traceback
+import zlib
 
 from spectrum.dia_data import DIAData
 from spectrum.psm_info import PSMInfo
 from spectrum.psm_info import sequence_controlled_shuffle
 import manager.data_manager as data_manager
 from workflows.single_work import multi_batch_work, single_pair_work
+from constant.keys import ConfigKeys
 
 
 def get_filename_stem(filepath: str) -> str:
@@ -254,13 +256,18 @@ def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, co
                 # P2-4, Pipeline-I2 (2026-06-03 audit): seed shuffle from
                 # config for reproducible negatives. Default 42 if missing.
                 try:
-                    seed_base = int(config.get("general", "random_seed",
-                                               fallback="42"))
+                    seed_base = int(config.get(
+                        ConfigKeys.GENERAL, ConfigKeys.RANDOM_SEED,
+                        fallback="42"))
                 except (configparser.NoSectionError, ValueError):
                     seed_base = 42
-                # Per-PSM unique seed = base + hash(sequence) to avoid
-                # every PSM producing identical shuffles.
-                per_psm_seed = (seed_base + hash(psm1._sequence)) % (2**31)
+                # Per-PSM unique seed = base + crc32(sequence) to avoid
+                # every PSM producing identical shuffles. zlib.crc32 is
+                # used instead of built-in hash() because Python's
+                # string hash() is randomized per process (PYTHONHASHSEED),
+                # which would silently defeat reproducibility across runs.
+                seq_hash = zlib.crc32(psm1._sequence.encode())
+                per_psm_seed = (seed_base + seq_hash) % (2**31)
                 new_sequence = sequence_controlled_shuffle(
                     psm1._sequence,
                     anchor_len=2, shuffle_ratio=0.5,

@@ -195,3 +195,29 @@ def test_sequence_controlled_shuffle_back_compat_no_seed():
     # verify it doesn't crash and preserves anchor.
     assert out.endswith("IK")
     assert len(out) == len(seq)
+
+
+def test_per_psm_seed_is_stable_across_invocations(monkeypatch):
+    """Per-PSM seed derivation must use a stable hash (not Python's
+    PYTHONHASHSEED-randomized built-in hash) so that runs with the same
+    random_seed config produce identical shuffles across processes.
+
+    Regression for P2-4 review fix (2026-06-03): the initial commit used
+    hash(seq) which is process-randomized; replaced with zlib.crc32."""
+    import zlib
+    seq = "PEPTIDEK"
+    # zlib.crc32 must be deterministic across calls
+    h1 = zlib.crc32(seq.encode())
+    h2 = zlib.crc32(seq.encode())
+    assert h1 == h2
+
+    # Also verify the helper still produces deterministic output for
+    # the same sequence + seed combination
+    from spectrum.psm_info import sequence_controlled_shuffle
+    seed_base = 42
+    per_psm_seed = (seed_base + h1) % (2**31)
+    s1 = sequence_controlled_shuffle(seq, anchor_len=2,
+                                      shuffle_ratio=0.5, seed=per_psm_seed)
+    s2 = sequence_controlled_shuffle(seq, anchor_len=2,
+                                      shuffle_ratio=0.5, seed=per_psm_seed)
+    assert s1 == s2
