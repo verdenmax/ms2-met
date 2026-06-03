@@ -215,8 +215,11 @@ def main():
 
     # Evaluate
     report_path = cfg['output']['result_path']
-    fig_path = f"runs/spec_trainer/figures/{args.name}_importance.png"
-    roc_path = f"runs/spec_trainer/figures/{args.name}_roc_curve.png"
+    # P2-6 (Pipeline-I6, 2026-06-03 audit): figures dir from yaml config.
+    # Default keeps back-compat for older yamls without figures_dir.
+    figures_dir = cfg['output'].get('figures_dir', 'runs/spec_trainer/figures')
+    fig_path = os.path.join(figures_dir, f"{args.name}_importance.png")
+    roc_path = os.path.join(figures_dir, f"{args.name}_roc_curve.png")
 
     evaluate_and_report(
         y_test, y_pred, y_proba,

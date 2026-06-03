@@ -162,3 +162,18 @@ def test_both_exp_yamls_set_is_unbalance_for_imbalanced_data():
             f"{name}: lightgbm is_unbalance must be True for imbalanced "
             f"SILAC data (~1% positives). Got {is_unbalance}. "
             f"See P1-4, Pipeline-I3 (2026-06-03 audit).")
+
+
+def test_both_exp_yamls_set_figures_dir():
+    """Both exp1 and exp2 must set output.figures_dir (P2-6, Pipeline-I6)."""
+    import os
+    import yaml
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in ("exp1.yaml", "exp2.yaml"):
+        p = os.path.join(project_root, "tools", "spec_trainer", "config", name)
+        with open(p) as f:
+            cfg = yaml.safe_load(f)
+        figures_dir = cfg.get("output", {}).get("figures_dir")
+        assert figures_dir, (
+            f"{name}: output.figures_dir must be set, not None/missing "
+            f"(P2-6, Pipeline-I6)")

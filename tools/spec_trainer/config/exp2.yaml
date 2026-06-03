@@ -34,3 +34,4 @@ training:
 output:
   model_path: runs/spec_trainer/models/exp2.txt
   result_path: runs/spec_trainer/results/exp2.json
+  figures_dir: runs/spec_trainer/figures  # P2-6, Pipeline-I6 (2026-06-03 audit)
