@@ -566,6 +566,26 @@ runs/baseline_5da_clean/features.csv:
 runs/baseline_normal_clean/features.csv:
 	$(MAKE) normal
 
+# neg-FDR variants (review fix: ensure train-{neg05,neg10}-all can auto-trigger
+# the extraction chain if features.csv is missing, matching the *_clean pattern).
+runs/baseline_2da_neg05/features.csv:
+	$(MAKE) 2th-neg05
+
+runs/baseline_5da_neg05/features.csv:
+	$(MAKE) 5th-neg05
+
+runs/baseline_normal_neg05/features.csv:
+	$(MAKE) normal-neg05
+
+runs/baseline_2da_neg10/features.csv:
+	$(MAKE) 2th-neg10
+
+runs/baseline_5da_neg10/features.csv:
+	$(MAKE) 5th-neg10
+
+runs/baseline_normal_neg10/features.csv:
+	$(MAKE) normal-neg10
+
 train-exp1: runs/baseline_2da_clean/features.csv tools/spec_trainer/config/exp1.yaml
 	$(call BANNER,train-exp1)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
@@ -591,6 +611,20 @@ train-legacy-all: train-exp1 train-exp2
 
 SPEC_CFG := tools/spec_trainer/config
 
+# Features.csv lists per FDR — used as prerequisites so 'make train-*-all'
+# auto-triggers extraction when CSVs are missing (review fix).
+CLEAN_FEATURES := runs/baseline_2da_clean/features.csv \
+                  runs/baseline_5da_clean/features.csv \
+                  runs/baseline_normal_clean/features.csv
+
+NEG05_FEATURES := runs/baseline_2da_neg05/features.csv \
+                  runs/baseline_5da_neg05/features.csv \
+                  runs/baseline_normal_neg05/features.csv
+
+NEG10_FEATURES := runs/baseline_2da_neg10/features.csv \
+                  runs/baseline_5da_neg10/features.csv \
+                  runs/baseline_normal_neg10/features.csv
+
 CLEAN_YAMLS := $(SPEC_CFG)/in_2da_clean.yaml \
                $(SPEC_CFG)/in_5da_clean.yaml \
                $(SPEC_CFG)/in_normal_clean.yaml \
@@ -612,7 +646,7 @@ NEG10_YAMLS := $(SPEC_CFG)/in_2da_neg10.yaml \
                $(SPEC_CFG)/cross_test_5da_neg10.yaml \
                $(SPEC_CFG)/cross_test_normal_neg10.yaml
 
-train-clean-all:
+train-clean-all: $(CLEAN_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
 	@for yaml in $(CLEAN_YAMLS); do \
 		name=$$(basename $$yaml .yaml); \
@@ -621,7 +655,7 @@ train-clean-all:
 	done
 	@echo "[done] train-clean-all finished (6 experiments)"
 
-train-neg05-all:
+train-neg05-all: $(NEG05_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
 	@for yaml in $(NEG05_YAMLS); do \
 		name=$$(basename $$yaml .yaml); \
@@ -630,7 +664,7 @@ train-neg05-all:
 	done
 	@echo "[done] train-neg05-all finished (6 experiments)"
 
-train-neg10-all:
+train-neg10-all: $(NEG10_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
 	@for yaml in $(NEG10_YAMLS); do \
 		name=$$(basename $$yaml .yaml); \
@@ -639,7 +673,15 @@ train-neg10-all:
 	done
 	@echo "[done] train-neg10-all finished (6 experiments)"
 
-train-all: train-clean-all train-neg05-all train-neg10-all
+# Recursive $(MAKE) invocations force strictly sequential execution even
+# under 'make -j N' — phony-prereq chaining would otherwise let make
+# parallelize the 3 groups, interleaving the per-experiment banners and
+# breaking the documented "clean → neg05 → neg10" order (review fix).
+train-all:
+	$(MAKE) train-clean-all
+	$(MAKE) train-neg05-all
+	$(MAKE) train-neg10-all
+	@echo "[done] train-all finished (18 experiments)"
 
 clean-train:
 	@if [ -d runs/spec_trainer ]; then \

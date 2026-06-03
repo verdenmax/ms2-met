@@ -173,6 +173,67 @@ def test_makefile_train_all_includes_three_fdr_groups():
             f"missing reference to {marker!r}")
 
 
+def test_makefile_train_all_uses_recursive_make_for_sequential_order():
+    """train-all must invoke sub-targets via $(MAKE) (recursive) rather
+    than phony prereqs, so that 'make -j N train-all' still runs the
+    3 FDR groups strictly sequentially (clean → neg05 → neg10), per
+    the documented order.
+
+    Regression for code-review finding (2026-06-03): phony-prereq form
+    `train-all: train-clean-all train-neg05-all train-neg10-all` would
+    let make parallelize the 3 groups under -j, interleaving banners
+    and breaking the documented sequential order.
+    """
+    makefile_path = os.path.join(_PROJECT_ROOT, "Makefile")
+    with open(makefile_path) as f:
+        content = f.read()
+
+    # Find the train-all target block: everything from 'train-all:' to
+    # the next blank line / next target. Recursive $(MAKE) calls must
+    # be present for each of the 3 FDR groups.
+    in_block = False
+    block_lines = []
+    for line in content.splitlines():
+        if line.startswith("train-all:"):
+            in_block = True
+            block_lines.append(line)
+            continue
+        if in_block:
+            if line.startswith("\t") or line == "":
+                block_lines.append(line)
+                if line == "":
+                    break
+            else:
+                break
+    block = "\n".join(block_lines)
+
+    for sub in ("train-clean-all", "train-neg05-all", "train-neg10-all"):
+        assert f"$(MAKE) {sub}" in block, (
+            f"train-all should invoke '{sub}' via recursive $(MAKE) "
+            f"to enforce sequential execution; got block:\n{block}")
+
+
+def test_makefile_neg_features_have_autobuild_rules():
+    """All 9 features.csv paths used by train-*-all must have a pattern
+    rule so 'make' can auto-trigger extraction when the file is missing.
+
+    Regression for code-review finding (2026-06-03): originally only the
+    3 *_clean features.csv had autobuild rules; the 6 neg{05,10}
+    variants would fail opaquely if the user ran train-neg05-all on a
+    fresh checkout.
+    """
+    makefile_path = os.path.join(_PROJECT_ROOT, "Makefile")
+    with open(makefile_path) as f:
+        content = f.read()
+
+    for ds in _DATASETS:
+        for fdr in _FDRS:
+            target = f"runs/baseline_{ds}_{fdr}/features.csv:"
+            assert target in content, (
+                f"Missing autobuild rule for {target!r}; train-*-all "
+                f"cannot guarantee features.csv presence")
+
+
 def test_makefile_phony_includes_train_matrix_targets():
     """All 5 train-matrix targets must be in .PHONY."""
     makefile_path = os.path.join(_PROJECT_ROOT, "Makefile")
