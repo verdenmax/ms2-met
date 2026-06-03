@@ -62,10 +62,18 @@ def resolve_feature_cols(explicit, sample_csv_paths, target_col):
     first_df = pd.read_csv(sample_csv_paths[0], nrows=0) if sample_csv_paths else None
     ordered = list(first_df.columns) if first_df is not None else []
 
-    return [
+    result = [
         c for c in ordered
         if c in intersection
         and c not in META_COLUMNS
         and c not in EXCLUDED_EXTRA
         and c != target_col
     ]
+    if not result:
+        raise ValueError(
+            f"resolve_feature_cols returned 0 features from "
+            f"{sample_csv_paths}; all columns are in META_COLUMNS / "
+            f"EXCLUDED_EXTRA / target_col. Check yaml feature_cols or "
+            f"add features to the CSV. (P2-7, Silent-I5)"
+        )
+    return result

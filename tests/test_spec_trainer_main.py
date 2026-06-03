@@ -8,6 +8,8 @@ on missing lightgbm.
 import os
 import sys
 
+import pytest
+
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SPEC_TRAINER_SRC = os.path.join(_PROJECT_ROOT, "tools", "spec_trainer", "src")
@@ -144,3 +146,18 @@ def test_resolve_feature_cols_logs_warning_on_dropped_columns(tmp_path, caplog):
     msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("feat_a_only" in m for m in msgs), (
         f"Expected warning about feat_a_only being dropped; got: {msgs}")
+
+
+def test_resolve_feature_cols_raises_when_result_empty(tmp_path):
+    """Empty result must raise ValueError, not silently return []
+    (P2-7, Silent-I5)."""
+    from feature_cols import resolve_feature_cols
+    csv = tmp_path / "empty.csv"
+    # All META columns; nothing left after exclusion
+    csv.write_text("label,sequence,charge,modification_count\n")
+    with pytest.raises(ValueError, match="0 features"):
+        resolve_feature_cols(
+            explicit=None,
+            sample_csv_paths=[str(csv)],
+            target_col="label",
+        )
