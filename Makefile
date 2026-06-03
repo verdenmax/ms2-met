@@ -31,6 +31,23 @@ DIR_2TH    ?= runs/baseline_2da_clean
 DIR_5TH    ?= runs/baseline_5da_clean
 DIR_NORMAL ?= runs/baseline_normal_clean
 
+# Neg-FDR 变体 ini（dual-FDR：仅放宽负例池）
+# 见 docs/specs/2026-06-03-neg-fdr-variants-design.md
+INI_2TH_NEG05    ?= extract_2da_neg05.ini
+INI_2TH_NEG10    ?= extract_2da_neg10.ini
+INI_5TH_NEG05    ?= extract_5da_neg05.ini
+INI_5TH_NEG10    ?= extract_5da_neg10.ini
+INI_NORMAL_NEG05 ?= extract_normal_neg05.ini
+INI_NORMAL_NEG10 ?= extract_normal_neg10.ini
+
+# Neg-FDR 变体 baseline 目录
+DIR_2TH_NEG05    ?= runs/baseline_2da_neg05
+DIR_2TH_NEG10    ?= runs/baseline_2da_neg10
+DIR_5TH_NEG05    ?= runs/baseline_5da_neg05
+DIR_5TH_NEG10    ?= runs/baseline_5da_neg10
+DIR_NORMAL_NEG05 ?= runs/baseline_normal_neg05
+DIR_NORMAL_NEG10 ?= runs/baseline_normal_neg10
+
 # 从 extract_*.ini 中动态抽取 result_file 路径。
 # 行格式：result_file = ./path/to/output.json    # optional comment
 # 处理：
@@ -49,6 +66,14 @@ JSON_2TH    := $(call EXTRACT_RESULT_FILE,$(INI_2TH))
 JSON_5TH    := $(call EXTRACT_RESULT_FILE,$(INI_5TH))
 JSON_NORMAL := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL))
 
+# Neg-FDR 变体 JSON 路径（从对应 ini 抽取）
+JSON_2TH_NEG05    := $(call EXTRACT_RESULT_FILE,$(INI_2TH_NEG05))
+JSON_2TH_NEG10    := $(call EXTRACT_RESULT_FILE,$(INI_2TH_NEG10))
+JSON_5TH_NEG05    := $(call EXTRACT_RESULT_FILE,$(INI_5TH_NEG05))
+JSON_5TH_NEG10    := $(call EXTRACT_RESULT_FILE,$(INI_5TH_NEG10))
+JSON_NORMAL_NEG05 := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL_NEG05))
+JSON_NORMAL_NEG10 := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL_NEG10))
+
 # --------------------------- 工具 / banner ---------------------------
 
 # 优先用 toilet | lolcat（漂亮），缺失则退回 echo
@@ -64,6 +89,10 @@ endef
 .PHONY: 2th 5th normal
 .PHONY: extract-2th extract-5th extract-normal
 .PHONY: clean-2th clean-5th clean-normal clean-all
+.PHONY: 2th-neg05 2th-neg10 5th-neg05 5th-neg10 normal-neg05 normal-neg10
+.PHONY: extract-2th-neg05 extract-2th-neg10 extract-5th-neg05 extract-5th-neg10 extract-normal-neg05 extract-normal-neg10
+.PHONY: clean-2th-neg05 clean-2th-neg10 clean-5th-neg05 clean-5th-neg10 clean-normal-neg05 clean-normal-neg10
+.PHONY: all-clean all-neg05 all-neg10
 
 help:
 	@echo "ms2-met Makefile — 三种数据集的特征提取流水线"
@@ -80,6 +109,21 @@ help:
 	@echo "  注：extract-* 仅在对应 extract_*.ini 存在时可用。"
 	@echo "      5th / normal 的 ini 默认未提供，features.csv 须外部生成。"
 	@echo ""
+	@echo ""
+	@echo "  Neg-FDR 变体（dual-FDR，仅放宽负例 FDR；正例保持 1%）："
+	@echo "  make 2th-neg05       2Da × negative FDR 5%"
+	@echo "  make 2th-neg10       2Da × negative FDR 10%"
+	@echo "  make 5th-neg05       5Da × negative FDR 5%"
+	@echo "  make 5th-neg10       5Da × negative FDR 10%"
+	@echo "  make normal-neg05    Normal × negative FDR 5%"
+	@echo "  make normal-neg10    Normal × negative FDR 10%"
+	@echo "  make all-clean       别名：make all（FDR 1%）"
+	@echo "  make all-neg05       三个数据集 × negative FDR 5%"
+	@echo "  make all-neg10       三个数据集 × negative FDR 10%"
+	@echo ""
+	@echo "  make extract-2th-neg05  仅生成 2da neg05 JSON（其他类同）"
+	@echo "  make clean-2th-neg05    删除 2da neg05 features.csv（其他类同）"
+	@echo ""
 	@echo "  make clean-2th       删除 2da features.csv / log，强制下次重跑"
 	@echo "  make clean-5th       删除 5da features.csv / log"
 	@echo "  make clean-normal    删除 normal features.csv / log"
@@ -94,9 +138,15 @@ help:
 	@echo "  make run             旧 target：跑 main.py 使用根目录 config.ini"
 	@echo ""
 	@echo "当前抽取的 JSON 路径："
-	@echo "  2th    -> $(JSON_2TH)"
-	@echo "  5th    -> $(JSON_5TH)"
-	@echo "  normal -> $(JSON_NORMAL)"
+	@echo "  2th         -> $(JSON_2TH)"
+	@echo "  5th         -> $(JSON_5TH)"
+	@echo "  normal      -> $(JSON_NORMAL)"
+	@echo "  2th-neg05   -> $(JSON_2TH_NEG05)"
+	@echo "  2th-neg10   -> $(JSON_2TH_NEG10)"
+	@echo "  5th-neg05   -> $(JSON_5TH_NEG05)"
+	@echo "  5th-neg10   -> $(JSON_5TH_NEG10)"
+	@echo "  normal-neg05-> $(JSON_NORMAL_NEG05)"
+	@echo "  normal-neg10-> $(JSON_NORMAL_NEG10)"
 
 # ---------- 2th ----------
 #
@@ -210,6 +260,192 @@ normal: $(DIR_NORMAL)/config.ini
 
 endif
 
+# ---------- 2th-neg05 ----------
+ifneq ($(wildcard $(INI_2TH_NEG05)),)
+
+$(JSON_2TH_NEG05): $(INI_2TH_NEG05)
+	$(call BANNER,extract 2th-neg05)
+	$(PY) tools/extract_common.py --configpath $(INI_2TH_NEG05)
+
+extract-2th-neg05: $(JSON_2TH_NEG05)
+
+2th-neg05: $(INI_2TH_NEG05) $(JSON_2TH_NEG05) $(DIR_2TH_NEG05)/config.ini
+	$(call BANNER,2th-neg05)
+	$(PY) main.py --configpath $(DIR_2TH_NEG05)/config.ini --logpath $(DIR_2TH_NEG05)/extract.log
+	@echo "[done] features written under $(DIR_2TH_NEG05)/"
+
+else  # $(INI_2TH_NEG05) absent — features.csv must be externally provided
+
+extract-2th-neg05:
+	@echo "[error] $(INI_2TH_NEG05) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+2th-neg05: $(DIR_2TH_NEG05)/config.ini
+	$(call BANNER,2th-neg05)
+	@if [ ! -f "$(DIR_2TH_NEG05)/features.csv" ]; then \
+		echo "[note] $(INI_2TH_NEG05) absent — $(DIR_2TH_NEG05)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_2TH_NEG05)/config.ini --logpath $(DIR_2TH_NEG05)/extract.log
+	@echo "[done] features written under $(DIR_2TH_NEG05)/"
+
+endif
+
+# ---------- 2th-neg10 ----------
+ifneq ($(wildcard $(INI_2TH_NEG10)),)
+
+$(JSON_2TH_NEG10): $(INI_2TH_NEG10)
+	$(call BANNER,extract 2th-neg10)
+	$(PY) tools/extract_common.py --configpath $(INI_2TH_NEG10)
+
+extract-2th-neg10: $(JSON_2TH_NEG10)
+
+2th-neg10: $(INI_2TH_NEG10) $(JSON_2TH_NEG10) $(DIR_2TH_NEG10)/config.ini
+	$(call BANNER,2th-neg10)
+	$(PY) main.py --configpath $(DIR_2TH_NEG10)/config.ini --logpath $(DIR_2TH_NEG10)/extract.log
+	@echo "[done] features written under $(DIR_2TH_NEG10)/"
+
+else  # $(INI_2TH_NEG10) absent — features.csv must be externally provided
+
+extract-2th-neg10:
+	@echo "[error] $(INI_2TH_NEG10) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+2th-neg10: $(DIR_2TH_NEG10)/config.ini
+	$(call BANNER,2th-neg10)
+	@if [ ! -f "$(DIR_2TH_NEG10)/features.csv" ]; then \
+		echo "[note] $(INI_2TH_NEG10) absent — $(DIR_2TH_NEG10)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_2TH_NEG10)/config.ini --logpath $(DIR_2TH_NEG10)/extract.log
+	@echo "[done] features written under $(DIR_2TH_NEG10)/"
+
+endif
+
+# ---------- 5th-neg05 ----------
+ifneq ($(wildcard $(INI_5TH_NEG05)),)
+
+$(JSON_5TH_NEG05): $(INI_5TH_NEG05)
+	$(call BANNER,extract 5th-neg05)
+	$(PY) tools/extract_common.py --configpath $(INI_5TH_NEG05)
+
+extract-5th-neg05: $(JSON_5TH_NEG05)
+
+5th-neg05: $(INI_5TH_NEG05) $(JSON_5TH_NEG05) $(DIR_5TH_NEG05)/config.ini
+	$(call BANNER,5th-neg05)
+	$(PY) main.py --configpath $(DIR_5TH_NEG05)/config.ini --logpath $(DIR_5TH_NEG05)/extract.log
+	@echo "[done] features written under $(DIR_5TH_NEG05)/"
+
+else  # $(INI_5TH_NEG05) absent — features.csv must be externally provided
+
+extract-5th-neg05:
+	@echo "[error] $(INI_5TH_NEG05) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+5th-neg05: $(DIR_5TH_NEG05)/config.ini
+	$(call BANNER,5th-neg05)
+	@if [ ! -f "$(DIR_5TH_NEG05)/features.csv" ]; then \
+		echo "[note] $(INI_5TH_NEG05) absent — $(DIR_5TH_NEG05)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_5TH_NEG05)/config.ini --logpath $(DIR_5TH_NEG05)/extract.log
+	@echo "[done] features written under $(DIR_5TH_NEG05)/"
+
+endif
+
+# ---------- 5th-neg10 ----------
+ifneq ($(wildcard $(INI_5TH_NEG10)),)
+
+$(JSON_5TH_NEG10): $(INI_5TH_NEG10)
+	$(call BANNER,extract 5th-neg10)
+	$(PY) tools/extract_common.py --configpath $(INI_5TH_NEG10)
+
+extract-5th-neg10: $(JSON_5TH_NEG10)
+
+5th-neg10: $(INI_5TH_NEG10) $(JSON_5TH_NEG10) $(DIR_5TH_NEG10)/config.ini
+	$(call BANNER,5th-neg10)
+	$(PY) main.py --configpath $(DIR_5TH_NEG10)/config.ini --logpath $(DIR_5TH_NEG10)/extract.log
+	@echo "[done] features written under $(DIR_5TH_NEG10)/"
+
+else  # $(INI_5TH_NEG10) absent — features.csv must be externally provided
+
+extract-5th-neg10:
+	@echo "[error] $(INI_5TH_NEG10) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+5th-neg10: $(DIR_5TH_NEG10)/config.ini
+	$(call BANNER,5th-neg10)
+	@if [ ! -f "$(DIR_5TH_NEG10)/features.csv" ]; then \
+		echo "[note] $(INI_5TH_NEG10) absent — $(DIR_5TH_NEG10)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_5TH_NEG10)/config.ini --logpath $(DIR_5TH_NEG10)/extract.log
+	@echo "[done] features written under $(DIR_5TH_NEG10)/"
+
+endif
+
+# ---------- normal-neg05 ----------
+ifneq ($(wildcard $(INI_NORMAL_NEG05)),)
+
+$(JSON_NORMAL_NEG05): $(INI_NORMAL_NEG05)
+	$(call BANNER,extract normal-neg05)
+	$(PY) tools/extract_common.py --configpath $(INI_NORMAL_NEG05)
+
+extract-normal-neg05: $(JSON_NORMAL_NEG05)
+
+normal-neg05: $(INI_NORMAL_NEG05) $(JSON_NORMAL_NEG05) $(DIR_NORMAL_NEG05)/config.ini
+	$(call BANNER,normal-neg05)
+	$(PY) main.py --configpath $(DIR_NORMAL_NEG05)/config.ini --logpath $(DIR_NORMAL_NEG05)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL_NEG05)/"
+
+else  # $(INI_NORMAL_NEG05) absent — features.csv must be externally provided
+
+extract-normal-neg05:
+	@echo "[error] $(INI_NORMAL_NEG05) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+normal-neg05: $(DIR_NORMAL_NEG05)/config.ini
+	$(call BANNER,normal-neg05)
+	@if [ ! -f "$(DIR_NORMAL_NEG05)/features.csv" ]; then \
+		echo "[note] $(INI_NORMAL_NEG05) absent — $(DIR_NORMAL_NEG05)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_NORMAL_NEG05)/config.ini --logpath $(DIR_NORMAL_NEG05)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL_NEG05)/"
+
+endif
+
+# ---------- normal-neg10 ----------
+ifneq ($(wildcard $(INI_NORMAL_NEG10)),)
+
+$(JSON_NORMAL_NEG10): $(INI_NORMAL_NEG10)
+	$(call BANNER,extract normal-neg10)
+	$(PY) tools/extract_common.py --configpath $(INI_NORMAL_NEG10)
+
+extract-normal-neg10: $(JSON_NORMAL_NEG10)
+
+normal-neg10: $(INI_NORMAL_NEG10) $(JSON_NORMAL_NEG10) $(DIR_NORMAL_NEG10)/config.ini
+	$(call BANNER,normal-neg10)
+	$(PY) main.py --configpath $(DIR_NORMAL_NEG10)/config.ini --logpath $(DIR_NORMAL_NEG10)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL_NEG10)/"
+
+else  # $(INI_NORMAL_NEG10) absent — features.csv must be externally provided
+
+extract-normal-neg10:
+	@echo "[error] $(INI_NORMAL_NEG10) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+normal-neg10: $(DIR_NORMAL_NEG10)/config.ini
+	$(call BANNER,normal-neg10)
+	@if [ ! -f "$(DIR_NORMAL_NEG10)/features.csv" ]; then \
+		echo "[note] $(INI_NORMAL_NEG10) absent — $(DIR_NORMAL_NEG10)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_NORMAL_NEG10)/config.ini --logpath $(DIR_NORMAL_NEG10)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL_NEG10)/"
+
+endif
+
 # ---------- 组合 ----------
 
 all: 2th 5th normal
@@ -246,6 +482,60 @@ clean-normal:
 	fi
 
 clean-all: clean-2th clean-5th clean-normal
+
+# Neg-FDR variant clean targets (same conservative pattern as clean-2th/5th/normal)
+clean-2th-neg05:
+	@if [ -d $(DIR_2TH_NEG05) ]; then \
+		rm -f $(DIR_2TH_NEG05)/features.csv $(DIR_2TH_NEG05)/features.csv.PARTIAL_INCOMPLETE $(DIR_2TH_NEG05)/*.log; \
+		echo "[cleaned] $(DIR_2TH_NEG05)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_2TH_NEG05)/ does not exist"; \
+	fi
+
+clean-2th-neg10:
+	@if [ -d $(DIR_2TH_NEG10) ]; then \
+		rm -f $(DIR_2TH_NEG10)/features.csv $(DIR_2TH_NEG10)/features.csv.PARTIAL_INCOMPLETE $(DIR_2TH_NEG10)/*.log; \
+		echo "[cleaned] $(DIR_2TH_NEG10)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_2TH_NEG10)/ does not exist"; \
+	fi
+
+clean-5th-neg05:
+	@if [ -d $(DIR_5TH_NEG05) ]; then \
+		rm -f $(DIR_5TH_NEG05)/features.csv $(DIR_5TH_NEG05)/features.csv.PARTIAL_INCOMPLETE $(DIR_5TH_NEG05)/*.log; \
+		echo "[cleaned] $(DIR_5TH_NEG05)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_5TH_NEG05)/ does not exist"; \
+	fi
+
+clean-5th-neg10:
+	@if [ -d $(DIR_5TH_NEG10) ]; then \
+		rm -f $(DIR_5TH_NEG10)/features.csv $(DIR_5TH_NEG10)/features.csv.PARTIAL_INCOMPLETE $(DIR_5TH_NEG10)/*.log; \
+		echo "[cleaned] $(DIR_5TH_NEG10)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_5TH_NEG10)/ does not exist"; \
+	fi
+
+clean-normal-neg05:
+	@if [ -d $(DIR_NORMAL_NEG05) ]; then \
+		rm -f $(DIR_NORMAL_NEG05)/features.csv $(DIR_NORMAL_NEG05)/features.csv.PARTIAL_INCOMPLETE $(DIR_NORMAL_NEG05)/*.log; \
+		echo "[cleaned] $(DIR_NORMAL_NEG05)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_NORMAL_NEG05)/ does not exist"; \
+	fi
+
+clean-normal-neg10:
+	@if [ -d $(DIR_NORMAL_NEG10) ]; then \
+		rm -f $(DIR_NORMAL_NEG10)/features.csv $(DIR_NORMAL_NEG10)/features.csv.PARTIAL_INCOMPLETE $(DIR_NORMAL_NEG10)/*.log; \
+		echo "[cleaned] $(DIR_NORMAL_NEG10)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_NORMAL_NEG10)/ does not exist"; \
+	fi
+
+# Group targets
+all-clean: all
+all-neg05: 2th-neg05 5th-neg05 normal-neg05
+all-neg10: 2th-neg10 5th-neg10 normal-neg10
 
 # ---------- spec_trainer 训练 target ----------
 #
