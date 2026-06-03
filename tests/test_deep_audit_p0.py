@@ -417,3 +417,60 @@ def test_data_manager_get_centroid_params_defaults_when_no_config():
     enabled, thresh = mgr.get_centroid_params()
     assert enabled is DEFAULT_CENTROID_ENABLED
     assert thresh == DEFAULT_CENTROID_REL_THRESHOLD
+
+
+def test_multi_batch_work_passes_heavy_mass_for_heavy_xic():
+    """multi_batch_work must pass heavy_mass (not light_mass) when extracting
+    heavy MS2 XIC from dia_data2 (P0-4, Units-C1)."""
+    from workflows.single_work import multi_batch_work
+
+    captured = {"light_calls": [], "heavy_calls": []}
+
+    class _RecordingDIA(_FakeDIA):
+        def __init__(self, name, force_empty=False):
+            super().__init__(force_empty=force_empty)
+            self._name = name
+
+        def xic_ms2_peaks_extract(self, rt, window, precursor_mz, ions_mass,
+                                   mass_tol_ppm):
+            captured[f"{self._name}_calls"].append(
+                {"precursor_mz": precursor_mz, "ions_mass": ions_mass})
+            return super().xic_ms2_peaks_extract(rt, window, precursor_mz,
+                                                  ions_mass, mass_tol_ppm)
+
+    class _PSMWithHeavyFrag:
+        """PSM whose get_heavy_info returns one fragment with distinct
+        light vs heavy mass."""
+        def __init__(self, mz=500.0, rt=10.0):
+            self._precursor_mz = mz
+            self._rt = rt
+            self._sequence = "AAAAK"
+            self._charge = 2
+            self._raw_title = "fake.mzML"
+            self._protein_names = "HUMAN"
+            self._label_type = "positive"
+            self._modify = []
+
+        def get_heavy_info(self, heavy_type):
+            return self._precursor_mz + 4.0, [("y", 1, 100.0, 110.0)]
+
+    dia_light = _RecordingDIA("light")
+    dia_heavy = _RecordingDIA("heavy")
+    psm1 = _PSMWithHeavyFrag(mz=500.0, rt=10.0)
+    psm2 = _PSMWithHeavyFrag(mz=504.0, rt=10.1)
+
+    multi_batch_work(psm1, dia_light, psm2, dia_heavy, _minimal_config())
+
+    # dia_light queried with light_mass=100.0
+    light_masses = [c["ions_mass"] for c in captured["light_calls"]]
+    assert 100.0 in light_masses, (
+        f"P0-4: light DIA should be queried with light_mass; got {light_masses}")
+
+    # dia_heavy queried with heavy_mass=110.0 (NOT light_mass=100.0)
+    heavy_masses = [c["ions_mass"] for c in captured["heavy_calls"]]
+    assert 110.0 in heavy_masses, (
+        f"P0-4: heavy DIA must be queried with heavy_mass=110.0; "
+        f"got {heavy_masses}")
+    assert 100.0 not in heavy_masses, (
+        f"P0-4: heavy DIA must NOT receive light_mass=100.0 (Units-C1 bug); "
+        f"got {heavy_masses}")

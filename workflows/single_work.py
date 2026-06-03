@@ -220,7 +220,7 @@ def multi_batch_work(
         heavy_ions_xic, heavy_all_intensity = dia_data2.xic_ms2_peaks_extract(
             psm2._rt, xic_cycle_window,
             precursor_mz=psm2._precursor_mz,
-            ions_mass=light_mass,
+            ions_mass=heavy_mass,
             mass_tol_ppm=mass_tol_ppm
         )
 
