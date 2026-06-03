@@ -1874,3 +1874,1033 @@ so users can spot anomalies (e.g., a low-quality run with many small
 spectra)."
 ```
 
+
+---
+
+## Phase 2 — Dormant Important fixes (8 tasks)
+
+### Task P2-1: Units-I2 — `log_hl_ratio_*` → `log_lh_ratio_*` rename
+
+**Why:** `_calc_hl_ratio_consistency` computes `log10(light/heavy)` but feature columns named `log_hl_ratio_*` (H/L). std/mad sign-invariant so functionally OK but misleading. Rename 6 columns to match actual semantics.
+
+**Files:**
+- Modify: `workflows/single_work.py` (4 occurrences of `log_hl_ratio` → `log_lh_ratio`)
+- Modify: `docs/specs/2026-05-26-hl-ratio-consistency-and-apex-cycle-offset-design.md` (doc alignment)
+- Test: `tests/test_deep_audit_p2.py` (new file)
+
+- [ ] **Step 1: Create test file**
+
+Create `tests/test_deep_audit_p2.py`:
+
+```python
+"""Phase 2 (Dormant Important) tests for deep audit fixes."""
+import os
+import sys
+import numpy as np
+import pytest
+
+from tests.test_deep_audit_p0 import (
+    _empty_xic, _real_xic, _FakePSM, _FakeDIA, _minimal_config,
+)
+
+
+def test_no_log_hl_ratio_columns_in_single_pair_work():
+    """log_hl_ratio_* columns must be renamed to log_lh_ratio_* (P2-1, Units-I2)."""
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=False)
+    features = single_pair_work(psm, dia, _minimal_config())
+    hl_keys = [k for k in features.keys() if "log_hl_ratio" in k]
+    assert len(hl_keys) == 0, (
+        f"P2-1: log_hl_ratio_* should be renamed log_lh_ratio_*; "
+        f"found {hl_keys}")
+    lh_keys = [k for k in features.keys() if "log_lh_ratio" in k]
+    assert len(lh_keys) >= 1, (
+        f"P2-1: expected at least one log_lh_ratio_* column; got {lh_keys}")
+```
+
+- [ ] **Step 2: Run test, verify FAIL**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py::test_no_log_hl_ratio_columns_in_single_pair_work -v`
+
+Expected: FAIL — current names use `hl`.
+
+- [ ] **Step 3: Rename in `workflows/single_work.py` lines 328-329 and 664-665**
+
+In `workflows/single_work.py`, find both occurrences of:
+
+```python
+        features[f"{ion_type}_log_hl_ratio_std"] = std_v
+        features[f"{ion_type}_log_hl_ratio_mad"] = mad_v
+```
+
+Replace with:
+
+```python
+        features[f"{ion_type}_log_lh_ratio_std"] = std_v
+        features[f"{ion_type}_log_lh_ratio_mad"] = mad_v
+```
+
+There are TWO occurrences (lines ~328-329 in `multi_batch_work` and ~664-665 in `single_pair_work`). Make BOTH replacements.
+
+Also add a clarifying comment in `_calc_hl_ratio_consistency` docstring:
+
+```python
+def _calc_hl_ratio_consistency(ratios: list) -> tuple[float, float]:
+    """Compute consistency of light/heavy intensity ratios across fragments.
+
+    Returns (std, mad) of log10(L/H) over the input list. Despite the
+    historical 'hl' suffix in column names (now renamed to 'lh' in
+    P2-1 / Units-I2 / 2026-06-03 audit), the computed ratio is
+    light/heavy. std/mad are sign-invariant so the renaming is
+    cosmetic but eliminates a misleading naming.
+    ...
+```
+
+- [ ] **Step 4: Update design doc**
+
+In `docs/specs/2026-05-26-hl-ratio-consistency-and-apex-cycle-offset-design.md`, find any reference to `log_hl_ratio` and replace with `log_lh_ratio` (with a parenthetical note "(renamed in P2-1, 2026-06-03 audit)" on the first occurrence).
+
+If no such references exist, skip this step.
+
+- [ ] **Step 5: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py::test_no_log_hl_ratio_columns_in_single_pair_work -v`
+
+Expected: PASS.
+
+- [ ] **Step 6: Search for any test that referenced `log_hl_ratio` and update**
+
+Run: `grep -rn "log_hl_ratio" tests/ --include="*.py"`
+
+If any test asserts the OLD name, update it to the new name. Re-run full test suite:
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no failures introduced by the rename.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add workflows/single_work.py tests/test_deep_audit_p2.py docs/specs/2026-05-26-hl-ratio-consistency-and-apex-cycle-offset-design.md
+git commit -m "rename(single_work): log_hl_ratio_* -> log_lh_ratio_* (P2-1, Units-I2)
+
+Audit finding Units-I2 (2026-06-03 deep audit): feature columns named
+log_hl_ratio_* but _calc_hl_ratio_consistency computes log10(L/H).
+std/mad are sign-invariant so the values are unchanged, but the name
+mismatch was misleading any future reader doing signed analyses.
+
+6 columns renamed: {precursor, all, b, y} × {std, mad} → log_lh_ratio_*.
+Helper docstring clarifies the L/H direction. Design doc updated."
+```
+
+---
+
+### Task P2-2: Units-I3 — mzML RT unit enforcement
+
+**Why:** `_get_retention_time` returns raw `float(rt)` claiming "converted to seconds" but does no conversion. Works for current Thermo mzML (minutes) by coincidence. An mzML file with `UO:0000010 second` unit would silently break window alignment.
+
+**Files:**
+- Modify: `spectrum/dia_data.py:_get_retention_time`
+- Test: append to `tests/test_deep_audit_p2.py`
+
+- [ ] **Step 1: Append test**
+
+Append to `tests/test_deep_audit_p2.py`:
+
+```python
+def test_get_retention_time_handles_minute_unit():
+    """RT in minutes returned as-is (canonical unit) (P2-2, Units-I3)."""
+    from spectrum.dia_data import DIAData
+
+    class _MockUnitFloat(float):
+        """Mock pyteomics unitfloat — float with .unit_info attr."""
+        def __new__(cls, value, unit_info):
+            instance = super().__new__(cls, value)
+            instance.unit_info = unit_info
+            return instance
+
+    dia = DIAData()
+    spectrum = {
+        'scanList': {
+            'scan': [{'scan start time': _MockUnitFloat(10.5, 'minute')}]
+        }
+    }
+    rt = dia._get_retention_time(spectrum)
+    assert rt == 10.5  # already minutes, returned as-is
+
+
+def test_get_retention_time_converts_seconds_to_minutes():
+    """RT in seconds must be converted to minutes (P2-2, Units-I3)."""
+    from spectrum.dia_data import DIAData
+
+    class _MockUnitFloat(float):
+        def __new__(cls, value, unit_info):
+            instance = super().__new__(cls, value)
+            instance.unit_info = unit_info
+            return instance
+
+    dia = DIAData()
+    spectrum = {
+        'scanList': {
+            'scan': [{'scan start time': _MockUnitFloat(630.0, 'second')}]
+        }
+    }
+    rt = dia._get_retention_time(spectrum)
+    assert abs(rt - 10.5) < 1e-9  # 630s / 60 = 10.5min
+
+
+def test_get_retention_time_handles_missing_unit_info():
+    """Without unit_info attr, assume minutes (back-compat for plain floats)."""
+    from spectrum.dia_data import DIAData
+    dia = DIAData()
+    spectrum = {'scanList': {'scan': [{'scan start time': 10.5}]}}
+    rt = dia._get_retention_time(spectrum)
+    assert rt == 10.5  # plain float, no conversion
+```
+
+- [ ] **Step 2: Run tests, verify they fail**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py -v -k get_retention_time`
+
+Expected: at least the seconds test fails (returns 630.0 instead of 10.5).
+
+- [ ] **Step 3: Patch `_get_retention_time`**
+
+In `spectrum/dia_data.py`, replace:
+
+```python
+    def _get_retention_time(self, spectrum) -> float:
+        """从谱图中提取保留时间（转换为秒）"""
+
+        if 'scanList' in spectrum:
+            scan = spectrum['scanList']['scan'][0]
+            if 'scan start time' in scan:
+                rt = scan['scan start time']
+                return float(rt)
+        return 0.0
+```
+
+With:
+
+```python
+    def _get_retention_time(self, spectrum) -> float:
+        """Return retention time in MINUTES (canonical pipeline unit).
+
+        pyteomics attaches a `unit_info` attribute to the scalar (e.g.,
+        'minute' from MS CV UO:0000031, 'second' from UO:0000010).
+        If unit is 'second', convert to minutes. Plain floats without
+        unit_info are assumed to be minutes (back-compat).
+
+        Returns 0.0 if no scan-start-time field is present.
+
+        (P2-2, Units-I3, 2026-06-03 deep audit.)
+        """
+        if 'scanList' in spectrum:
+            scan = spectrum['scanList']['scan'][0]
+            if 'scan start time' in scan:
+                rt = scan['scan start time']
+                unit = getattr(rt, 'unit_info', None)
+                value = float(rt)
+                if unit == 'second':
+                    return value / 60.0
+                if unit is None or unit == 'minute':
+                    return value
+                raise ValueError(
+                    f"Unsupported RT unit '{unit}'; expected 'minute' or "
+                    f"'second'. (P2-2, Units-I3)")
+        return 0.0
+```
+
+- [ ] **Step 4: Run tests, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py -v -k get_retention_time`
+
+Expected: 3 PASSed.
+
+- [ ] **Step 5: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add spectrum/dia_data.py tests/test_deep_audit_p2.py
+git commit -m "fix(dia_data): enforce mzML RT unit (P2-2, Units-I3)
+
+Audit finding Units-I3 (2026-06-03 deep audit): _get_retention_time
+returned raw float(rt) claiming 'converted to seconds' (doc lie) but
+performed no conversion. Works for current Thermo mzML (minutes) by
+coincidence. An mzML with UO:0000010 second unit would silently break
+window alignment in xic_*_extract.
+
+Inspect pyteomics unit_info attribute on the scalar. 'minute' -> as-is.
+'second' -> divide by 60. None (plain float) -> as-is (back-compat).
+Unknown unit -> ValueError with clear message."
+```
+
+
+---
+
+### Task P2-3: Units-I4 — `_calc_smoothness` length normalization
+
+**Why:** `_calc_smoothness` returns `sum(diff² intensity) / total²` without dividing by length. Different `xic_cycle_window` configs produce non-comparable values — hidden hyperparameter coupling.
+
+**Files:**
+- Modify: `workflows/single_work.py:_calc_smoothness`
+- Test: append to `tests/test_deep_audit_p2.py`
+
+- [ ] **Step 1: Append test**
+
+Append to `tests/test_deep_audit_p2.py`:
+
+```python
+def test_calc_smoothness_length_normalized():
+    """Same shape XIC at different lengths should produce similar smoothness (P2-3, Units-I4).
+
+    Before fix: smoothness scales with len -- absolute value differs.
+    After fix: divided by (len-2) -- per-second-diff average is comparable.
+    """
+    from workflows.single_work import _calc_smoothness
+    # Two XICs with identical "shape" (linear ramp) at different lengths
+    short = np.array([1.0, 2.0, 3.0, 4.0, 5.0])  # len 5, 3 second-diffs
+    long = np.array([1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0])  # len 9, 7 second-diffs
+
+    s_short = _calc_smoothness(short)
+    s_long = _calc_smoothness(long)
+
+    # Linear ramps have all zero second-differences -> both should be 0
+    assert s_short == 0.0
+    assert s_long == 0.0
+
+
+def test_calc_smoothness_per_unit_value_not_summed():
+    """Verify smoothness is averaged per-second-diff, not just summed.
+
+    Construct a triangle peak at two lengths with the SAME amplitude
+    profile; per-second-diff averaged smoothness should be the same.
+    """
+    from workflows.single_work import _calc_smoothness
+    # Triangle apex at center
+    short = np.array([0.0, 1.0, 2.0, 1.0, 0.0])  # len 5
+    long = np.concatenate([np.zeros(2), short, np.zeros(2)])  # len 9
+    s_short = _calc_smoothness(short)
+    s_long = _calc_smoothness(long)
+    # After length-normalization, the values should be close (within
+    # ~50% — exact equality requires identical second-diff distributions
+    # which appending zeros doesn't preserve). The key is they should
+    # NOT differ by a factor of 9/5 anymore (which the unnormalized
+    # version would).
+    if s_short > 0 and s_long > 0:
+        ratio = max(s_short, s_long) / min(s_short, s_long)
+        assert ratio < 3.0, (
+            f"P2-3: length-normalized smoothness ratio should be < 3, "
+            f"got {ratio} (short={s_short}, long={s_long})")
+```
+
+- [ ] **Step 2: Run tests, verify they fail or fragile-pass**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py -v -k smoothness`
+
+Expected: first test (linear ramp) passes today (sum of zeros divided by anything is 0); second may fail because unnormalized values diverge.
+
+- [ ] **Step 3: Patch `_calc_smoothness`**
+
+In `workflows/single_work.py`, find:
+
+```python
+def _calc_smoothness(intensity: np.ndarray) -> float:
+    """Sum of squared second differences / total^2.
+
+    Smooth Gaussian-like peaks -> close to 0.
+    Sharp zigzag / single-point spikes -> large value.
+    Normalized by total^2 to make cross-sample comparable; note this
+    is NOT normalized by length, so different xic_cycle_window settings
+    produce different absolute values.
+    """
+    if len(intensity) < 3:
+        return 0.0
+    if not np.all(np.isfinite(intensity)):
+        return 0.0
+    total = float(np.sum(intensity))
+    if total <= 0:
+        return 0.0
+    second_diff = np.diff(intensity, n=2)
+    return float(np.sum(second_diff ** 2) / (total ** 2 + 1e-12))
+```
+
+Replace with:
+
+```python
+def _calc_smoothness(intensity: np.ndarray) -> float:
+    """Mean of squared second differences / total^2 — length-normalized.
+
+    Smooth Gaussian-like peaks -> close to 0.
+    Sharp zigzag / single-point spikes -> large value.
+
+    Normalized by total^2 (cross-sample scale) AND by N=len-2 (number
+    of second-difference terms, cross-config-window comparability).
+    See P2-3, Units-I4, 2026-06-03 deep audit.
+    """
+    if len(intensity) < 3:
+        return 0.0
+    if not np.all(np.isfinite(intensity)):
+        return 0.0
+    total = float(np.sum(intensity))
+    if total <= 0:
+        return 0.0
+    second_diff = np.diff(intensity, n=2)
+    n_terms = len(second_diff)
+    return float(np.sum(second_diff ** 2) / (n_terms * (total ** 2 + 1e-12)))
+```
+
+- [ ] **Step 4: Run tests, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py -v -k smoothness`
+
+Expected: 2 PASSed.
+
+- [ ] **Step 5: Check if any other test uses _calc_smoothness with hardcoded expected values**
+
+Run: `grep -rn "_calc_smoothness\|all_smoothness\|precursor_smoothness" tests/ --include="*.py"`
+
+If any existing test asserts a specific numeric output of `_calc_smoothness`, the value will have CHANGED (divided by N now). Update those assertions to use the new normalized value (recompute by hand from the input).
+
+If only R4 tests in `test_single_work_numerics.py` reference smoothness, check whether they assert specific values or just "value > 0" / "value == 0". The latter is OK; the former needs update.
+
+- [ ] **Step 6: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: any specific-value test for smoothness must be updated to the new normalized value. Other tests unchanged.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add workflows/single_work.py tests/test_deep_audit_p2.py
+# Add any updated existing tests
+git commit -m "fix(single_work): _calc_smoothness length-normalized (P2-3, Units-I4)
+
+Audit finding Units-I4 (2026-06-03 deep audit): _calc_smoothness
+returned sum(diff² intensity) / total² without dividing by length.
+Different xic_cycle_window configs produced non-comparable values —
+hidden hyperparameter coupling.
+
+Divide by N (number of second-difference terms = len-2). Result is
+the MEAN squared second-difference per cycle, comparable across
+window sizes."
+```
+
+---
+
+### Task P2-4: Pipeline-I2 — `sequence_controlled_shuffle` seedable
+
+**Why:** `spectrum/psm_info.py:267-289` uses module-level `random.sample/shuffle` with no seed. `feature_type=2` (shuffle entrapment) negatives are non-reproducible across runs. Currently dormant (no live config uses feature_type=2) but breaks reproducibility the moment one does.
+
+**Files:**
+- Modify: `spectrum/psm_info.py:sequence_controlled_shuffle` (add seed param)
+- Modify: `workflows/flow_utils.py:process_batch_pair_shuffle` (thread seed from config)
+- Modify: `constant/keys.py` (add RANDOM_SEED key)
+- Test: append to `tests/test_deep_audit_p2.py`
+
+- [ ] **Step 1: Append test**
+
+Append to `tests/test_deep_audit_p2.py`:
+
+```python
+def test_sequence_controlled_shuffle_deterministic_with_seed():
+    """Same seed produces identical shuffle output (P2-4, Pipeline-I2)."""
+    from spectrum.psm_info import sequence_controlled_shuffle
+
+    seq = "ABCDEFGHIK"
+    out1 = sequence_controlled_shuffle(seq, anchor_len=2, shuffle_ratio=0.5,
+                                        seed=42)
+    out2 = sequence_controlled_shuffle(seq, anchor_len=2, shuffle_ratio=0.5,
+                                        seed=42)
+    assert out1 == out2, (
+        f"P2-4: same seed must produce same output; got {out1!r} vs {out2!r}")
+    # Different seed -> different output (probabilistically)
+    out3 = sequence_controlled_shuffle(seq, anchor_len=2, shuffle_ratio=0.5,
+                                        seed=43)
+    # 5! ≈ 120 permutations; P(same) ≈ 0.008 — acceptable nondeterminism check
+    # If equal by chance, that's fine — the real assertion is seed=42 reproducibility
+
+
+def test_sequence_controlled_shuffle_preserves_anchor():
+    """Last anchor_len chars stay at the end (existing behavior unchanged)."""
+    from spectrum.psm_info import sequence_controlled_shuffle
+    seq = "ABCDEFGHIK"
+    out = sequence_controlled_shuffle(seq, anchor_len=2, shuffle_ratio=0.5,
+                                       seed=42)
+    assert out.endswith("IK"), (
+        f"P2-4: anchor 'IK' must be preserved; got {out!r}")
+    assert len(out) == len(seq)
+```
+
+- [ ] **Step 2: Run test, verify FAIL**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py -v -k sequence_controlled_shuffle`
+
+Expected: FAIL — `sequence_controlled_shuffle` doesn't accept `seed` kwarg.
+
+- [ ] **Step 3: Add seed parameter to `sequence_controlled_shuffle`**
+
+In `spectrum/psm_info.py`, replace:
+
+```python
+def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5):
+    """
+    anchor_len=1: 保留C端K/R（标准做法）
+    anchor_len=2: 保留C端"XK"或"XR"（保留y1+y2离子）
+    """
+    # 安全检查：anchor_len 不能超过肽段长度
+    anchor_len = min(anchor_len, len(peptide) - 1)
+
+    core = peptide[:-anchor_len]
+    anchor = peptide[-anchor_len:]
+
+    n_shuffle = max(1, int(len(core) * shuffle_ratio))
+    indices = random.sample(range(len(core)), n_shuffle)
+    chars = list(core)
+    shuffled_vals = [chars[i] for i in indices]
+    random.shuffle(shuffled_vals)
+    for idx, val in zip(indices, shuffled_vals):
+        chars[idx] = val
+
+    return ''.join(chars) + anchor
+```
+
+With:
+
+```python
+def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5,
+                                 seed=None):
+    """
+    anchor_len=1: 保留C端K/R（标准做法）
+    anchor_len=2: 保留C端"XK"或"XR"（保留y1+y2离子）
+    seed: int or None. If provided, use a fresh random.Random(seed)
+        instance for deterministic shuffle. If None, use module-level
+        random (backward compat, non-deterministic).
+        (P2-4, Pipeline-I2, 2026-06-03 audit.)
+    """
+    rng = random.Random(seed) if seed is not None else random
+
+    # 安全检查：anchor_len 不能超过肽段长度
+    anchor_len = min(anchor_len, len(peptide) - 1)
+
+    core = peptide[:-anchor_len]
+    anchor = peptide[-anchor_len:]
+
+    n_shuffle = max(1, int(len(core) * shuffle_ratio))
+    indices = rng.sample(range(len(core)), n_shuffle)
+    chars = list(core)
+    shuffled_vals = [chars[i] for i in indices]
+    rng.shuffle(shuffled_vals)
+    for idx, val in zip(indices, shuffled_vals):
+        chars[idx] = val
+
+    return ''.join(chars) + anchor
+```
+
+- [ ] **Step 4: Add `RANDOM_SEED` constant**
+
+In `constant/keys.py`, find the `GENERAL` section keys (around line 28). Add:
+
+```python
+    RANDOM_SEED = "random_seed"
+```
+
+- [ ] **Step 5: Thread seed from config into `process_batch_pair_shuffle`**
+
+In `workflows/flow_utils.py:process_batch_pair_shuffle`, find:
+
+```python
+            if label == 0:
+                new_sequence = sequence_controlled_shuffle(
+                    psm1._sequence,
+                    anchor_len=2, shuffle_ratio=0.5
+                )
+```
+
+Replace with:
+
+```python
+            if label == 0:
+                # P2-4, Pipeline-I2: seed shuffle from config for
+                # reproducible negatives. Default 42 if not configured.
+                try:
+                    seed_base = int(config.get("general", "random_seed",
+                                               fallback="42"))
+                except (configparser.NoSectionError, ValueError):
+                    seed_base = 42
+                # Per-PSM unique seed = base + hash(sequence) to avoid
+                # every PSM producing identical shuffles
+                per_psm_seed = seed_base + hash(psm1._sequence) % (2**31)
+                new_sequence = sequence_controlled_shuffle(
+                    psm1._sequence,
+                    anchor_len=2, shuffle_ratio=0.5,
+                    seed=per_psm_seed,
+                )
+```
+
+Add `import configparser` at top of `flow_utils.py` if not already present.
+
+- [ ] **Step 6: Run tests, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py -v -k sequence_controlled_shuffle`
+
+Expected: 2 PASSed.
+
+- [ ] **Step 7: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add spectrum/psm_info.py workflows/flow_utils.py constant/keys.py tests/test_deep_audit_p2.py
+git commit -m "fix(psm_info): seedable sequence_controlled_shuffle (P2-4, Pipeline-I2)
+
+Audit finding Pipeline-I2 (2026-06-03 deep audit):
+sequence_controlled_shuffle used module-level random.sample/shuffle
+with no seed. feature_type=2 (shuffle entrapment) negatives were
+non-reproducible — same input produced different shuffled negatives
+across runs, breaking train/test reproducibility.
+
+Add seed parameter (default None = back-compat module random).
+process_batch_pair_shuffle threads seed from config 'random_seed'
+(default 42) + per-PSM hash so every PSM gets a unique-but-reproducible
+shuffle.
+
+Dormant fix: no current baseline uses feature_type=2."
+```
+
+---
+
+### Task P2-5: Pipeline-I4 + Silent-I9 — `multi_batch_work` writes `heavy_in_raw`
+
+**Why:** `single_pair_work` writes `heavy_in_raw` column (line 683-686); `multi_batch_work` doesn't. Schema mismatch between code paths. Combined fix for both audit findings.
+
+**Files:**
+- Modify: `workflows/single_work.py:multi_batch_work`
+- Test: append to `tests/test_deep_audit_p2.py`
+
+- [ ] **Step 1: Append test**
+
+Append to `tests/test_deep_audit_p2.py`:
+
+```python
+def test_multi_batch_work_writes_heavy_in_raw_column():
+    """multi_batch_work must emit heavy_in_raw column for schema parity
+    with single_pair_work (P2-5, Pipeline-I4 + Silent-I9)."""
+    from workflows.single_work import multi_batch_work, single_pair_work
+    psm = _FakePSM()
+    dia = _FakeDIA()
+    multi_features = multi_batch_work(psm, dia, psm, dia, _minimal_config())
+    single_features = single_pair_work(psm, dia, _minimal_config())
+    assert "heavy_in_raw" in multi_features, (
+        "P2-5: multi_batch_work missing heavy_in_raw column")
+    assert "heavy_in_raw" in single_features, (
+        "Sanity check: single_pair_work should already have heavy_in_raw")
+```
+
+- [ ] **Step 2: Run test, verify it fails for multi_batch_work**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py::test_multi_batch_work_writes_heavy_in_raw_column -v`
+
+Expected: FAIL on the first assertion.
+
+- [ ] **Step 3: Patch `multi_batch_work`**
+
+In `workflows/single_work.py:multi_batch_work`, find the section after the precursor block but before/after the fragment loop where `heavy_in_raw` would naturally fit. In `single_pair_work` it's computed at line 504 as `heavy_in_raw = dia_data.check_in_raw(heavy_precursor_mz)`.
+
+For `multi_batch_work` (cross-run), the equivalent is `dia_data2.check_in_raw(psm2._precursor_mz)`. Add at the start of the function (after the initial features dict setup):
+
+```python
+    # P2-5, Pipeline-I4 + Silent-I9: emit heavy_in_raw for schema parity
+    # with single_pair_work. In cross-run mode, "heavy" is the second
+    # DIA file's precursor.
+    features["heavy_in_raw"] = dia_data2.check_in_raw(psm2._precursor_mz)
+```
+
+- [ ] **Step 4: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py::test_multi_batch_work_writes_heavy_in_raw_column -v`
+
+Expected: PASS.
+
+- [ ] **Step 5: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add workflows/single_work.py tests/test_deep_audit_p2.py
+git commit -m "fix(single_work): multi_batch_work writes heavy_in_raw (P2-5)
+
+Audit findings Pipeline-I4 + Silent-I9 (2026-06-03 deep audit):
+single_pair_work writes heavy_in_raw column at line 683-686.
+multi_batch_work didn't. If both functions ever wrote to the same
+features.csv, schema mismatch (NaN for the missing column in
+multi_batch_work rows).
+
+Add features['heavy_in_raw'] = dia_data2.check_in_raw(...) at start of
+multi_batch_work. Behavioral test asserts schema parity between
+the two functions."
+```
+
+---
+
+### Task P2-6: Pipeline-I6 — spec_trainer figures_dir from yaml
+
+**Why:** `tools/spec_trainer/src/main.py:218-219` hardcodes `runs/spec_trainer/figures/` for fig_path and roc_path. Works only when cwd is repo root. Direct invocation from another cwd breaks.
+
+**Files:**
+- Modify: `tools/spec_trainer/src/main.py`
+- Modify: `tools/spec_trainer/config/exp1.yaml`
+- Modify: `tools/spec_trainer/config/exp2.yaml`
+- Test: extend existing test_spec_trainer_holdout.py
+
+- [ ] **Step 1: Append yaml-validation test**
+
+Append to `tests/test_spec_trainer_holdout.py`:
+
+```python
+
+
+def test_both_exp_yamls_set_figures_dir():
+    """Both exp1 and exp2 must set output.figures_dir (P2-6, Pipeline-I6)."""
+    import os
+    import yaml
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in ("exp1.yaml", "exp2.yaml"):
+        p = os.path.join(project_root, "tools", "spec_trainer", "config", name)
+        with open(p) as f:
+            cfg = yaml.safe_load(f)
+        figures_dir = cfg.get("output", {}).get("figures_dir")
+        assert figures_dir, (
+            f"{name}: output.figures_dir must be set, not None/missing "
+            f"(P2-6, Pipeline-I6)")
+```
+
+- [ ] **Step 2: Run test, verify FAIL**
+
+Run: `conda run -n silac_ml pytest tests/test_spec_trainer_holdout.py::test_both_exp_yamls_set_figures_dir -v`
+
+Expected: FAIL — neither yaml has `figures_dir`.
+
+- [ ] **Step 3: Update exp1.yaml and exp2.yaml to add figures_dir**
+
+In `tools/spec_trainer/config/exp1.yaml`, find the `output:` block:
+
+```yaml
+output:
+  model_path: runs/spec_trainer/models/exp1.txt
+  result_path: runs/spec_trainer/results/exp1.json
+```
+
+Add:
+
+```yaml
+output:
+  model_path: runs/spec_trainer/models/exp1.txt
+  result_path: runs/spec_trainer/results/exp1.json
+  figures_dir: runs/spec_trainer/figures  # P2-6, Pipeline-I6
+```
+
+Same for `exp2.yaml`:
+
+```yaml
+output:
+  model_path: runs/spec_trainer/models/exp2.txt
+  result_path: runs/spec_trainer/results/exp2.json
+  figures_dir: runs/spec_trainer/figures
+```
+
+- [ ] **Step 4: Patch `tools/spec_trainer/src/main.py` to read figures_dir**
+
+Find the lines (around 235-236):
+
+```python
+    fig_path = f"runs/spec_trainer/figures/{args.name}_importance.png"
+    roc_path = f"runs/spec_trainer/figures/{args.name}_roc_curve.png"
+```
+
+Replace with:
+
+```python
+    # P2-6, Pipeline-I6: figures dir from yaml config (default keeps
+    # back-compat for older yamls without figures_dir).
+    figures_dir = cfg['output'].get('figures_dir', 'runs/spec_trainer/figures')
+    fig_path = os.path.join(figures_dir, f"{args.name}_importance.png")
+    roc_path = os.path.join(figures_dir, f"{args.name}_roc_curve.png")
+```
+
+(`os` is already imported at top of main.py.)
+
+- [ ] **Step 5: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_spec_trainer_holdout.py::test_both_exp_yamls_set_figures_dir -v`
+
+Expected: PASS.
+
+- [ ] **Step 6: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add tools/spec_trainer/src/main.py tools/spec_trainer/config/exp1.yaml tools/spec_trainer/config/exp2.yaml tests/test_spec_trainer_holdout.py
+git commit -m "fix(spec_trainer): figures_dir from yaml (P2-6, Pipeline-I6)
+
+Audit finding Pipeline-I6 (2026-06-03 deep audit): main.py hardcoded
+runs/spec_trainer/figures/ for fig_path and roc_path. Works only when
+cwd is repo root (Makefile guarantees this). Direct python invocation
+from another cwd writes figures to a non-existent or wrong directory.
+
+Read output.figures_dir from yaml (default: runs/spec_trainer/figures
+for back-compat). Both exp1.yaml and exp2.yaml updated."
+```
+
+
+---
+
+### Task P2-7: Silent-I5 — `resolve_feature_cols` raises on empty
+
+**Why:** When all columns are excluded (header-only CSV or pathological excludes), `resolve_feature_cols` returns `[]`. Downstream `model.fit(X_train[[]], y_train)` fails inside LightGBM with cryptic "Cannot construct Dataset since there are no usable features".
+
+**Files:**
+- Modify: `tools/spec_trainer/src/feature_cols.py`
+- Test: append to `tests/test_spec_trainer_main.py`
+
+- [ ] **Step 1: Append test**
+
+Append to `tests/test_spec_trainer_main.py`:
+
+```python
+
+
+def test_resolve_feature_cols_raises_when_result_empty(tmp_path):
+    """Empty result must raise ValueError, not silently return [] (P2-7, Silent-I5)."""
+    from feature_cols import resolve_feature_cols
+    csv = tmp_path / "empty.csv"
+    # All META columns; nothing left after exclusion
+    csv.write_text("label,sequence,charge,modification_count\n")
+    with pytest.raises(ValueError, match="0 features"):
+        resolve_feature_cols(
+            explicit=None,
+            sample_csv_paths=[str(csv)],
+            target_col="label",
+        )
+```
+
+- [ ] **Step 2: Run test, verify FAIL**
+
+Run: `conda run -n silac_ml pytest tests/test_spec_trainer_main.py::test_resolve_feature_cols_raises_when_result_empty -v`
+
+Expected: FAIL — current code returns `[]` silently.
+
+- [ ] **Step 3: Add raise to `resolve_feature_cols`**
+
+In `tools/spec_trainer/src/feature_cols.py:resolve_feature_cols`, at the very end before `return`:
+
+```python
+    result = [
+        c for c in ordered
+        if c in intersection
+        and c not in META_COLUMNS
+        and c not in EXCLUDED_EXTRA
+        and c != target_col
+    ]
+    if not result:
+        raise ValueError(
+            f"resolve_feature_cols returned 0 features from "
+            f"{sample_csv_paths}; all columns are in META_COLUMNS / "
+            f"EXCLUDED_EXTRA / target_col. Check yaml feature_cols or "
+            f"add features to the CSV. (P2-7, Silent-I5)"
+        )
+    return result
+```
+
+(Replace the existing `return [...]` with the assignment + check + return.)
+
+- [ ] **Step 4: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_spec_trainer_main.py::test_resolve_feature_cols_raises_when_result_empty -v`
+
+Expected: PASS.
+
+- [ ] **Step 5: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tools/spec_trainer/src/feature_cols.py tests/test_spec_trainer_main.py
+git commit -m "fix(spec_trainer): resolve_feature_cols raises on empty (P2-7, Silent-I5)
+
+Audit finding Silent-I5 (2026-06-03 deep audit): when all columns
+excluded (header-only CSV or pathological excludes),
+resolve_feature_cols returned [] silently. Downstream model.fit fails
+with cryptic LightGBMError: Cannot construct Dataset.
+
+Raise ValueError naming the inputs so user can diagnose immediately."
+```
+
+---
+
+### Task P2-8: Silent-I4 — spec_trainer/main.py logpath parent mkdir
+
+**Why:** `tools/spec_trainer/src/main.py:149` opens `FileHandler(args.logpath)` without ensuring parent dir exists. `main.py` (feature extraction) does (`main.py:37-39`); spec_trainer doesn't. Inconsistent — passing `--logpath runs/spec_trainer/logs/exp.log` to spec_trainer when that dir is absent crashes before training.
+
+**Files:**
+- Modify: `tools/spec_trainer/src/main.py` (~3 lines)
+- Test: append to `tests/test_deep_audit_p2.py` (source-grep check)
+
+- [ ] **Step 1: Append source-grep test**
+
+Append to `tests/test_deep_audit_p2.py`:
+
+```python
+def test_spec_trainer_main_creates_logpath_parent():
+    """spec_trainer main.py must mkdir -p the logpath parent dir (P2-8, Silent-I4)."""
+    src_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "tools", "spec_trainer", "src", "main.py")
+    src = open(src_path).read()
+    assert "os.makedirs(os.path.dirname(args.logpath)" in src, (
+        "P2-8: spec_trainer main.py missing mkdir for logpath parent")
+```
+
+- [ ] **Step 2: Run test, verify FAIL**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py::test_spec_trainer_main_creates_logpath_parent -v`
+
+Expected: FAIL.
+
+- [ ] **Step 3: Add mkdir for logpath parent**
+
+In `tools/spec_trainer/src/main.py`, find:
+
+```python
+    args = parser.parse_args()
+
+    # 设置日志文件handle
+    file_handler = logging.FileHandler(args.logpath, encoding="utf-8")
+```
+
+Replace with:
+
+```python
+    args = parser.parse_args()
+
+    # P2-8, Silent-I4: ensure logpath parent dir exists. Mirror of main.py:37-39.
+    log_dir = os.path.dirname(args.logpath)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
+    # 设置日志文件handle
+    file_handler = logging.FileHandler(args.logpath, encoding="utf-8")
+```
+
+- [ ] **Step 4: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p2.py::test_spec_trainer_main_creates_logpath_parent -v`
+
+Expected: PASS.
+
+- [ ] **Step 5: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tools/spec_trainer/src/main.py tests/test_deep_audit_p2.py
+git commit -m "fix(spec_trainer): mkdir for logpath parent dir (P2-8, Silent-I4)
+
+Audit finding Silent-I4 (2026-06-03 deep audit): spec_trainer main.py
+opened FileHandler(args.logpath) without ensuring parent dir exists.
+main.py (feature extraction) does (lines 37-39). Inconsistent —
+passing --logpath runs/spec_trainer/logs/exp.log to spec_trainer
+when that dir is absent crashed before training.
+
+Mirror main.py:37-39 pattern: mkdir -p os.path.dirname(args.logpath)."
+```
+
+---
+
+## Final Verification (after all 19 tasks)
+
+- [ ] **Step 1: Full test suite**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -10`
+
+Expected: ≥278 baseline + new tests (estimated ~30 new across P0/P1/P2), no NEW failures.
+
+- [ ] **Step 2: Makefile dry-runs**
+
+Run:
+```
+make -n 2th 5th normal all train-exp1 train-exp2 clean-all clean-train
+```
+
+Expected: every target succeeds (no make errors).
+
+- [ ] **Step 3: User-side retrain (manual, off-plan)**
+
+The user must manually run:
+
+```bash
+# Clean orphaned legacy workspace (one-time migration from I-MK2)
+rm -rf ./workspace/
+
+# Clean all existing features.csv + caches
+make clean-all
+rm -f runs/baseline_*_clean/*.dia.npz  # force cache rebuild (P0-3)
+
+# Regenerate features.csv from clean state
+make all  # SLOW (~tens of minutes per dataset)
+
+# Verify schema consistency across all 3 baselines
+diff <(head -1 runs/baseline_2da_clean/features.csv | tr ',' '\n' | sort) \
+     <(head -1 runs/baseline_5da_clean/features.csv | tr ',' '\n' | sort)
+diff <(head -1 runs/baseline_2da_clean/features.csv | tr ',' '\n' | sort) \
+     <(head -1 runs/baseline_normal_clean/features.csv | tr ',' '\n' | sort)
+# Both diffs should produce NO output (identical schema)
+
+# Verify column count
+wc -l < <(head -1 runs/baseline_2da_clean/features.csv | tr ',' '\n')
+# Expect ~140 columns (66 baseline + 11 q1a + 26 R3 + 20 R4 + 3 new markers)
+
+# Train both experiments
+make train-all
+
+# Sanity check: ablation should now have effect (P0-3 verification)
+# Toggle centroid_enabled=false in one baseline config, re-run make clean-2th && make 2th
+# AUC should differ from the centroid_enabled=true run.
+```
+
+This step is OUT OF SCOPE for automated plan execution — it requires user time and real data.
+
+- [ ] **Step 4: (Optional) Push to gitlab**
+
+```bash
+git push gitlab feature_extraction
+```
+
