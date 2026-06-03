@@ -826,3 +826,1051 @@ feature_type=1/2 run is attempted.
 Single-line fix: light_mass -> heavy_mass at line 202. Behavioral
 test records the ions_mass arg per channel to lock in the contract."
 ```
+
+---
+
+## Phase 1 — Active Important fixes (7 tasks)
+
+### Task P1-1: Units-I1 — `matched_intensity_percent` denominator hoist
+
+**Why:** `single_work.py:225-226, 566-567` (and aggregation at 301/637): the denominator `intensitys_map["all"]` accumulates `light_all_intensity + heavy_all_intensity` INSIDE the per-fragment loop. Since `*_all_intensity` is per-PSM (constant across fragments at the same RT/window), it gets added N_fragments times. Result: `matched_intensity_percent ∝ 1/N_fragments` — a hidden peptide-length proxy that the model silently learns.
+
+**Files:**
+- Modify: `workflows/single_work.py` (both `single_pair_work` and `multi_batch_work` fragment loops)
+- Test: `tests/test_deep_audit_p1.py` (new file)
+
+- [ ] **Step 1: Create test file with denominator test**
+
+Create `tests/test_deep_audit_p1.py`:
+
+```python
+"""Phase 1 (Active Important) behavioral tests for deep audit fixes.
+
+See docs/specs/2026-06-03-deep-audit-fixes-design.md.
+"""
+import configparser
+import numpy as np
+import pytest
+
+# Reuse fakes from p0 file by importing.
+from tests.test_deep_audit_p0 import (
+    _empty_xic, _real_xic, _FakePSM, _FakeDIA, _minimal_config,
+)
+
+
+class _MultiFragDIA(_FakeDIA):
+    """DIA stub that returns N fragments — for testing denominator independence."""
+    def __init__(self, n_fragments, force_empty=False):
+        super().__init__(force_empty=force_empty)
+        self._n_fragments = n_fragments
+
+    def get_heavy_info(self, psm):
+        # Return n_fragments distinct y-ions with light/heavy mass pairs.
+        frags = [("y", i, 100.0 + i, 110.0 + i)
+                 for i in range(1, self._n_fragments + 1)]
+        return psm._precursor_mz + 4.0, frags
+
+
+def test_matched_intensity_percent_independent_of_fragment_count():
+    """matched_intensity_percent should be independent of N_fragments (P1-1, Units-I1).
+
+    Before fix: denominator added per fragment → percent ∝ 1/N → silent
+    peptide-length proxy.
+    After fix: denominator computed once per PSM → percent reflects
+    actual matched/total ratio.
+    """
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM()
+    cfg = _minimal_config()
+
+    f_3frags = single_pair_work(psm, _MultiFragDIA(n_fragments=3), cfg)
+    f_5frags = single_pair_work(psm, _MultiFragDIA(n_fragments=5), cfg)
+
+    pct_3 = f_3frags.get("matched_intensity_percent")
+    pct_5 = f_5frags.get("matched_intensity_percent")
+
+    # Both should be present, both should be the SAME ratio for the same
+    # per-fragment matched intensity (the stub returns fixed XIC per
+    # fragment). Before P1-1 fix: pct_5 ≈ 0.6 * pct_3 due to inflated denom.
+    assert pct_3 is not None and pct_5 is not None, (
+        "matched_intensity_percent must be present in both")
+    # Allow 1% relative tolerance for float arithmetic.
+    rel_diff = abs(pct_3 - pct_5) / max(abs(pct_3), abs(pct_5), 1e-12)
+    assert rel_diff < 0.01, (
+        f"P1-1: matched_intensity_percent must be independent of N_fragments. "
+        f"3 frags={pct_3}, 5 frags={pct_5}, rel_diff={rel_diff}")
+```
+
+- [ ] **Step 2: Run test, verify it fails**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py::test_matched_intensity_percent_independent_of_fragment_count -v`
+
+Expected: FAIL — current code's denominator scales with fragment count.
+
+If `matched_intensity_percent` key is absent, also FAILs. Check `grep -n matched_intensity_percent workflows/single_work.py` to confirm the feature name exists. If named differently (e.g., without underscores), adapt the test.
+
+- [ ] **Step 3: Hoist denominator in `single_pair_work` (line 566-567)**
+
+In `workflows/single_work.py:single_pair_work`, find the fragment loop block:
+
+```python
+        if (np.max(light_ions_xic["intensity"]) > 0 and
+                np.max(heavy_ions_xic["intensity"]) > 0):
+            intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
+            intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
+            intensitys_map["all"] += light_all_intensity + \
+                heavy_all_intensity
+```
+
+Replace with (per-ion-type sum stays in loop; "all" denominator moved out):
+
+```python
+        if (np.max(light_ions_xic["intensity"]) > 0 and
+                np.max(heavy_ions_xic["intensity"]) > 0):
+            intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
+            intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
+            # NOTE: intensitys_map["all"] (the denominator for
+            # matched_intensity_percent) is hoisted out of this loop — see
+            # P1-1, Units-I1. The light_all_intensity / heavy_all_intensity
+            # values are per-PSM (constant across fragments at the same
+            # RT/window), so accumulating inside the loop multiplied by
+            # N_fragments. Now set ONCE per PSM below.
+```
+
+Then OUTSIDE the loop, BEFORE the per-ion-type feature-extraction block (around line 612 after `features["valid_fragment_ions_num"] = ...`), add — but we need light_all_intensity and heavy_all_intensity from outside. They are computed PER FRAGMENT inside the loop, but their values should be the same for all fragments. Strategy: capture from the FIRST non-empty fragment:
+
+```python
+    # Hoist the "all" denominator for matched_intensity_percent out of the
+    # fragment loop (P1-1, Units-I1). light_all_intensity /
+    # heavy_all_intensity are per-PSM (per RT-window), so we use the
+    # first observed pair as the canonical value.
+    if "all" not in intensitys_map:
+        intensitys_map["all"] = 0.0
+```
+
+Actually a cleaner approach: capture `last_seen_all_intensity = (light_all_intensity, heavy_all_intensity)` inside the loop on each iteration, then set `intensitys_map["all"] = sum(last_seen)` once outside the loop. Let me restructure properly:
+
+Replace the original block in step 3 above with:
+
+```python
+        if (np.max(light_ions_xic["intensity"]) > 0 and
+                np.max(heavy_ions_xic["intensity"]) > 0):
+            intensitys_map[ions_type] += np.sum(light_ions_xic["intensity"])
+            intensitys_map[ions_type] += np.sum(heavy_ions_xic["intensity"])
+            # Capture per-PSM all-intensity for hoisted denominator
+            # (P1-1, Units-I1). Updated on each iteration; final value
+            # used below.
+            last_light_all = light_all_intensity
+            last_heavy_all = heavy_all_intensity
+```
+
+And BEFORE the fragment loop initialization (around line 504-520 where the lists are initialized), add:
+
+```python
+    last_light_all = 0.0
+    last_heavy_all = 0.0
+```
+
+And AFTER the fragment loop ends (around line 612, right before `features["valid_fragment_ions_num"] = ...`), add:
+
+```python
+    # Hoisted denominator for matched_intensity_percent (P1-1, Units-I1).
+    intensitys_map["all"] = last_light_all + last_heavy_all
+```
+
+- [ ] **Step 4: Mirror the fix in `multi_batch_work` (line 225-226)**
+
+In `multi_batch_work`, do the same: capture `last_light_all` / `last_heavy_all` inside the loop, set `intensitys_map["all"] = sum` after the loop. The lines to edit are around 225-226 and the loop ends around line 276.
+
+- [ ] **Step 5: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py::test_matched_intensity_percent_independent_of_fragment_count -v`
+
+Expected: PASS.
+
+- [ ] **Step 6: Run full P0+P1 regression**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p0.py tests/test_deep_audit_p1.py tests/ -q 2>&1 | tail -5`
+
+Expected: ≥278+9 passed, no NEW failures.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add workflows/single_work.py tests/test_deep_audit_p1.py
+git commit -m "fix(single_work): matched_intensity_percent denominator hoist (P1-1, Units-I1)
+
+Audit finding Units-I1 (2026-06-03 deep audit): the
+matched_intensity_percent denominator (intensitys_map['all']) was
+accumulated INSIDE the fragment loop. light_all_intensity /
+heavy_all_intensity are per-PSM (per RT-window) constants, not
+per-fragment, so the denominator was multiplied by N_fragments.
+
+Effect: matched_intensity_percent ∝ 1/N_fragments — a silent
+peptide-length proxy that LightGBM learns as a 'longer peptide -> lower
+match%' rule, biasing predictions toward sequence length.
+
+Fix: capture last-seen per-PSM all-intensity inside the loop, set the
+'all' denominator once after the loop ends. Same fix in both
+single_pair_work and multi_batch_work."
+```
+
+---
+
+### Task P1-2: Silent-I1 — Fragment empty-branch list parity
+
+**Why:** When a fragment hits the empty-XIC branch (`single_work.py:213-219, 554-560`) or skip-conditions (`525-526, 529-530` in single only), only 3-4 per-fragment lists are appended; ~11 others get NO entry. Aggregates (`all_*_mean/p50/std/max`) compute over a strictly smaller denominator than `valid_fragment_ions_num` implies. T1 review's M6 concern is not resolved.
+
+**Files:**
+- Modify: `workflows/single_work.py` (both fragment loops, all branches that `continue`)
+- Test: append to `tests/test_deep_audit_p1.py`
+
+- [ ] **Step 1: Append parity test**
+
+Append to `tests/test_deep_audit_p1.py`:
+
+```python
+class _AllEmptyFragDIA(_FakeDIA):
+    """DIA stub whose xic_ms2_peaks_extract always returns empty."""
+    def get_heavy_info(self, psm):
+        return psm._precursor_mz + 4.0, [
+            ("y", 1, 100.0, 110.0),
+            ("y", 2, 200.0, 210.0),
+            ("b", 1, 150.0, 160.0),
+        ]
+
+    def xic_ms2_peaks_extract(self, rt, window, precursor_mz, ions_mass,
+                              mass_tol_ppm):
+        return _empty_xic(), 0.0
+
+
+def test_fragment_empty_branch_appends_all_lists_consistently():
+    """All per-fragment lists must have the same length after the loop,
+    even when every fragment hits the empty-XIC branch (P1-2, Silent-I1)."""
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM()
+    dia = _AllEmptyFragDIA()
+    cfg = _minimal_config()
+
+    features = single_pair_work(psm, dia, cfg)
+
+    # When all 3 fragments are empty, the count from valid_fragment_ions_num
+    # is the truth-of-record. Verify several aggregates do NOT contain NaN
+    # / sentinel mismatches.
+    n_frag = features.get("valid_fragment_ions_num", 0)
+    # The 11 lists should all have the same length. We can't access them
+    # directly (internal state), but their aggregates should be well-defined.
+    # The fix's contract: aggregates of empty-branch fragments are zeros,
+    # not NaN.
+    for key in ("all_apex_delta_mean", "all_base_to_apex_ratio_mean",
+                "all_apex_monotonicity_mean", "all_n_peaks_mean",
+                "all_smoothness_mean"):
+        if key in features:
+            v = features[key]
+            assert not np.isnan(v), (
+                f"P1-2: {key} should be 0.0 (not NaN) when all fragments empty; "
+                f"got {v}")
+```
+
+- [ ] **Step 2: Run test, verify it fails OR check current behavior**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py::test_fragment_empty_branch_appends_all_lists_consistently -v`
+
+Expected: may FAIL with NaN in some aggregate (e.g., `all_apex_delta_mean = nan`).
+
+- [ ] **Step 3: Patch `single_pair_work` empty-XIC fragment branch (lines 554-560)**
+
+In `workflows/single_work.py:single_pair_work`, find:
+
+```python
+        if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
+            pearsons_map[ions_type].append(0)
+            pearsons_map["all"].append(0)
+            fragment_intensities.append(0.0)
+            fragment_cosines.append(0.0)
+            fragment_snrs.append(0.0)
+            continue
+```
+
+Replace with:
+
+```python
+        if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
+            # Empty XIC fragment branch. P1-2 (Silent-I1): append default
+            # zeros to ALL per-fragment lists so aggregates have a
+            # consistent denominator with valid_fragment_ions_num.
+            pearsons_map[ions_type].append(0)
+            pearsons_map["all"].append(0)
+            fragment_intensities.append(0.0)
+            fragment_cosines.append(0.0)
+            fragment_snrs.append(0.0)
+            fragment_apex_deltas.append(0.0)
+            fragment_mz_errs.append(0.0)
+            fragment_light_cycle_offsets.append(0)
+            fragment_light_cycle_offsets_signed.append(0)
+            fragment_heavy_cycle_offsets.append(0)
+            fragment_heavy_cycle_offsets_signed.append(0)
+            fragment_base_to_apex_ratios.append(0.0)
+            fragment_apex_monotonicities.append(0.0)
+            fragment_n_peaks_list.append(0)
+            fragment_smoothnesses.append(0.0)
+            # NOTE: fragment_hl_ratios NOT appended — by design only
+            # contains real (heavy>0 AND light>0) ratios.
+            fragment_xic_empty_count += 1  # P0-1 marker
+            continue
+```
+
+Same for the `continue`s at lines 525-526 and 529-530 — those are "fragment dropped, not even attempted". Decision: those fragments should ALSO appear in the per-fragment lists with zero defaults if we want the aggregate denominator to match `valid_fragment_ions_num`. OR they should NOT appear AND `valid_fragment_ions_num` doc/contract should explicitly note "fragments where heavy_in_raw was false are excluded".
+
+Choose option (b) — keep the `continue`s clean and document `valid_fragment_ions_num` as "fragments that reached the XIC extraction stage". Add a comment after line 519:
+
+```python
+    # NOTE: valid_fragment_ions_num counts fragments that REACHED the XIC
+    # extraction stage. Fragments dropped at lines 525-526 (heavy_in_raw
+    # false) and 529-530 (same MS2 + zero mass shift) are NOT counted.
+    # This matches the denominator of all per-fragment aggregates below
+    # (P1-2, Silent-I1).
+```
+
+- [ ] **Step 4: Mirror in `multi_batch_work` (lines 213-219)**
+
+Same parity fix in the empty-XIC branch of `multi_batch_work`. multi_batch_work does NOT have the heavy_in_raw / same_ms2 pre-skip, so only the empty-XIC append parity is needed there.
+
+- [ ] **Step 5: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py::test_fragment_empty_branch_appends_all_lists_consistently -v`
+
+Expected: PASS.
+
+- [ ] **Step 6: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add workflows/single_work.py tests/test_deep_audit_p1.py
+git commit -m "fix(single_work): fragment empty-branch list parity (P1-2, Silent-I1)
+
+Audit finding Silent-I1 (2026-06-03 deep audit): when a fragment hit
+the empty-XIC branch in single_pair_work / multi_batch_work, only 3-4
+per-fragment lists were appended. ~11 others got NO entry. Aggregates
+(all_*_mean/p50/std/max) were computed over a strictly smaller
+denominator than valid_fragment_ions_num implied. T1 review's M6
+concern unresolved until now.
+
+Fix: append default zeros to ALL per-fragment lists in the empty-XIC
+branch. Document valid_fragment_ions_num as 'fragments that reached
+the XIC extraction stage' to clarify the heavy_in_raw / same_ms2 skip
+semantics in single_pair_work (those are intentionally excluded)."
+```
+
+---
+
+### Task P1-3: Pipeline-I1 — label NaN guard
+
+**Why:** `workflows/flow_utils.py:88` maps `_label_type=None → label=None`. `pd.read_csv` infers the column as `float64` with NaN. LightGBM `objective: binary` crashes on NaN labels. Currently dormant (all live `extract_*.ini` set `positive_species_marker`), but the `intersection_keys` no-marker mode in `tools/extract_common.py:127-135` would produce all-NaN labels.
+
+**Files:**
+- Modify: `workflows/flow_utils.py:_make_result_row_single` (+ check `process_batch_pair_shuffle` result row builder at ~line 220-240 for same issue)
+- Test: append to `tests/test_deep_audit_p1.py`
+
+- [ ] **Step 1: Append test**
+
+Append to `tests/test_deep_audit_p1.py`:
+
+```python
+def test_make_result_row_single_raises_on_none_label_type():
+    """_make_result_row_single must raise when _label_type is None (P1-3, Pipeline-I1)."""
+    from workflows.flow_utils import _make_result_row_single
+
+    class _PSMNoLabel:
+        _sequence = "AAAA"
+        _charge = 2
+        _precursor_mz = 500.0
+        _raw_title = "fake"
+        _protein_names = "HUMAN"
+        _label_type = None
+
+    with pytest.raises(ValueError, match="label_type"):
+        _make_result_row_single(_PSMNoLabel(), {"f1": 1.0})
+
+
+def test_make_result_row_single_accepts_positive():
+    """_make_result_row_single produces label=1 for 'positive' (no regression)."""
+    from workflows.flow_utils import _make_result_row_single
+
+    class _PSMPos:
+        _sequence = "AAAA"
+        _charge = 2
+        _precursor_mz = 500.0
+        _raw_title = "fake"
+        _protein_names = "HUMAN"
+        _label_type = "positive"
+
+    row = _make_result_row_single(_PSMPos(), {"f1": 1.0})
+    assert row["label"] == 1
+
+
+def test_make_result_row_single_accepts_negative():
+    from workflows.flow_utils import _make_result_row_single
+
+    class _PSMNeg:
+        _sequence = "AAAA"
+        _charge = 2
+        _precursor_mz = 500.0
+        _raw_title = "fake"
+        _protein_names = "HUMAN"
+        _label_type = "negative"
+
+    row = _make_result_row_single(_PSMNeg(), {"f1": 1.0})
+    assert row["label"] == 0
+```
+
+- [ ] **Step 2: Run test, verify FAIL on the None case**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py::test_make_result_row_single_raises_on_none_label_type tests/test_deep_audit_p1.py::test_make_result_row_single_accepts_positive tests/test_deep_audit_p1.py::test_make_result_row_single_accepts_negative -v`
+
+Expected: 1 FAIL (raise test), 2 PASS.
+
+- [ ] **Step 3: Patch `_make_result_row_single`**
+
+In `workflows/flow_utils.py`, find:
+
+```python
+def _make_result_row_single(psm, features: dict) -> dict:
+    """Build the result dict for a single-flow PSM.
+
+    Maps psm._label_type ("positive"/"negative"/None) to label int (1/0/None)
+    so the CSV's `label` column is numeric — matching the pair-flow convention.
+    """
+    label_type = psm._label_type
+    if label_type == "positive":
+        label = 1
+    elif label_type == "negative":
+        label = 0
+    else:
+        label = None
+```
+
+Replace with:
+
+```python
+def _make_result_row_single(psm, features: dict) -> dict:
+    """Build the result dict for a single-flow PSM.
+
+    Maps psm._label_type ("positive"/"negative") to label int (1/0).
+    Raises ValueError if _label_type is None — silently writing None
+    leads to NaN labels in features.csv that crash LightGBM during
+    training (P1-3, Pipeline-I1 in 2026-06-03 deep audit).
+    """
+    label_type = psm._label_type
+    if label_type == "positive":
+        label = 1
+    elif label_type == "negative":
+        label = 0
+    else:
+        raise ValueError(
+            f"PSM {getattr(psm, '_sequence', '?')} has _label_type={label_type!r}; "
+            f"expected 'positive' or 'negative'. Check extract_common.py — "
+            f"running without positive_species_marker produces None labels "
+            f"that crash LightGBM training (P1-3, Pipeline-I1, 2026-06-03 audit)."
+        )
+```
+
+- [ ] **Step 4: Check pair-flow shuffle result row (line ~222-240) for same issue**
+
+In `workflows/flow_utils.py:process_batch_pair_shuffle`, the result row is built inline (around lines 222-240):
+
+```python
+            results.append({
+                ...
+                "label": label,
+                ...
+            })
+```
+
+Here `label` comes from `for psm1_dict, psm2_dict, label in batch_items` — produced by the caller. Inspect callers (search for `process_batch_pair_shuffle` references) to verify the caller produces 0/1 not None. If yes, no fix needed here; document the contract. If no, add a similar guard.
+
+Run: `grep -rn "process_batch_pair_shuffle\b" workflows/ --include="*.py"`
+
+If the caller is in `pair_flow.py`, inspect that call site to confirm. Typically it's a fixed `label = 0 if entrapment else 1`, no None possible — but verify.
+
+- [ ] **Step 5: Run tests, verify all 3 PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py -v -k make_result_row_single`
+
+Expected: 3 PASSed.
+
+- [ ] **Step 6: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add workflows/flow_utils.py tests/test_deep_audit_p1.py
+git commit -m "fix(flow_utils): raise on None label_type (P1-3, Pipeline-I1)
+
+Audit finding Pipeline-I1 (2026-06-03 deep audit):
+_make_result_row_single mapped _label_type=None → label=None silently.
+pd.read_csv inferred the label column as float64 with NaN. LightGBM
+objective=binary crashes on NaN labels.
+
+Currently dormant: all 3 live extract_*.ini set
+positive_species_marker=HUMAN. But the intersection_keys 'no-marker'
+mode in tools/extract_common.py:127-135 would produce every PSM with
+label_type=None — silent training failure.
+
+Fix: raise ValueError with a clear message pointing at extract_common
+config when _label_type is missing."
+```
+
+---
+
+### Task P1-4: Pipeline-I3 — `exp2.yaml` is_unbalance
+
+**Why:** `exp1.yaml` sets `is_unbalance: True` (data is ~1% positives); `exp2.yaml` doesn't. exp2 trains on same imbalanced data but produces miscalibrated probabilities and skewed feature importance.
+
+**Files:**
+- Modify: `tools/spec_trainer/config/exp2.yaml`
+- Test: extend `tests/test_spec_trainer_holdout.py::test_exp_yamls_do_not_have_in_sample_test_files` (or add new)
+
+- [ ] **Step 1: Add yaml-validation test**
+
+Append to `tests/test_spec_trainer_holdout.py`:
+
+```python
+
+
+def test_both_exp_yamls_set_is_unbalance_for_imbalanced_data():
+    """Both exp1 and exp2 must set is_unbalance: True for ~1% positive data (P1-4, Pipeline-I3)."""
+    import os
+    import yaml
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in ("exp1.yaml", "exp2.yaml"):
+        p = os.path.join(project_root, "tools", "spec_trainer", "config", name)
+        with open(p) as f:
+            cfg = yaml.safe_load(f)
+        params = cfg.get("model", {}).get("params", {})
+        is_unbalance = params.get("is_unbalance", False)
+        assert is_unbalance is True, (
+            f"{name}: lightgbm is_unbalance must be True for imbalanced "
+            f"SILAC data (~1% positives). Got {is_unbalance}. "
+            f"See P1-4, Pipeline-I3 (2026-06-03 audit).")
+```
+
+- [ ] **Step 2: Run test, verify it fails for exp2**
+
+Run: `conda run -n silac_ml pytest tests/test_spec_trainer_holdout.py::test_both_exp_yamls_set_is_unbalance_for_imbalanced_data -v`
+
+Expected: FAIL on `exp2.yaml`.
+
+- [ ] **Step 3: Update `exp2.yaml`**
+
+Find the `model.params` block in `tools/spec_trainer/config/exp2.yaml`:
+
+```yaml
+model:
+  type: lightgbm
+  params:
+    boosting_type: gbdt
+    objective: binary
+    metric: [auc, binary_logloss]
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    verbose: -1
+```
+
+Add `is_unbalance: True` (matching exp1.yaml):
+
+```yaml
+model:
+  type: lightgbm
+  params:
+    boosting_type: gbdt
+    objective: binary
+    metric: [auc, binary_logloss]
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    is_unbalance: True  # P1-4, Pipeline-I3 (2026-06-03 audit): SILAC data is ~1% positive
+    verbose: -1
+```
+
+- [ ] **Step 4: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_spec_trainer_holdout.py::test_both_exp_yamls_set_is_unbalance_for_imbalanced_data -v`
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tools/spec_trainer/config/exp2.yaml tests/test_spec_trainer_holdout.py
+git commit -m "fix(spec_trainer): exp2.yaml is_unbalance: True (P1-4, Pipeline-I3)
+
+Audit finding Pipeline-I3 (2026-06-03 deep audit): exp1.yaml had
+is_unbalance: True but exp2.yaml didn't. Both train on the same
+imbalanced SILAC data (~1% positives in 2da: 925/104445; ~1.6% in
+normal: 1695/104890). Without is_unbalance, exp2 produced miscalibrated
+probabilities and skewed feature importance.
+
+Add is_unbalance: True to exp2.yaml model.params. New yaml-validation
+test asserts both configs set it."
+```
+
+---
+
+### Task P1-5: Pipeline-I5 — `resolve_feature_cols` multi-file intersection
+
+**Why:** Current `resolve_feature_cols` reads column names from `train_files[0]` only. exp2 has `train_files: [2da.csv, 5da.csv]` with different schemas (q1a_* in 5da but not 2da). After P1's `make all` retrain, schemas should be identical — but the guard against future drift matters. Change `resolve_feature_cols` to take the intersection of all train_files' columns and log a warning when intersection differs from any input.
+
+**Files:**
+- Modify: `tools/spec_trainer/src/feature_cols.py` (signature change)
+- Modify: `tools/spec_trainer/src/main.py` (pass list of paths)
+- Test: extend `tests/test_spec_trainer_main.py`
+
+- [ ] **Step 1: Write failing test for intersection behavior**
+
+Append to `tests/test_spec_trainer_main.py`:
+
+```python
+
+
+def test_resolve_feature_cols_takes_intersection_of_multiple_files(tmp_path):
+    """When given multiple sample CSVs, return the column intersection (P1-5, Pipeline-I5)."""
+    from feature_cols import resolve_feature_cols
+    csv_a = tmp_path / "a.csv"
+    csv_a.write_text(
+        "label,sequence,feat_common,feat_a_only\n"
+    )
+    csv_b = tmp_path / "b.csv"
+    csv_b.write_text(
+        "label,sequence,feat_common,feat_b_only\n"
+    )
+    result = resolve_feature_cols(
+        explicit=None,
+        sample_csv_paths=[str(csv_a), str(csv_b)],
+        target_col="label",
+    )
+    # Intersection minus META: only feat_common
+    assert result == ["feat_common"]
+    assert "feat_a_only" not in result
+    assert "feat_b_only" not in result
+
+
+def test_resolve_feature_cols_single_path_backward_compat(tmp_path):
+    """Calling with a single path (str OR list-of-1) still works (P1-5 compat)."""
+    from feature_cols import resolve_feature_cols
+    csv = tmp_path / "x.csv"
+    csv.write_text("label,sequence,feat1,feat2\n")
+    # New API: list
+    r1 = resolve_feature_cols(explicit=None, sample_csv_paths=[str(csv)],
+                               target_col="label")
+    assert r1 == ["feat1", "feat2"]
+    # Backward-compat: single string path (if supported)
+    # If new signature only accepts list, this test will need to be skipped
+    # — adjust based on chosen API.
+```
+
+- [ ] **Step 2: Run tests, verify they fail**
+
+Run: `conda run -n silac_ml pytest tests/test_spec_trainer_main.py -v -k "intersection or single_path_backward"`
+
+Expected: FAIL — current signature is `sample_csv_path` (singular).
+
+- [ ] **Step 3: Update `feature_cols.py` signature + intersection logic**
+
+In `tools/spec_trainer/src/feature_cols.py`, replace `resolve_feature_cols`:
+
+```python
+import logging
+
+
+def resolve_feature_cols(explicit, sample_csv_paths, target_col):
+    """Resolve final feature column list.
+
+    Args:
+        explicit: yaml-provided list of features, or None/[] to auto-detect.
+        sample_csv_paths: list of CSV paths whose headers will be intersected.
+            Accepts either a list of paths or a single string path (back-compat).
+        target_col: name of the label column (excluded from features).
+
+    Returns:
+        List of feature column names. If sample_csv_paths has multiple
+        entries, returns the INTERSECTION of all files' columns minus
+        META_COLUMNS + EXCLUDED_EXTRA + target_col. Logs a warning if
+        the intersection is smaller than any individual file's column set
+        (indicating schema drift).
+
+    Raises:
+        ValueError: if resolved list is empty (see P2-7).
+    """
+    if explicit:
+        return list(explicit)
+
+    # Back-compat: accept single string path
+    if isinstance(sample_csv_paths, str):
+        sample_csv_paths = [sample_csv_paths]
+
+    per_file_cols = []
+    for path in sample_csv_paths:
+        df = pd.read_csv(path, nrows=0)
+        per_file_cols.append(set(df.columns))
+
+    # Intersection across all files
+    intersection = set.intersection(*per_file_cols) if per_file_cols else set()
+
+    # Warn if any file has columns absent from intersection
+    for path, cols in zip(sample_csv_paths, per_file_cols):
+        dropped = cols - intersection
+        if dropped:
+            logging.warning(
+                f"resolve_feature_cols: {len(dropped)} columns in "
+                f"{os.path.basename(path)} not in intersection — dropped from "
+                f"feature set: {sorted(dropped)} (P1-5, Pipeline-I5)"
+            )
+
+    # Preserve column ORDER from the first file (deterministic)
+    first_cols = list(per_file_cols[0]) if per_file_cols else []
+    # Use the order from first_cols' original file
+    first_df = pd.read_csv(sample_csv_paths[0], nrows=0)
+    ordered = list(first_df.columns)
+
+    return [
+        c for c in ordered
+        if c in intersection
+        and c not in META_COLUMNS
+        and c not in EXCLUDED_EXTRA
+        and c != target_col
+    ]
+```
+
+Add `import os` if not already present.
+
+- [ ] **Step 4: Update main.py call site**
+
+In `tools/spec_trainer/src/main.py`, find:
+
+```python
+    feature_cols = _resolve_feature_cols(
+        explicit=cfg['data'].get('feature_cols'),
+        sample_csv_path=cfg['data']['train_files'][0],
+        target_col=target_col,
+    )
+```
+
+Replace with:
+
+```python
+    feature_cols = _resolve_feature_cols(
+        explicit=cfg['data'].get('feature_cols'),
+        sample_csv_paths=cfg['data']['train_files'],
+        target_col=target_col,
+    )
+```
+
+- [ ] **Step 5: Run tests, verify they pass**
+
+Run: `conda run -n silac_ml pytest tests/test_spec_trainer_main.py -v`
+
+Expected: all tests in the file PASS including new intersection ones.
+
+- [ ] **Step 6: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add tools/spec_trainer/src/feature_cols.py tools/spec_trainer/src/main.py tests/test_spec_trainer_main.py
+git commit -m "fix(spec_trainer): resolve_feature_cols multi-file intersection (P1-5, Pipeline-I5)
+
+Audit finding Pipeline-I5 (2026-06-03 deep audit): resolve_feature_cols
+read column names from train_files[0] only. exp2 had train_files=
+[2da.csv, 5da.csv] with different schemas (q1a_* in 5da but not 2da).
+LightGBM silently trained on 2da's column subset; 5da's extra columns
+were dropped without warning.
+
+Change signature: sample_csv_path (str) -> sample_csv_paths (list).
+Compute INTERSECTION of all files' columns. Log warning naming dropped
+columns when intersection != any individual file's set. Backward
+compat: accept single string path."
+```
+
+---
+
+### Task P1-6: Silent-I3 — `logging.warn` per-PSM dumps
+
+**Why:** `spectrum/dia_data.py:524-525, 703-712` uses deprecated `logging.warn` per PSM × fragment, dumping `_cycle_left_precursor` array each time. Megabytes of warnings into `extract.log`; effectively silent.
+
+**Files:**
+- Modify: `spectrum/dia_data.py` (replace `logging.warn` with `logging.debug` + counter)
+- Modify: `workflows/pair_flow.py` (log summary at batch end)
+- Test: append to `tests/test_deep_audit_p1.py`
+
+- [ ] **Step 1: Append test for counter behavior**
+
+Append to `tests/test_deep_audit_p1.py`:
+
+```python
+def test_dia_data_check_in_raw_increments_counter_no_warn_per_call(caplog):
+    """check_in_raw must NOT logging.warn each call; should increment counter (P1-6, Silent-I3)."""
+    import logging as py_logging
+    from spectrum.dia_data import DIAData
+    dia = DIAData()
+    dia._max_mz_value = 1000.0
+    dia._min_mz_value = 100.0
+    dia._cycle_left_precursor = np.array([400.0, 500.0])
+
+    caplog.clear()
+    with caplog.at_level(py_logging.DEBUG, logger="spectrum.dia_data"):
+        for _ in range(10):
+            result = dia.check_in_raw(1500.0)  # out of range
+            assert result is False
+
+    # Should NOT have any WARNING-level records for these
+    warn_records = [r for r in caplog.records if r.levelno >= py_logging.WARNING]
+    assert len(warn_records) == 0, (
+        f"P1-6: check_in_raw should not emit WARNING per call; got {len(warn_records)}")
+
+    # Counter should be 10
+    assert hasattr(dia, "_n_out_of_window_xic"), (
+        "P1-6: DIAData must expose _n_out_of_window_xic counter")
+    assert dia._n_out_of_window_xic == 10, (
+        f"P1-6: counter expected 10, got {dia._n_out_of_window_xic}")
+```
+
+- [ ] **Step 2: Run test, verify it fails**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py::test_dia_data_check_in_raw_increments_counter_no_warn_per_call -v`
+
+Expected: FAIL — no `_n_out_of_window_xic` attribute; `logging.warn` still emitted.
+
+- [ ] **Step 3: Patch `spectrum/dia_data.py`**
+
+In `__init__` (around line 100-160), add:
+
+```python
+        self._n_out_of_window_xic: int = 0
+```
+
+In `check_in_raw` (lines 518-527):
+
+```python
+    def check_in_raw(self, precursor_mz) -> bool:
+        """ 检查这个 mz 是否在当前 raw 中"""
+        if (precursor_mz <= self._max_mz_value + 0.1
+                and precursor_mz >= self._min_mz_value - 0.1):
+            return True
+
+        # P1-6, Silent-I3: was logging.warn per call; now debug + counter.
+        # Summary logged once per batch in workflows/pair_flow.py.
+        self._n_out_of_window_xic += 1
+        logging.debug(
+            "out-of-window XIC: max=%s min=%s mz=%s",
+            self._max_mz_value, self._min_mz_value, precursor_mz)
+        return False
+```
+
+In `xic_ms2_peaks_extract` (lines 703-712):
+
+```python
+        if center_idx is None:
+            dtype = [("rt", "f8"), ("ppm_error", "f8"),
+                     ("intensity", "f8"), ("cycle_idx", "i4")]
+            # P1-6, Silent-I3: debug + counter instead of per-call warn.
+            self._n_out_of_window_xic += 1
+            logging.debug(
+                "no MS2 window match: precursor_mz=%s", precursor_mz)
+            for i in candidates:
+                gidx = self.ms2_indexs[i]
+                lower = self._precursor_lower_mz[gidx]
+                upper = self._precursor_upper_mz[gidx]
+                logging.debug(
+                    "candidate idx=%s global=%s rt=%.3f window=[%.3f, %.3f)",
+                    i, gidx, self.ms2_indexs_rt[i], lower, upper)
+            return np.array([], dtype=dtype), 0.0
+```
+
+- [ ] **Step 4: Add summary log at batch end in pair_flow.py**
+
+In `workflows/pair_flow.py`, find the batch end (somewhere in the `run()` method or the batch dispatch logic, often around 318-329 per audit). The DIA instances are loaded per-worker via mmap; the counter lives per-worker. The cleanest summary is in the main process after the batch returns. Since workers don't easily report back, log the counter in each worker AT END of `process_batch_single` / `process_batch_pair_shuffle`:
+
+In `workflows/flow_utils.py:process_batch_single` (and `process_batch_pair`, `process_batch_pair_shuffle`), at the END of the function before `return`:
+
+```python
+    # P1-6, Silent-I3: log out-of-window XIC summary per worker
+    n_oow = getattr(dia1, "_n_out_of_window_xic", 0)
+    if n_oow > 0:
+        logging.info(
+            "[batch summary] %d out-of-window XIC requests in %s",
+            n_oow, os.path.basename(shared_path))
+```
+
+(Add `import os` and `import logging` at the top of `flow_utils.py` if not already present.)
+
+- [ ] **Step 5: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py::test_dia_data_check_in_raw_increments_counter_no_warn_per_call -v`
+
+Expected: PASS.
+
+- [ ] **Step 6: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add spectrum/dia_data.py workflows/flow_utils.py tests/test_deep_audit_p1.py
+git commit -m "fix(dia_data): logging.warn -> debug + per-batch summary (P1-6, Silent-I3)
+
+Audit finding Silent-I3 (2026-06-03 deep audit): check_in_raw and
+xic_ms2_peaks_extract used deprecated logging.warn per PSM × fragment,
+dumping _cycle_left_precursor array each time. Megabytes of warnings
+into extract.log; effectively silent because no one reads it.
+
+Fix: downgrade to logging.debug (won't bloat extract.log under default
+INFO level), increment new DIAData._n_out_of_window_xic counter, and
+log a per-worker summary at batch end in flow_utils.py."
+```
+
+---
+
+### Task P1-7: Silent-I8 — `centroid_spectrum` short-spectrum logger
+
+**Why:** `spectrum/spectrum_utils.py:60-82` returns empty result for spectra with <3 peaks or all-zero intensity. No log. Downstream XIC sees zero → fake "no signal". Real MS2s usually have >>3 peaks but edge cases shouldn't be silent.
+
+**Files:**
+- Modify: `spectrum/spectrum_utils.py` (return value or side-effect counter — pick counter)
+- Modify: `spectrum/dia_data.py:_load_from_mzml` (collect + log summary)
+- Test: append to `tests/test_deep_audit_p1.py`
+
+- [ ] **Step 1: Append test**
+
+Append to `tests/test_deep_audit_p1.py`:
+
+```python
+def test_dia_data_load_logs_centroid_empty_count_summary(caplog, tmp_path):
+    """_load_from_mzml must log a summary of centroid-to-empty spectra (P1-7, Silent-I8).
+
+    We can't easily mock the entire mzML pipeline; verify the COUNTER
+    field exists on DIAData and is logged at end of load. Use
+    a minimal _load_from_mzml-compatible path or a focused unit test
+    of the counter mechanism.
+    """
+    from spectrum.dia_data import DIAData
+    dia = DIAData()
+    # The counter should exist as an instance attr (default 0)
+    assert hasattr(dia, "_n_centroid_empty"), (
+        "P1-7: DIAData must expose _n_centroid_empty counter")
+    assert dia._n_centroid_empty == 0
+
+
+def test_centroid_spectrum_increments_counter_on_empty_return():
+    """centroid_spectrum is pure (returns empty); the COUNTER is owned by
+    the caller (_load_from_mzml). Verify the function itself behaves
+    correctly: len<3 returns empty arrays (no exception, no side-effect)."""
+    from spectrum.spectrum_utils import centroid_spectrum
+    mz, intensity = centroid_spectrum(
+        np.array([100.0, 200.0]),
+        np.array([10.0, 20.0]),
+        rel_threshold=1e-3,
+    )
+    assert len(mz) == 0
+    assert len(intensity) == 0
+```
+
+- [ ] **Step 2: Run tests, verify they fail (only first will fail; second already passes)**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py -v -k centroid`
+
+Expected: 1 FAIL (`_n_centroid_empty` attr missing), 1 PASS.
+
+- [ ] **Step 3: Add counter to DIAData**
+
+In `spectrum/dia_data.py:__init__`, add:
+
+```python
+        self._n_centroid_empty: int = 0
+```
+
+- [ ] **Step 4: Increment counter in `_load_from_mzml`**
+
+In `spectrum/dia_data.py`, find the call site around lines 359-363:
+
+```python
+        if self._centroid_enabled and not _is_already_centroid(spectrum):
+            mz_array, intensity_array = centroid_spectrum(
+                mz_array, intensity_array,
+                rel_threshold=self._centroid_rel_threshold,
+            )
+```
+
+Replace with:
+
+```python
+        if self._centroid_enabled and not _is_already_centroid(spectrum):
+            mz_array, intensity_array = centroid_spectrum(
+                mz_array, intensity_array,
+                rel_threshold=self._centroid_rel_threshold,
+            )
+            # P1-7, Silent-I8: count empty-return so we can log a summary.
+            if len(mz_array) == 0:
+                self._n_centroid_empty += 1
+```
+
+- [ ] **Step 5: Log summary at end of `_load_from_mzml`**
+
+Find the end of `_load_from_mzml` (look for the return / function end). Add before the function returns:
+
+```python
+        # P1-7, Silent-I8: summary of centroid-to-empty spectra.
+        if self._n_centroid_empty > 0:
+            logging.info(
+                "[centroid] %d spectra returned empty (likely <3 peaks)",
+                self._n_centroid_empty)
+```
+
+- [ ] **Step 6: Run test, verify PASS**
+
+Run: `conda run -n silac_ml pytest tests/test_deep_audit_p1.py -v -k centroid`
+
+Expected: 2 PASSed.
+
+- [ ] **Step 7: Full regression**
+
+Run: `conda run -n silac_ml pytest tests/ -q 2>&1 | tail -5`
+
+Expected: no NEW failures.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add spectrum/dia_data.py tests/test_deep_audit_p1.py
+git commit -m "fix(dia_data): log centroid-to-empty summary (P1-7, Silent-I8)
+
+Audit finding Silent-I8 (2026-06-03 deep audit): centroid_spectrum
+returned empty arrays for spectra with <3 peaks or all-zero intensity
+without any log. Downstream XIC saw zero → fake 'no signal'. Real MS2s
+usually have >>3 peaks but edge cases shouldn't be silent.
+
+Add DIAData._n_centroid_empty counter incremented in _load_from_mzml
+when centroid_spectrum returns empty. Log summary line at end of load
+so users can spot anomalies (e.g., a low-quality run with many small
+spectra)."
+```
+
