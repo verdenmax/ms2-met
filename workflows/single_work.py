@@ -386,8 +386,8 @@ def multi_batch_work(
     # H/L 强度比一致性（按 all/b/y 分组的 log10-ratio std/mad）
     for ion_type, ratios in fragment_hl_ratios.items():
         std_v, mad_v = _calc_hl_ratio_consistency(ratios)
-        features[f"{ion_type}_log_hl_ratio_std"] = std_v
-        features[f"{ion_type}_log_hl_ratio_mad"] = mad_v
+        features[f"{ion_type}_log_lh_ratio_std"] = std_v
+        features[f"{ion_type}_log_lh_ratio_mad"] = mad_v
 
     # 碎片级 peak-likeness 汇总（heavy XIC × {mean,p50,std,max}）
     features.update(extract_ion_numeric_features(
@@ -772,8 +772,8 @@ def single_pair_work(
     # H/L 强度比一致性（按 all/b/y 分组的 log10-ratio std/mad）
     for ion_type, ratios in fragment_hl_ratios.items():
         std_v, mad_v = _calc_hl_ratio_consistency(ratios)
-        features[f"{ion_type}_log_hl_ratio_std"] = std_v
-        features[f"{ion_type}_log_hl_ratio_mad"] = mad_v
+        features[f"{ion_type}_log_lh_ratio_std"] = std_v
+        features[f"{ion_type}_log_lh_ratio_mad"] = mad_v
 
     # 碎片级 peak-likeness 汇总（heavy XIC × {mean,p50,std,max}）
     features.update(extract_ion_numeric_features(
@@ -1161,11 +1161,17 @@ def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
 def _calc_hl_ratio_consistency(ratios: list) -> tuple[float, float]:
     """Compute consistency of light/heavy intensity ratios across fragments.
 
-    Returns (std, mad) of log10(ratio) over the input list. Non-positive
-    ratios are dropped (cannot take log). std uses NaN for count==1 to
-    match the existing single-element convention (see Bug #21 in
-    extract_ion_pearson_features). mad is 0 for empty input, otherwise
-    median absolute deviation from the median.
+    Returns (std, mad) of log10(L/H) over the input list. Despite the
+    historical 'hl' suffix in the function name (kept for stability),
+    the computed ratio is light/heavy. Column names were renamed from
+    log_hl_ratio_* to log_lh_ratio_* in P2-1 / Units-I2 / 2026-06-03
+    audit to match the actual direction. std/mad are sign-invariant
+    so the renaming is cosmetic for these specific aggregates.
+
+    Non-positive ratios are dropped (cannot take log). std uses NaN for
+    count==1 to match the existing single-element convention (see
+    Bug #21 in extract_ion_pearson_features). mad is 0 for empty input,
+    otherwise median absolute deviation from the median.
     """
     log_ratios = [float(np.log10(r)) for r in ratios if r > 0]
     count = len(log_ratios)

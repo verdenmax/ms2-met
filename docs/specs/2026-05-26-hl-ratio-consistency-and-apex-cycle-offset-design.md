@@ -61,12 +61,12 @@ else:
 
 | 列名 | 定义 |
 |------|------|
-| `all_log_hl_ratio_std` | 所有有效碎片 log10(intensity_ratio) 的标准差 |
-| `b_log_hl_ratio_std` | b 离子碎片 log10(ratio) 标准差 |
-| `y_log_hl_ratio_std` | y 离子碎片 log10(ratio) 标准差 |
-| `all_log_hl_ratio_mad` | 所有有效碎片 log10(ratio) 中位绝对偏差 |
-| `b_log_hl_ratio_mad` | b 离子 log10(ratio) MAD |
-| `y_log_hl_ratio_mad` | y 离子 log10(ratio) MAD |
+| `all_log_lh_ratio_std` | 所有有效碎片 log10(intensity_ratio) 的标准差 (renamed in P2-1, 2026-06-03 audit) |
+| `b_log_lh_ratio_std` | b 离子碎片 log10(ratio) 标准差 |
+| `y_log_lh_ratio_std` | y 离子碎片 log10(ratio) 标准差 |
+| `all_log_lh_ratio_mad` | 所有有效碎片 log10(ratio) 中位绝对偏差 |
+| `b_log_lh_ratio_mad` | b 离子 log10(ratio) MAD |
+| `y_log_lh_ratio_mad` | y 离子 log10(ratio) MAD |
 
 ### 2.2 apex cycle offset
 
