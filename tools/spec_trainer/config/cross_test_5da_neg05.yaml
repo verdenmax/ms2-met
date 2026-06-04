@@ -14,16 +14,16 @@ model:
     boosting_type: gbdt
     objective: binary
     metric: [auc, binary_logloss]
-    num_leaves: 31
-    learning_rate: 0.05
+    num_leaves: 15
+    learning_rate: 0.02
     feature_fraction: 0.9
     bagging_fraction: 0.8
-    is_unbalance: True
+    min_data_in_leaf: 50
     verbose: -1
 
 training:
   num_boost_round: 1000
-  early_stopping_rounds: 50
+  early_stopping_rounds: 200
   valid_size: 0.2
 
 output:
