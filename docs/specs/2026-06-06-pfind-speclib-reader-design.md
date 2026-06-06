@@ -92,6 +92,7 @@ pFind 通过 pPred 生成的谱库以二进制存储，外部读取较复杂：
 
 - iontype 编码：偶=`b`、奇=`y`；碎片电荷 `= iontype // 2 + 1`（0=b⁺,1=y⁺,2=b²⁺,3=y²⁺,…，共 12 类对应 1–6 价）。
 - 离子按强度降序写出，且已按 `inten/最大 inten > 1e-3` 截断、上限 `MAX_ION_OUTPUT=1000`。
+- **边界**：`n_size==0` 的记录照样写出（每"肽段-电荷"恒有 2 字节头），读取须当作"存在的空记录"；charge-c 记录只含 `frag_charge ≤ c` 的离子（各桶不对称）；M = Σ mod_pep_num（变体总数）。
 
 ### 修饰 id 映射（modification.ini）
 
@@ -103,7 +104,7 @@ pFind 通过 pPred 生成的谱库以二进制存储，外部读取较复杂：
 - `strKey == "Met-loss+Acetyl[ProteinN-termM]"`
 - 名称以 `Label_` 开头（注意：该 `continue` 在赋 id 之前，故不占 id）
 
-数据行格式：`名称=位点 类型 单同位素质量 平均质量 NL数 [NL...] 元素组成`，取**第一个浮点**为单同位素质量。
+数据行格式：`名称=位点 类型 单同位素质量 平均质量 NL数 [NL...] 元素组成`，取**第 3 个 token（单同位素质量）**为 `mono_mass`（复刻 `is_in >> sites >> type >> mass`；位点/类型非数值，故等价于"首个浮点"）。
 
 > 注：C++ 中 `m_vID2Mod` 按质量排序但保留 read-order 的 `m_nID` 作为索引，因此二进制里的 `mod_id` 等价于"过滤后数据行的文件顺序 1-based 序号"。
 
@@ -152,9 +153,9 @@ ModEntry:                          # modification.ini 一条
 
 ## 正确性自校验（无需外部 ground truth）
 
-1. **质量交叉校验**（最关键，验证序列+修饰解码）：用 element.ini+aa.ini+modification.ini 独立重算中性质量 = Σ残基 + H₂O + Σ修饰质量，与 pdb 存储 `mass` 比较（容差 ~1e-4 Da）。需要 element.ini/aa.ini 时启用，缺省可跳过并告警。
+1. **质量交叉校验**（最关键，验证序列+修饰解码）：用 element.ini+aa.ini+modification.ini 独立重算中性质量 = Σ残基 + H₂O + Σ修饰质量，与 pdb 存储 `mass` 比较（容差 ~1e-4 Da）。需要 element.ini/aa.ini 时启用，缺省可跳过并告警。**质量公式已由 C++ 验证**：`_m2mz(m,chg)=(m+chg*proton)/chg`（sdk.h:881）证明 `lfPepMass` 不含质子；y 离子加 `MOLECULE_MASS_H2O`（Instrument.cpp:45/61）证明含水；残基质量来自 aa.ini 组成×element.ini（不含水，Reader.cpp:209-218）。若真实文件出现**恒定常数偏差**（≈1.0073 质子 / ≈18.0106 水），按该常数校正公式。
 2. **结构完整性**：每条目变体块消耗字节 == `mod_pep_bytes`（同时确认 `size_t`=8）。
-3. **计数一致性**：`len(rt) == M`；`len(ms2_records) % M == 0`，得整数 `chg_max`。
+3. **计数一致性**：`len(rt) == M`；`len(ms2_records) % M == 0`，得整数 `chg_max ∈ [1,6]`（硬校验）。
 4. **范围检查**：MS2 `frag_pos ∈ [0, len-2]`、`iontype ∈ [0,11]`。
 
 ## 测试策略
