@@ -44,16 +44,21 @@ def data_to_npz(
                 shared_path,
                 expected_centroid_enabled=expected_enabled,
                 expected_centroid_rel_threshold=expected_thresh,
+                expected_source_path=filepath,
             )
-            logging.info(f"DIA cache {shared_path} 命中（params 匹配）")
-        except ValueError as e:
+            logging.info(f"DIA cache {shared_path} 命中（params + 源文件匹配）")
+        except Exception as e:
+            # ValueError(params/源文件不符) 或损坏(BadZipFile/OSError 等) → 重建
             logging.warning(
-                f"DIA cache {shared_path} 失效（{e}）；删除并重建")
-            os.remove(shared_path)
+                f"DIA cache {shared_path} 失效或损坏（{e}）；删除并重建")
+            try:
+                os.remove(shared_path)
+            except OSError:
+                pass
 
     if not os.path.exists(shared_path):
         dia_data = raw_file_manager.get_dia_data_object(filepath)
-        dia_data.save_to_file(shared_path)
+        dia_data.save_to_file(shared_path, source_path=filepath)
 
     logging.info(f"生成 DIA data {shared_path} 完成")
     return name, shared_path

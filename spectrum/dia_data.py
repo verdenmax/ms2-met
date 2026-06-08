@@ -1,6 +1,8 @@
 
+import os
 import re
 import logging
+import tempfile
 import numpy as np
 import pandas as pd
 
@@ -182,8 +184,12 @@ class DIAData:
         self._n_centroid_empty: int = 0
 
     # 在 DIAData 类中添加
-    def save_to_file(self, filepath: str):
-        """将所有 NumPy 数组和标量保存到 .npz 文件"""
+    def save_to_file(self, filepath: str, source_path: str | None = None):
+        """将所有 NumPy 数组和标量保存到 .npz 文件（原子写）。
+
+        source_path: 源 mzML 路径；提供则把其 mtime/size 写入缓存，供
+        validate_cache_params 检测源文件是否被替换/重新生成（缓存失效）。
+        """
 
         data = {
             # 格式版本号 (3 = centroided peaks + embedded centroid params; 见 P0-3)
@@ -221,9 +227,26 @@ class DIAData:
             '_centroid_rel_threshold': np.float64(self._centroid_rel_threshold),
         }
 
+        # 源文件身份（用于缓存失效检测；源 mzML 被替换/重新生成时重建）
+        if source_path is not None and os.path.exists(source_path):
+            st = os.stat(source_path)
+            data['_source_mtime'] = np.float64(st.st_mtime)
+            data['_source_size'] = np.int64(st.st_size)
+
         # 过滤掉 None 值（np.savez 不支持 None）
         data = {k: v for k, v in data.items() if v is not None}
-        np.savez_compressed(filepath, **data)
+
+        # 原子写：先写同目录临时 .npz，再 os.replace；避免崩溃/并发留下截断文件
+        out_dir = os.path.dirname(filepath) or "."
+        fd, tmp = tempfile.mkstemp(suffix=".npz", dir=out_dir)
+        os.close(fd)
+        try:
+            np.savez_compressed(tmp, **data)
+            os.replace(tmp, filepath)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
         logging.info(f"Saved DIAData to {filepath}")
 
     @classmethod
@@ -264,9 +287,11 @@ class DIAData:
     @staticmethod
     def validate_cache_params(filepath: str,
                               expected_centroid_enabled: bool,
-                              expected_centroid_rel_threshold: float) -> None:
+                              expected_centroid_rel_threshold: float,
+                              expected_source_path: str | None = None) -> None:
         """Lightweight cache validation: open npz with mmap, read ONLY the
-        3 scalars needed for version + centroid checks, then close.
+        scalars needed for version + centroid (+ optional source-identity)
+        checks, then close.
 
         Avoids materializing multi-GB arrays just to validate metadata
         (P0-3 review I1). Uses `with np.load(...)` to guarantee handle
@@ -274,19 +299,23 @@ class DIAData:
         Windows file-handle race).
 
         Raises:
-            ValueError: if _format_version != 3 OR centroid params mismatch.
+            ValueError: if _format_version != 3, centroid params mismatch, or
+                (when expected_source_path given) the source mzML's size/mtime
+                differs from what was cached.
         """
         with np.load(filepath, mmap_mode='r') as data:
             DIAData._check_format_version(
                 filepath, data,
                 expected_centroid_enabled=expected_centroid_enabled,
                 expected_centroid_rel_threshold=expected_centroid_rel_threshold,
+                expected_source_path=expected_source_path,
             )
 
     @staticmethod
     def _check_format_version(filepath: str, data,
                               expected_centroid_enabled: bool | None = None,
-                              expected_centroid_rel_threshold: float | None = None) -> None:
+                              expected_centroid_rel_threshold: float | None = None,
+                              expected_source_path: str | None = None) -> None:
         """Reject npz files without `_format_version=3` or mismatched centroid params.
 
         Bumped from 2 -> 3 in P0-3 (Silent-C3) to embed centroid params
@@ -322,6 +351,20 @@ class DIAData:
                     f"npz 缓存 {filepath} 的 _centroid_rel_threshold={stored_threshold}, "
                     f"配置要求 {expected_centroid_rel_threshold}。请删除该文件后重新运行。"
                 )
+        # 源文件身份校验：仅当调用方给出期望源路径、缓存内含身份字段、且源文件存在
+        # （旧缓存无 _source_size 字段时跳过，保持向后兼容命中）
+        if (expected_source_path is not None and '_source_size' in data
+                and os.path.exists(expected_source_path)):
+            st = os.stat(expected_source_path)
+            stored_size = int(data['_source_size'])
+            stored_mtime = (float(data['_source_mtime'])
+                            if '_source_mtime' in data else None)
+            if stored_size != st.st_size or (
+                    stored_mtime is not None
+                    and abs(stored_mtime - st.st_mtime) > 1e-6):
+                raise ValueError(
+                    f"npz 缓存 {filepath} 的源文件 {expected_source_path} 已变化"
+                    f"（size/mtime 不符），需重建。")
 
     def _get_retention_time(self, spectrum) -> float:
         """Return retention time in MINUTES (canonical pipeline unit).
