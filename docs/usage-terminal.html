@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ms2-met · 使用说明 (Style A)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --muted:#8b949e;
+    --green:#3fb950; --blue:#58a6ff; --purple:#a371f7; --yellow:#d29922; --cyan:#39c5cf;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--mono);
+    line-height:1.6;font-size:15px;}
+  a{color:var(--blue);text-decoration:none;} a:hover{text-decoration:underline;}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 20px 80px;}
+  .en{color:var(--muted);font-size:.82em;font-weight:400;}
+  header.hero{border:1px solid var(--border);border-radius:10px;background:
+    linear-gradient(180deg,#161b22,#0d1117);padding:26px 24px;margin-bottom:30px;}
+  header.hero .prompt{color:var(--green);}
+  h1{margin:0 0 6px;font-size:28px;letter-spacing:.5px;}
+  h1 .v{color:var(--muted);font-size:14px;font-weight:400;}
+  .tagline{color:var(--muted);margin:0;font-size:14px;}
+  .badges{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;}
+  .badge{background:var(--panel);border:1px solid var(--border);border-radius:20px;
+    padding:3px 11px;font-size:12px;color:var(--cyan);}
+  h2{font-size:19px;margin:38px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+  h2 .hash{color:var(--green);margin-right:8px;}
+  p{margin:0 0 14px;}
+  /* flow diagram */
+  .flow{display:flex;flex-direction:column;gap:10px;background:var(--panel);
+    border:1px solid var(--border);border-radius:10px;padding:20px;}
+  .lane-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);
+    margin:4px 0 2px;}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .node{border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:#0d1117;
+    font-size:13px;min-width:96px;}
+  .node small{display:block;color:var(--muted);font-size:10px;margin-top:2px;}
+  .node.in{border-color:var(--blue);} .node.in b{color:var(--blue);}
+  .node.proc{border-color:var(--green);} .node.proc b{color:var(--green);}
+  .node.out{border-color:var(--purple);} .node.out b{color:var(--purple);}
+  .node.lib{border-color:var(--yellow);} .node.lib b{color:var(--yellow);}
+  .arrow{color:var(--green);font-size:18px;}
+  .arrow.down{width:100%;text-align:center;}
+  .sub{margin-left:18px;border-left:2px dashed var(--border);padding:8px 0 8px 16px;
+    display:flex;flex-direction:column;gap:8px;}
+  /* code */
+  .code{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;font-size:13px;margin:0 0 8px;}
+  .code .c{color:var(--green);} .code .o{color:var(--muted);} .code .k{color:var(--yellow);}
+  .step{color:var(--cyan);font-size:13px;margin:16px 0 6px;}
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 8px;}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:var(--panel);color:var(--cyan);}
+  td code,p code,li code{background:var(--panel);border:1px solid var(--border);
+    border-radius:4px;padding:1px 5px;font-size:12px;color:var(--yellow);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;}
+  .comp{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 14px;}
+  .comp b{color:var(--blue);} .comp p{margin:6px 0 0;font-size:12.5px;color:var(--muted);}
+  ul{margin:0 0 14px;padding-left:20px;} li{margin:4px 0;}
+  footer{margin-top:40px;color:var(--muted);font-size:12px;border-top:1px solid var(--border);padding-top:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1><span class="prompt">$</span> ms2-met <span class="v">· SILAC MS2 validation</span></h1>
+    <p class="tagline">基于代谢标记 (SILAC) 的 DIA 搜索结果独立验证与特征提取工具。
+      <span class="en">Independent MS2 validation &amp; feature extraction for DIA search results, via metabolic (SILAC) labeling.</span></p>
+    <div class="badges"><span class="badge">Python</span><span class="badge">DIA-NN / AlphaDIA / pFind</span><span class="badge">multiprocess</span><span class="badge">spectral-library reader</span></div>
+  </header>
+
+  <h2><span class="hash">#</span>这是什么 <span class="en">What is it</span></h2>
+  <p>搜索引擎靠匹配理论谱图鉴定肽段，质控主流是 target-decoy。ms2-met 提供一条<b>正交</b>验证：同一肽段的轻标 / 重标两种形式 RT 相近、XIC 峰形相似。对一条轻标鉴定，按序列算出<b>重标 m/z</b>，在 DIA 谱图里找重标证据——若轻 / 重标 XIC 峰形高度相关 (Pearson 高) 则鉴定可信，否则疑似假阳性。最终把相关性等特征输出到 CSV，供训练 / 分析。</p>
+  <p class="en" style="font-size:13px;">A light identification implies a heavy twin (+8.014 on K, +10.008 on R). We compute the heavy m/z, extract its XIC from the DIA run, and score the light-vs-heavy peak-shape correlation. High correlation ⇒ trustworthy ID; low ⇒ likely false positive. Features are written to a CSV for downstream training/analysis.</p>
+
+  <h2><span class="hash">#</span>数据流 <span class="en">Pipeline data flow</span></h2>
+  <div class="flow">
+    <div class="lane-label">主流程 · main pipeline</div>
+    <div class="row">
+      <div class="node in"><b>mzML</b><small>DIA raw</small></div>
+      <span class="arrow">+</span>
+      <div class="node in"><b>搜索结果</b><small>DIA-NN / AlphaDIA / pFind / JSON</small></div>
+      <span class="arrow">›</span>
+      <div class="node proc"><b>main.py</b><small>config.ini → PairFlow</small></div>
+    </div>
+    <div class="arrow down">↓</div>
+    <div class="sub">
+      <div class="row">
+        <div class="node proc"><b>LightResultManager</b><small>→ LightResult (PSM 列表)</small></div>
+        <div class="node proc"><b>DataManager</b><small>→ DIAData (mzML→npz, mmap 共享)</small></div>
+      </div>
+    </div>
+    <div class="arrow down">↓</div>
+    <div class="row">
+      <div class="node proc"><b>分组 + 正负样本</b><small>(seq,charge,mods) · label 1/0</small></div>
+      <span class="arrow">›</span>
+      <div class="node proc"><b>多进程特征提取</b><small>≤25 workers · single_work</small></div>
+    </div>
+    <div class="arrow down">↓</div>
+    <div class="row">
+      <div class="node proc"><b>轻/重标 XIC Pearson</b><small>前体 MS1 + 逐 b/y 碎片 MS2 · 分位数统计</small></div>
+      <span class="arrow">›</span>
+      <div class="node out"><b>result.csv</b><small>特征表</small></div>
+    </div>
+    <div class="arrow down">↓</div>
+    <div class="row">
+      <div class="node out"><b>extract_common</b><small>多引擎交并集数据集</small></div>
+      <span class="arrow">›</span>
+      <div class="node out"><b>spec_trainer</b><small>训练分类器打分</small></div>
+    </div>
+
+    <div class="lane-label" style="margin-top:14px;">独立模块 · standalone (未接入 pipeline)</div>
+    <div class="row">
+      <div class="node lib"><b>pFind 谱库</b><small>pepdata.pdb + rt/ms2.predb + FASTA + modification.ini</small></div>
+      <span class="arrow">›</span>
+      <div class="node lib"><b>speclib reader</b><small>流式解码 M 个肽段 + 预测 RT/MS2</small></div>
+      <span class="arrow">›</span>
+      <div class="node lib"><b>speclib_inspect</b><small>质量自校验 CLI</small></div>
+    </div>
+  </div>
+
+  <h2><span class="hash">#</span>快速上手 <span class="en">Quickstart</span></h2>
+
+  <div class="step">▸ 1 · 主流程特征提取 <span class="en">run feature extraction</span></div>
+  <div class="code"><span class="c">$</span> python main.py <span class="k">--configpath</span> config.ini <span class="k">--logpath</span> ms2.log
+<span class="o"># 输出 result.csv（基本信息列 + XIC 相关性等特征列）</span></div>
+
+  <div class="step">▸ 2 · 批量跑多窗口 baseline <span class="en">Makefile targets</span></div>
+  <div class="code"><span class="c">$</span> make 2th     <span class="o"># 2Da 窗口</span>
+<span class="c">$</span> make 5th     <span class="o"># 5Da 窗口</span>
+<span class="c">$</span> make normal  <span class="o"># 变窗</span>
+<span class="c">$</span> make all     <span class="o"># 顺序全跑</span></div>
+
+  <div class="step">▸ 3 · 构造多引擎数据集 <span class="en">build union dataset</span></div>
+  <div class="code"><span class="c">$</span> python tools/extract_common.py <span class="k">--configpath</span> extract_2da_pfind_diann.ini</div>
+
+  <div class="step">▸ 4 · 训练 / 评估分类器 <span class="en">train scorer</span></div>
+  <div class="code"><span class="c">$</span> cd tools/spec_trainer
+<span class="c">$</span> python src/main.py <span class="k">--config</span> config/&lt;name&gt;.yaml <span class="k">--name</span> &lt;name&gt;</div>
+
+  <div class="step">▸ 5 · 读取 pFind 谱库 <span class="en">read spectral library (standalone)</span></div>
+  <div class="code"><span class="c">$</span> python -m tools.speclib_inspect <span class="k">--library-dir</span> &lt;谱库目录&gt; \
+      <span class="k">--fasta</span> merge_human_ecoli_yeast.fasta <span class="k">--mod</span> modification.ini \
+      <span class="k">--element</span> element.ini <span class="k">--aa</span> aa.ini <span class="k">--mass-limit</span> 300000</div>
+
+  <h2><span class="hash">#</span>关键配置 <span class="en">Key config (config.ini)</span></h2>
+  <table>
+    <tr><th>键 key</th><th>说明 description</th></tr>
+    <tr><td><code>search_engine_type</code></td><td>0 自定义 JSON / 1 DIA-NN / 2 AlphaDIA / 3 pFind</td></tr>
+    <tr><td><code>feature_type</code></td><td>0 同文件配对（陷阱库负例）/ 1 轻重标双文件</td></tr>
+    <tr><td><code>mass_tol_ppm</code></td><td>质量容差（ppm），缺省 10</td></tr>
+    <tr><td><code>xic_cycle_window</code></td><td>XIC 提取的周期半窗</td></tr>
+    <tr><td><code>centroid_enabled</code> / <code>centroid_rel_threshold</code></td><td>加载 mzML 时是否质心化 + 阈值（推荐 1e-3）</td></tr>
+    <tr><td><code>work_directory</code></td><td>工作目录（缺省 ./workspace）；每个 baseline 可独立避免并行写冲突</td></tr>
+    <tr><td><code>result_file</code></td><td>输出 CSV 路径</td></tr>
+  </table>
+
+  <h2><span class="hash">#</span>组件速查 <span class="en">Components</span></h2>
+  <div class="grid">
+    <div class="comp"><b>entry</b><p>程序入口 main.py + 常量 / banner<br><span class="en">CLI entry + constants</span></p></div>
+    <div class="comp"><b>spectrum</b><p>DIA 数据 / XIC、PSM / 重标质量、结果解析<br><span class="en">DIA data, XIC, PSM mass, result parsers</span></p></div>
+    <div class="comp"><b>workflows</b><p>PairFlow → single_work 特征提取核心<br><span class="en">orchestration + feature core</span></p></div>
+    <div class="comp"><b>manager</b><p>数据管理层（Pickle 持久化缓存）<br><span class="en">data managers + pickle cache</span></p></div>
+    <div class="comp"><b>tools</b><p>extract_common / eval_* / entrapment_classify / speclib_inspect<br><span class="en">top-level CLIs</span></p></div>
+    <div class="comp"><b>spec_trainer</b><p>训练 / 评估分类器（lgb / xgb / sklearn）<br><span class="en">classifier training</span></p></div>
+    <div class="comp"><b>speclib</b><p>pFind 谱库二进制读取（独立模块）<br><span class="en">spectral-library reader</span></p></div>
+  </div>
+
+  <h2><span class="hash">#</span>文档体系 <span class="en">Documentation</span></h2>
+  <ul>
+    <li><code>docs/code/L1_overview.md</code> — 全项目 L1 概览；<code>parts/&lt;子系统&gt;/{L2,L3,L4}.md</code> 逐层细化到具体文件 API。</li>
+    <li><code>docs/speclib/</code> — 谱库 reader 独立 L1-L4 文档。</li>
+    <li><code>docs/specs/</code> · <code>docs/superpowers/plans/</code> — 设计文档与实现计划。</li>
+  </ul>
+
+  <footer>ms2-met — 利用代谢标记发展 MS2 检验技术 · L1-L4 docs in <code>docs/</code> · 运行入口 <code>python main.py --configpath config.ini</code></footer>
+</div>
+</body>
+</html>

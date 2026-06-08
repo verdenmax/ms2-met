@@ -91,3 +91,6 @@ TODO.md
 # Root-level ad-hoc test scripts (real tests live in tests/)
 /test_*.py
 /scratch_*.py
+
+# brainstorm visual companion (local, not committed)
+.superpowers/

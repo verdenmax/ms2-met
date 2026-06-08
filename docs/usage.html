@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ms2-met · 使用说明 / Usage Guide</title>
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif;background:#0b1020;}
+  .bar{display:flex;align-items:center;gap:10px;padding:10px 16px;background:#11162a;
+    border-bottom:1px solid #2a3358;position:sticky;top:0;z-index:5;flex-wrap:wrap;}
+  .bar .title{color:#c9d1d9;font-size:14px;font-weight:600;margin-right:8px;}
+  .bar .title small{color:#6b779e;font-weight:400;}
+  .tab{border:1px solid #30406b;background:#161b34;color:#aab4d4;border-radius:8px;
+    padding:7px 16px;font-size:13px;cursor:pointer;transition:.15s;}
+  .tab:hover{border-color:#5b6fb0;}
+  .tab.active{background:linear-gradient(90deg,#22d3ee,#8b5cf6);color:#06121f;border-color:transparent;font-weight:700;}
+  .hint{margin-left:auto;color:#6b779e;font-size:12px;}
+  .hint a{color:#22d3ee;text-decoration:none;} .hint a:hover{text-decoration:underline;}
+  iframe{width:100%;height:calc(100vh - 53px);border:0;display:block;background:#0d1117;}
+  @media(max-width:640px){.hint{display:none;}}
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span class="title">ms2-met 使用说明 <small>· Usage Guide</small></span>
+    <button class="tab active" id="tA" onclick="show('terminal')">A · 终端 / 开发者风</button>
+    <button class="tab" id="tC" onclick="show('science')">C · 科研 / 质谱风</button>
+    <span class="hint">单独打开：<a href="usage-terminal.html" target="_blank">A</a> · <a href="usage-science.html" target="_blank">C</a></span>
+  </div>
+  <iframe id="frame" src="usage-terminal.html" title="ms2-met usage guide"></iframe>
+<script>
+  function show(which){
+    document.getElementById('frame').src = 'usage-' + which + '.html';
+    document.getElementById('tA').classList.toggle('active', which==='terminal');
+    document.getElementById('tC').classList.toggle('active', which==='science');
+  }
+</script>
+</body>
+</html>
