@@ -9,16 +9,17 @@
 ## iter_peptides（锁步流式，核心）
 
 ```
-ms2 = iter_ms2_records(ms2_path)          # 流式记录
+ms2 = iter_ms2_records / iter_ms2_arrays / None   # 由 decode_ms2 决定
 for i, pep in enumerate(iter_pepdata(...)):  # pdb 流
     pep.pred_rt = rt[i]                    # RT 按下标
-    pep.pred_ms2 = {chg: next(ms2) for chg in 1..chg_max}
+    if ms2: pep.pred_ms2 = {chg: next(ms2) for chg in 1..chg_max}
     yield pep
 ```
 
 - **同序保证**：pdb 变体顺序 == RT 顺序 == MS2 记录"肽段外层"顺序，故三者按下标/顺序对齐，无需额外 key。
 - 每肽段消费 `chg_max` 条 MS2 记录（实测 4）。
-- **对齐校验**：`i >= n_rt` → 肽段多于 RT 报错；`next(ms2)` StopIteration → MS2 记录耗尽报错；遍历结束 `i+1 != n_rt` → 肽段少于 RT 报错。
+- **decode_ms2**（直接决定速度）：`"objects"`=list[FragIon]（兼容）、`"arrays"`=numpy 数组（快/省内存）、`"none"`=完全不读 4.4GB ms2（只需 RT/身份时最快；实测全库 312 万肽段 ~9s）。
+- **对齐校验**：`i >= n_rt` → 肽段多于 RT 报错；`next(ms2)` StopIteration → MS2 耗尽报错；遍历结束 `i+1 != n_rt` → 肽段少于 RT 报错；结束后 `next(ms2)` 仍有 → MS2 过供报错（仅 objects/arrays）。
 - 内存 O(1)：调用方即用即弃；适合批处理/导出/验证。随机按肽段查 MS2 需缓存偏移索引（本步不做）。
 
 ## validate_masses（质量交叉校验）

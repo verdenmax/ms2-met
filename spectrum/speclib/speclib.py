@@ -11,7 +11,8 @@ from .config_io import (parse_fasta, parse_modifications,
                         parse_element_masses, parse_residue_masses, water_mass,
                         Protein, ModEntry)
 from .pepdata import iter_pepdata, LibPeptide
-from .predictions import read_rt_pred, iter_ms2_records, read_chg_max_from_trailer
+from .predictions import (read_rt_pred, iter_ms2_records, iter_ms2_arrays,
+                         read_chg_max_from_trailer)
 
 
 @dataclass
@@ -67,10 +68,25 @@ class SpecLib:
             ms2_path=os.path.join(library_dir, "pepdata.ms2.predb"),
             fasta_path=fasta_path, mod_path=mod_path)
 
-    def iter_peptides(self):
-        """锁步流式：pdb+RT+MS2 同序逐肽段 yield（已填 pred_rt/pred_ms2）。"""
-        ms2 = iter_ms2_records(self.ms2_path)
+    def iter_peptides(self, decode_ms2: str = "objects"):
+        """锁步流式：pdb+RT(+MS2) 同序逐肽段 yield（已填 pred_rt/pred_ms2）。
+
+        decode_ms2 控制 MS2 的解码方式（直接影响速度）：
+        - "objects"（默认）：pred_ms2 = {charge: list[FragIon]}，兼容旧用法。
+        - "arrays"：pred_ms2 = {charge: np.ndarray}，~5-8× 快、~8× 省内存。
+        - "none"：**完全不读 4.4GB 的 ms2 文件**，pred_ms2 留空 {}；只需 RT/肽段
+          身份时最快（墙钟省去整段 MS2 读盘）。
+        """
+        if decode_ms2 not in ("objects", "arrays", "none"):
+            raise ValueError(
+                f"decode_ms2 must be objects/arrays/none, got {decode_ms2!r}")
         n_rt = len(self.rt)
+        ms2 = None
+        if decode_ms2 == "objects":
+            ms2 = iter_ms2_records(self.ms2_path)
+        elif decode_ms2 == "arrays":
+            ms2 = iter_ms2_arrays(self.ms2_path)
+
         i = -1   # 哨兵：空 pdb 时 i+1==0，下面的对齐校验会触发
         for i, pep in enumerate(iter_pepdata(
                 self.pepdata_path, self.proteins, self.mods_by_id)):
@@ -78,26 +94,28 @@ class SpecLib:
                 raise ValueError(
                     f"peptide count exceeds RT count {n_rt}")
             pep.pred_rt = self.rt[i]
-            d = {}
-            for chg in range(1, self.chg_max + 1):
-                try:
-                    d[chg] = next(ms2)
-                except StopIteration:
-                    raise ValueError(
-                        f"ms2 records exhausted at peptide {i} charge {chg}")
-            pep.pred_ms2 = d
+            if ms2 is not None:
+                d = {}
+                for chg in range(1, self.chg_max + 1):
+                    try:
+                        d[chg] = next(ms2)
+                    except StopIteration:
+                        raise ValueError(
+                            f"ms2 records exhausted at peptide {i} charge {chg}")
+                pep.pred_ms2 = d
             yield pep
         if i + 1 != n_rt:
             raise ValueError(
                 f"peptide count {i + 1} != RT count {n_rt}")
         # 对称校验：MS2 不应多于 chg_max×M（过供 = 与 pdb 错位）
-        try:
-            next(ms2)
-        except StopIteration:
-            pass
-        else:
-            raise ValueError(
-                "ms2 has more records than chg_max * peptides")
+        if ms2 is not None:
+            try:
+                next(ms2)
+            except StopIteration:
+                pass
+            else:
+                raise ValueError(
+                    "ms2 has more records than chg_max * peptides")
 
     def validate_masses(self, element_path: str, aa_path: str,
                         tol: float = 0.01, limit: int | None = None

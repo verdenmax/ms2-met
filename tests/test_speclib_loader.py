@@ -20,6 +20,42 @@ def test_open_dir_and_iter_peptides(lib_files):
     assert peps[1].pred_rt == pytest.approx(21.5)
 
 
+def test_iter_peptides_decode_none_skips_ms2(lib_files):
+    # decode_ms2='none'：不读 ms2，pred_ms2 留空，但 RT/序列仍正确对齐
+    import os
+    lib = SpecLib.open_dir(str(lib_files),
+                           fasta_path=str(lib_files / "db.fasta"),
+                           mod_path=str(lib_files / "modification.ini"))
+    # 删掉 ms2 文件证明 'none' 模式根本不读它（open_dir 已读过尾巴拿 chg_max）
+    os.remove(lib_files / "pepdata.ms2.predb")
+    peps = list(lib.iter_peptides(decode_ms2="none"))
+    assert len(peps) == 2
+    assert peps[0].pred_ms2 == {}
+    assert peps[0].pred_rt == pytest.approx(20.0)
+    assert peps[1].sequence == "PEPTIDEKACDM"
+
+
+def test_iter_peptides_decode_arrays(lib_files):
+    import numpy as np
+    lib = SpecLib.open_dir(str(lib_files),
+                           fasta_path=str(lib_files / "db.fasta"),
+                           mod_path=str(lib_files / "modification.ini"))
+    peps = list(lib.iter_peptides(decode_ms2="arrays"))
+    assert set(peps[0].pred_ms2.keys()) == {1, 2}
+    rec = peps[0].pred_ms2[1]
+    assert isinstance(rec, np.ndarray)
+    assert rec.dtype.names == ("pos", "iontype", "inten")
+    assert int(rec["iontype"][0]) == 0          # 第 1 条记录 ion0 = iontype 0
+
+
+def test_iter_peptides_invalid_decode_mode_raises(lib_files):
+    lib = SpecLib.open_dir(str(lib_files),
+                           fasta_path=str(lib_files / "db.fasta"),
+                           mod_path=str(lib_files / "modification.ini"))
+    with pytest.raises(ValueError, match="decode_ms2"):
+        list(lib.iter_peptides(decode_ms2="bogus"))
+
+
 def test_validate_masses_all_pass(lib_files):
     lib = SpecLib.open_dir(str(lib_files),
                            fasta_path=str(lib_files / "db.fasta"),
