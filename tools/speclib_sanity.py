@@ -92,6 +92,15 @@ def _observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict:
     return out
 
 
+def filter_psms_by_raw(psms, raw_title):
+    """Keep only PSMs whose _raw_title matches raw_title. If raw_title is None,
+    return the list unchanged. Lets the gate process a single raw at a time
+    (memory-frugal) while the PSM file may span many raws."""
+    if raw_title is None:
+        return list(psms)
+    return [p for p in psms if p._raw_title == raw_title]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Speclib sanity gate: predicted vs observed light similarity")
@@ -101,7 +110,15 @@ def main():
     parser.add_argument("--psm-file", required=True,
                         help="confident light PSMs (same loader as main pipeline)")
     parser.add_argument("--search-engine-type", type=int, default=3)
-    parser.add_argument("--raw", required=True, help="DIA mzML for observed light")
+    parser.add_argument("--raw", default=None,
+                        help="DIA mzML for observed light (parsed into RAM; "
+                             "heavy). Prefer --dia-npz when a cache exists.")
+    parser.add_argument("--dia-npz", default=None,
+                        help="prebuilt .dia.npz; mmap-loaded (low memory). "
+                             "Overrides --raw when given.")
+    parser.add_argument("--raw-title", default=None,
+                        help="only score PSMs whose raw_title matches (so one "
+                             "raw is processed at a time)")
     parser.add_argument("--metric", choices=list(_METRICS), default="spectral_angle")
     parser.add_argument("--min-sim", type=float, default=0.7)
     parser.add_argument("--mass-tol-ppm", type=float, default=10.0)
@@ -110,6 +127,9 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
+
+    if not args.raw and not args.dia_npz:
+        parser.error("provide either --dia-npz (preferred, mmap) or --raw")
 
     cfg = configparser.ConfigParser()
     cfg["input"] = {
@@ -129,15 +149,23 @@ def main():
 
     lrm = LightResultManager(config=cfg)
     light_result = lrm.get_light_result_object(args.psm_file)
-    psms = list(light_result.psm_info)[:args.limit]
+    psms = filter_psms_by_raw(list(light_result.psm_info), args.raw_title)
+    psms = psms[:args.limit]
+    logging.info("PSMs after raw_title=%s filter + limit: %d",
+                 args.raw_title, len(psms))
 
     wanted = {normalize_key(p._sequence, p._modify, p._charge) for p in psms}
     store = build_pred_store(lib, wanted)
     logging.info("speclib coverage: hit=%d miss=%d", store.n_hit, store.n_miss)
 
-    tmp_pickle = os.path.join(tempfile.mkdtemp(), "raw_manager.pkl")
-    dm = data_manager.DataManager(cfg, path=tmp_pickle)
-    dia_data = dm.get_dia_data_object(args.raw)
+    if args.dia_npz:
+        from spectrum.dia_data import DIAData
+        logging.info("loading DIA via mmap npz: %s", args.dia_npz)
+        dia_data = DIAData.load_from_file(args.dia_npz, use_mmap=True)
+    else:
+        tmp_pickle = os.path.join(tempfile.mkdtemp(), "raw_manager.pkl")
+        dm = data_manager.DataManager(cfg, path=tmp_pickle)
+        dia_data = dm.get_dia_data_object(args.raw)
 
     pairs = []
     for p in psms:

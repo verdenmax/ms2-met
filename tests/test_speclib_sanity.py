@@ -45,3 +45,15 @@ def test_build_observed_pred_pairs_aligns_on_common_fragments():
     pred_vec, obs_vec = build_pairs_from_maps(pred_map, obs_map)
     assert pred_vec == [0.4]
     assert obs_vec == [50.0]
+
+
+def test_filter_psms_by_raw():
+    from tools.speclib_sanity import filter_psms_by_raw
+
+    class _P:
+        def __init__(self, rt):
+            self._raw_title = rt
+
+    psms = [_P("A"), _P("B"), _P("A"), _P("C")]
+    assert [p._raw_title for p in filter_psms_by_raw(psms, "A")] == ["A", "A"]
+    assert len(filter_psms_by_raw(psms, None)) == 4   # None -> no filtering
