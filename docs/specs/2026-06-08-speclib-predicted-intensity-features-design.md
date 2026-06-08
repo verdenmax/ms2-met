@@ -1,0 +1,231 @@
+# 设计：用 pFind 谱库预测强度赋能轻重标验证特征（第一版）
+
+> 文档版本：1.0（2026-06-08）
+> 状态：已与用户 brainstorm 收敛，待评审 → 写实现计划
+> 关联：
+> - `docs/specs/2026-05-13-silac-validation-framework.md`（SILAC 验证框架，类2/3/4、情形 B、Q1a）
+> - `docs/specs/2026-06-06-pfind-speclib-reader-design.md` + `docs/speclib/`（谱库 reader，已实现）
+> - 集成点：`workflows/single_work.py`（碎片循环）、`workflows/q1a_helpers.py`（Q1a 累加器/信号存在判据）、`workflows/pair_flow.py`（任务编排）、`spectrum/psm_info.py`（`get_heavy_info` 碎片枚举）
+
+---
+
+## 1. 背景与动机
+
+工具的使命：对搜索引擎给出的**轻标**鉴定，用「轻重标必须成对、且有可预测物理关系」去**约束重标**，从而提取轻重关系特征并判定鉴定可信度（不依赖 decoy）。
+
+现状：主流程（`single_work.py`）枚举理论 b/y 碎片，对每个碎片提取轻标/重标 MS2 XIC，算逐碎片 Pearson/cosine/apex_delta 等，并由 `Q1aAccumulator` 统计「同时有可信轻、重信号」的碎片数。**所有可分碎片被等权对待**，且**完全没有用到谱库的预测强度/预测 RT**（已确认：`single_work.py`/`psm_info.py`/`dia_data.py` 不引用 speclib）。
+
+框架明确的主要弱点是 **5Da 下的「情形 B」**：真实共流出、但身份错误的肽段，能伪装时间形状与同位素包络，仅靠相似度判据无法拒绝。
+
+谱库（pPred 生成）**唯一**提供、而管线尚未利用的信息：
+1. **预测的 b/y 碎片相对强度模式**（深度模型给出「哪些碎片该强/该弱」）。
+2. 预测 RT（每肽段一个浮点；本版**不用**，见非目标）。
+
+核心洞察：**纯轻标的谱图相似度只用轻标、偏题**（等同搜索引擎的谱库重打分）。谱库对本工具的价值在于把「预测强度」**路由进轻重关系**：
+- 决定哪些碎片可信（top-K 选择/加权）；
+- 由 L 的预测模式**构造预测重标谱**去检验实测重标（情形 B 的克星——干扰肽段复现不了 L 的预测强度模式）。
+
+---
+
+## 2. 目标与非目标
+
+### 2.1 第一版目标（本 spec）
+
+| 编号 | 名称 | 一句话 |
+|---|---|---|
+| **0** | 前置 sanity gate | 验证库预测在本数据上与实测轻标相符，过阈才继续 |
+| **1** | Lookup 基础设施 + 覆盖率 | 一遍流式抽出命中肽段预测进内存字典 + fallback |
+| **2** | top-K 碎片选择/加权 | 可分碎片中按预测强度取前 K（默认 6，可配），驱动所有碎片级特征 |
+| **3** | I1 强度模式一致性 | 构造预测重标谱 → 与实测重标算谱角/Spearman |
+| **4** | I2 H/L 比一致性 | top-K 上每碎片 H/L 比的（预测加权）离散度 |
+| **5** | I3 预测覆盖度 | top-K 中实际拿到可信重标信号的比例 |
+| **6** | J2 意外峰污染 | 预测弱/≈0 的位置上出现可信重标信号的比例/强度占比 |
+| **7** | J5 自适应信号存在判据 | 用「预测强度×轻标apex×全局L:H比」作期望，替代固定 floor=100 |
+| **8** | 性能红利 | 只对 top-K 抽 MS2 XIC，减少每 PSM 的 XIC 提取次数 |
+
+### 2.2 非目标（本版明确不做）
+
+- **纯轻标谱图相似度作为主特征**：偏题，最多日后作次要协变量。
+- **预测 RT 特征**：RT 轻重共享，是「身份」约束而非「轻重关系」，本版搁置。
+- **持久化 offset 索引**：本版用「一遍流式 + 跳过非命中」，不建可复用索引。
+- **J6 多电荷碎片证据扩展、J10 预测谱信息量加权**：放 backlog。
+
+---
+
+## 3. 总体数据流与集成点
+
+```
+pair_flow 启动阶段（一次）
+  收集本次所有被鉴定肽段 key {(seq, mods, charge)}
+        │
+        ▼  一遍流式扫库 SpecLib.iter_peptides(decode_ms2="arrays")
+  命中 key → 抽 pred_ms2 进内存字典 PredStore：key → 预测碎片强度（按 (ion_type, frag_pos, frag_charge)）
+        │  （未命中肽段：无预测 → fallback）
+        ▼
+single_work 碎片循环（每 PSM）
+  由 PredStore 给每个枚举碎片打上 pred_intensity
+        │
+        ├─ top-K（可分碎片中预测最强 K 个）= 碎片集 F
+        ├─ 现有逐碎片特征仅在 F 上算（去噪/提速）
+        ├─ I1：构造 pred_H、obs_H → 谱角/Spearman
+        ├─ I2：F 上 H/L 比离散度（预测加权）
+        ├─ I3：F 中重标「存在」(J5 判据) 的比例
+        ├─ J2：预测弱集合上的意外重标信号占比
+        └─ J5：替换 Q1a/存在判定的强度门槛
+        ▼
+  追加新特征列 → result.csv（每列对未命中 PSM 置 NaN，并出 has_lib_pred 标志）
+```
+
+设计原则：**库特征是「增量旁路」**——未命中或 sanity gate 不过时，主流程行为回退到现状（新列 NaN），不破坏既有特征与既有测试。
+
+---
+
+## 4. 详细设计
+
+### 4.0 前置 sanity gate（独立分析步，先跑）
+
+- **入口**：扩展 `tools/speclib_inspect.py` 或新增 `tools/speclib_sanity.py`，离线运行，不进主流程热路径。
+- **输入**：一批高置信轻标 PSM（如 pFind q<0.01 且 `light_max_intensity` 高）+ 谱库目录 + 对应 raw。
+- **算法**：对每条 PSM，按 `(ion_type, frag_pos, frag_charge)` 对齐「预测相对强度 `p`」与「实测轻标碎片强度 `l`」（实测取 XIC apex 或积分），计算谱角相似度与 Spearman；汇总分布（中位、p25/p75、过阈比例）。
+- **决策门槛**：中位谱角相似度 `> SANITY_MIN`（默认 0.7，可配）→ gate 通过；否则停止并报告，重点排查：单位、**b/y 序号 ↔ frag_pos 对齐**、电荷选择、修饰映射。
+- **产出**：一份统计报告（stdout + 可选 CSV）。该步**只用轻标**，是工具自检，不产出最终特征。
+
+### 4.1 Lookup 基础设施 + 覆盖率 + 对齐
+
+- **PredStore 构建**（`workflows` 下新模块，如 `workflows/pred_store.py`）：
+  - 输入：被鉴定肽段的 key 集合、谱库句柄。
+  - 用 `SpecLib.iter_peptides(decode_ms2="arrays")` 流式扫一遍；命中 key 的，把该肽段的预测碎片（结构化数组 `pos,iontype,inten`）整理成 `dict[(ion_type:str, frag_pos:int, frag_charge:int)] -> intensity`，连同 `pred_rt`（暂存不用）放入 `PredStore[key]`。
+  - 未命中 key 不入store。内存 O(命中肽段数)。
+- **key 规范化**：`(sequence, mods_normalized, charge)`。需统一：修饰表示（与库一致的 mod 编码/顺序）、`charge ≤ chg_max`、I/L 视库约定。规范化函数集中一处，并在 sanity gate 复用以保证一致。
+- **b/y 序号 ↔ frag_pos 对齐**：管线碎片来自 `psm.get_heavy_info(SILAC)`，元素 `(ion_type, ion_num, light_mass, heavy_mass)`，`ion_num` 为 1-based b/y 序号；库 `FragIon.frag_pos` 为 0-indexed 切割位。需建立映射（如 b 的 `ion_num=i` ↔ `frag_pos=i-1`，y 同理但方向相反），**该映射的正确性由 4.0 sanity gate 验证**（错位会让相似度系统性变差）。
+- **覆盖率/fallback**：每 PSM 记 `has_lib_pred ∈ {0,1}`；未命中 → 所有库特征列 NaN，主流程其余不变。汇总命中率写日志。
+
+### 4.2 top-K 碎片选择 / 加权
+
+- **碎片集 F**：在该 PSM 的**可分碎片**（`is_separable_fragment(light_mass, heavy_mass, split_window)`）中，按 `pred_intensity` 降序取前 `TOP_K`（默认 6，可配）。可分碎片不足 K 时取实际数量。
+- **加权**：聚合碎片级特征到 PSM 级时，按 `pred_intensity` 归一权重加权（如加权均值）。
+- **既有特征改造**：现有逐碎片 Pearson/cosine/apex_delta/mz_err/SNR 等的**聚合**改为在 `F` 上（并提供预测加权版）。为不破坏既有列与测试，新列以新名输出（如 `*_topk`、`*_wpred`），**保留旧列**或由 config 开关切换（见 §6）。
+- **元特征**：`n_separable_in_predicted_topK`（预测 top 中可分的数量）、`n_fragments_in_F`。
+
+### 4.3 I1 · 强度模式一致性（构造预测重标谱）
+
+- **构造 `pred_H`**：对 `F` 中每碎片，取其预测相对强度（即 L 的预测强度，化学等价 → 重标强度模式与轻标一致），形成向量（位置=重标碎片）。
+- **`obs_H`**：实测重标各碎片强度（XIC apex 或积分），与 `pred_H` 同序对齐、同一归一化（L2 或和归一）。
+- **特征**：
+  - `spec_pattern_SA_heavy` = 谱角相似度(`pred_H`, `obs_H`)。
+  - `spec_pattern_spearman_heavy` = Spearman(`pred_H`, `obs_H`)（抗模型绝对强度偏差）。
+  - `spec_pattern_LH_consistency` = 预测加权的 corr(`obs_L`, `obs_H`)（轻重应同形）。
+- **攻击**：情形 B（干扰肽段的碎片强度模式由自身序列决定，复现不了 L 的预测模式）。
+- **度量定义**：见 §7。空/单元素向量 → NaN。
+
+### 4.4 I2 · H/L 比一致性
+
+- 在 `F` 中、轻重都有可信信号的碎片上，算 `r_i = I_heavy_i / I_light_i`。
+- **特征**：`hl_ratio_cv_weighted`（预测加权变异系数）、`hl_ratio_mad`（中位绝对偏差）。比值越一致越像真对。
+- 与框架类4一致，但 top-K 去噪后分母更干净。少于 2 个有效碎片 → NaN。
+
+### 4.5 I3 · 预测覆盖度
+
+- 分母 = `|F|`；分子 = `F` 中重标信号「存在」（用 §4.7 的 J5 判据）的碎片数。
+- **特征**：`pred_coverage`（命中/|F|）、`pred_coverage_wpred`（按预测强度加权命中）。
+- **攻击**：身份错的肽段更难让「该强的碎片」在重标同时出现。
+
+### 4.6 J2 · 意外峰污染（I3 的反面）
+
+- **预测弱集合 W**：在所有理论可分碎片里，取 `pred_intensity` 最低的若干（或 `pred_intensity ≈ 0` 者），与 `F` 不相交。
+- **特征**：
+  - `unexpected_heavy_fraction` = W 中出现可信重标信号（J5 判据或简单 floor）的比例。
+  - `unexpected_heavy_intensity_ratio` = W 上重标信号强度和 / `F` 上重标信号强度和。
+- **攻击**：情形 B 的反面——干扰肽段常在 L 未预测的碎片上出信号。
+
+### 4.7 J5 · 自适应信号存在判据
+
+- 现状：`q1a_helpers.is_signal_present_heavy` 用绝对 `intensity_floor=100`。
+- 改造：引入**期望重标强度** `E_i = pred_rel_i × light_apex_i × global_LH_ratio`，「存在」判定改为 `heavy_max ≥ α · E_i` **且**沿用既有共流出/峰形两条件（apex_delta、Pearson）。
+  - `global_LH_ratio`：用 `F` 中强配对碎片的 `r_i` 中位数估计；估不出时回退固定 floor。
+  - `α`：可配（默认 0.2）。
+- **兼容**：J5 作为**可选判据**注入（config 开关）；关闭时 `is_signal_present_heavy` 行为不变，保护既有 Q1a 测试。预测缺失（`has_lib_pred=0`）的碎片自动回退固定 floor。
+
+### 4.8 性能红利
+
+- 只对 `F`（top-K）抽 MS2 XIC，而非全部理论 b/y → 每 PSM 的 `xic_ms2_peaks_extract` 调用数从 ~(2·肽长) 降到 ~`K`。需保证 Q1a/既有特征若仍需全碎片，可在 config 下切换「全碎片」与「仅 F」两种模式（默认保守：先全算、只新增 F 上的库特征；提速作为后续开关）。
+
+---
+
+## 5. 新增特征列清单（汇总）
+
+| 列名 | 来源 | 说明 |
+|---|---|---|
+| `has_lib_pred` | 4.1 | 该 PSM 是否命中谱库预测（0/1） |
+| `n_fragments_in_F` / `n_separable_in_predicted_topK` | 4.2 | top-K 碎片集规模/可分计数 |
+| `spec_pattern_SA_heavy` | I1 | 预测重标谱 vs 实测重标 谱角相似度 |
+| `spec_pattern_spearman_heavy` | I1 | 同上，Spearman |
+| `spec_pattern_LH_consistency` | I1 | 预测加权 corr(obs_L, obs_H) |
+| `hl_ratio_cv_weighted` / `hl_ratio_mad` | I2 | H/L 比离散度 |
+| `pred_coverage` / `pred_coverage_wpred` | I3 | 预测覆盖度 |
+| `unexpected_heavy_fraction` / `unexpected_heavy_intensity_ratio` | J2 | 意外峰污染 |
+| （可选）`*_topk` / `*_wpred` 版既有聚合特征 | 4.2 | 在 F 上/预测加权重算的既有特征 |
+
+未命中 PSM 的上述列统一为 NaN。
+
+---
+
+## 6. 配置参数（`config.ini` `[general]` 或新 `[speclib]` 段）
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `speclib_dir` | （空=关闭） | 谱库目录；空则整套库特征关闭，主流程回退现状 |
+| `speclib_fasta` / `speclib_mod` | — | 解码所需 FASTA / modification.ini |
+| `pred_top_k` | 6 | top-K |
+| `pred_metric` | `spectral_angle` | I1 主度量（`spectral_angle`/`entropy`/`pearson`） |
+| `pred_signal_alpha` | 0.2 | J5 期望强度系数 α |
+| `pred_use_adaptive_floor` | false（首版保守） | 是否启用 J5 自适应存在判据 |
+| `pred_extract_only_topk` | false | 是否只对 F 抽 XIC（性能红利开关） |
+| `sanity_min_similarity` | 0.7 | gate 通过阈值（仅 sanity 工具） |
+
+---
+
+## 7. 度量定义
+
+- **谱角相似度** `SA(a,b) = 1 - (2/π)·arccos( (a·b)/(‖a‖‖b‖) )`，向量先非负化、和/或 L2 归一；对稀疏强度向量比 Pearson 稳。
+- **谱熵相似度**（可选）：基于归一化强度的熵，1 − Jensen-Shannon 型；备选度量。
+- **Spearman**：秩相关，抗模型绝对强度尺度偏差。
+- 约定：长度 < 2 或全零向量 → 度量返回 NaN（不返回 0，避免与「真实低相似」混淆）。
+
+---
+
+## 8. 测试策略（TDD）
+
+每块先写失败测试再实现。最小集合：
+
+- **PredStore（4.1）**：构造小 SpecLib（复用 `tests/conftest.py` 的 `_build_pdb/_build_rt/_build_ms2`），断言命中 key 取到预测、未命中 `has_lib_pred=0`；key 规范化/对齐单测（含 b/y↔frag_pos 映射的具体数值用例）。
+- **top-K（4.2）**：给定可分/不可分混合 + 预测强度，断言选中的正是「可分中预测最强的 K 个」；不足 K 的边界。
+- **I1（4.3）**：构造 `pred_H` 与 `obs_H` 完全一致 → SA≈1、Spearman≈1；打乱强度模式 → 显著下降；长度<2 → NaN。
+- **I2（4.4）**：所有碎片同一 H/L 比 → CV≈0；一个离群 → CV 上升。
+- **I3（4.5）**：F 中部分重标「存在」→ coverage = 命中/|F|。
+- **J2（4.6）**：在预测弱集合放入重标信号 → `unexpected_*` 上升；无则≈0。
+- **J5（4.7）**：开关关闭时 `is_signal_present_heavy` 与现状逐位一致（回归保护）；开启时按 `α·E_i` 判定的数值用例。
+- **集成回归**：`speclib_dir` 为空时 `result.csv` 列与数值与现状一致（增量旁路不破坏既有 4 项之外的测试）。
+- 全量 `python -m pytest tests/ -q`（注意 4 项既有失败与本工作无关）。
+
+---
+
+## 9. 风险与开放问题
+
+1. **gate 不过**：若库预测与实测轻标相关性差（异仪器/参数），I1/I2 价值打折——故 gate 前置、硬性。
+2. **b/y↔frag_pos 对齐**：错位会系统性拉低相似度；必须由 sanity gate + 专门单测锁定。
+3. **覆盖率**：库由特定 FASTA+酶+修饰生成；被鉴定肽段未必全在库内；fallback 已设计，但需评估命中率是否够高到让特征有统计意义。
+4. **修饰映射**：库的修饰编码与 PSM 的 `_modify`（unimod id）需一致映射；不一致会导致命中失败或错配。
+5. **全局 L:H 比估计**（J5）：在弱信号 PSM 上不稳；已设回退。
+6. **度量选择**：SA vs 谱熵 vs Spearman 的最终选择，依赖 gate 实验结果。
+
+---
+
+## 10. 分阶段落地顺序（供实现计划参考）
+
+1. **P0 · sanity gate（4.0）+ PredStore（4.1）**：先验证可用性与对齐，建好 lookup。**gate 通过是后续前提。**
+2. **P1 · top-K（4.2）+ I1（4.3）**：地基 + 最打情形 B 的新维度。
+3. **P2 · I2（4.4）+ I3（4.5）+ J2（4.6）**：补齐关系/覆盖/污染三特征。
+4. **P3 · J5（4.7）+ 性能红利（4.8）**：判据升级与提速（带 config 开关，保守默认）。
+
+每阶段 TDD + 既有测试回归 + 提交。
