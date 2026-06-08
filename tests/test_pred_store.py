@@ -63,3 +63,24 @@ def test_build_pred_store_counts_miss(lib_files):
     store = build_pred_store(lib, {present, absent})
     assert store.get(absent) is None
     assert store.n_hit == 1 and store.n_miss == 1
+
+
+from workflows.pred_store import frag_pos_for_ion
+
+
+def test_frag_pos_for_ion_b_is_ion_num_minus_one():
+    assert frag_pos_for_ion("b", 1, 12) == 0
+    assert frag_pos_for_ion("b", 5, 12) == 4
+
+
+def test_frag_pos_for_ion_y_is_reversed_not_ion_num_minus_one():
+    L = 12
+    assert frag_pos_for_ion("y", 1, L) == L - 2     # 10, NOT 0
+    assert frag_pos_for_ion("y", L - 1, L) == 0
+    assert frag_pos_for_ion("y", 4, L) == L - 5      # 7
+
+
+def test_frag_pos_complementary_b_and_y_share_cleavage_site():
+    L = 12
+    for i in range(1, L):
+        assert frag_pos_for_ion("b", i, L) == frag_pos_for_ion("y", L - i, L)

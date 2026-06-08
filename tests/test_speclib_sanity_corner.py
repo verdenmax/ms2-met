@@ -109,3 +109,34 @@ def test_build_pairs_deterministic_across_calls():
     # Parallel alignment is preserved by the shared sorted key order.
     assert first[0] == [1.0, 0.4, 0.2]
     assert first[1] == [100.0, 40.0, 20.0]
+
+
+def test_observed_light_map_reverses_y_frag_pos():
+    """y_1 must key at the C-terminal cleavage site (frag_pos L-2), not 0.
+    Regression for the y-ion alignment bug (final review 2026-06-08)."""
+    import numpy as np
+    import pytest
+    from spectrum.psm_info import PSMInfo, HeavyType
+    from workflows.pred_store import frag_key
+    from tools.speclib_sanity import _observed_light_map
+
+    psm = PSMInfo(sequence="PEPK", charge=2, modify=[],
+                  rt=np.float32(50.0), precursor_mz=np.float32(100.0),
+                  raw_title="r", protein_names="X")
+    b_ions, y_ions = psm.get_fragment_ions(HeavyType.SILAC)
+    y1_mass = next(lm for _it, num, lm, _hm in y_ions if num == 1)
+    b1_mass = next(lm for _it, num, lm, _hm in b_ions if num == 1)
+
+    class _MassDia:
+        def xic_ms2_peaks_extract(self, rt, win, precursor_mz, ions_mass,
+                                  mass_tol_ppm):
+            xic = np.zeros(2, dtype=[("rt", "f8"), ("intensity", "f8")])
+            xic["intensity"] = np.array([ions_mass, ions_mass * 0.5])
+            return xic, 0.0
+
+    m = _observed_light_map(psm, _MassDia(), 6, 10.0)
+    L = 4
+    # b_1 -> frag_pos 0
+    assert m[frag_key("b", 0, 1)] == pytest.approx(b1_mass)
+    # y_1 -> frag_pos L-2 = 2 (reversed); buggy code would have put y_3 here
+    assert m[frag_key("y", L - 2, 1)] == pytest.approx(y1_mass)

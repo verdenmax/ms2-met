@@ -35,6 +35,23 @@ def frag_key(ion_type, frag_pos, frag_charge) -> tuple:
     return (str(ion_type), int(frag_pos), int(frag_charge))
 
 
+def frag_pos_for_ion(ion_type, ion_num, seq_len) -> int:
+    """Map a pipeline b/y ion ordinal (1-based, as produced by
+    PSMInfo.get_fragment_ions) to the library's 0-indexed cleavage-site index
+    (FragIon.frag_pos, range 0..seq_len-2).
+
+    b and y ions at the same cut share that site, but get_fragment_ions numbers
+    y ions from the C-terminus, so the y direction is reversed:
+      b_i  -> frag_pos = i - 1
+      y_j  -> frag_pos = seq_len - j - 1   (b_i and y_{L-i} share a site)
+    Getting this wrong silently compares different fragments — see
+    docs/specs/2026-06-08-speclib-predicted-intensity-features-design.md §4.1.
+    """
+    if str(ion_type) == "b":
+        return int(ion_num) - 1
+    return int(seq_len) - int(ion_num) - 1
+
+
 class PredStore:
     """In-memory {normalize_key -> {'frags': {frag_key: intensity},
     'pred_rt': float}} for the identified peptides only."""

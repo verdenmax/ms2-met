@@ -740,7 +740,8 @@ from spectrum.speclib import SpecLib
 from spectrum.psm_info import HeavyType
 from manager.light_result_manager import LightResultManager
 from manager import data_manager
-from workflows.pred_store import build_pred_store, normalize_key, frag_key
+from workflows.pred_store import (
+    build_pred_store, normalize_key, frag_key, frag_pos_for_ion)
 
 
 def build_pairs_from_maps(pred_map: dict, obs_map: dict):
@@ -760,6 +761,7 @@ def _observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict:
     fragments; Phase 2 may extend to multi-charge (spec J6).
     """
     out = {}
+    seq_len = len(psm._sequence)
     b_ions, y_ions = psm.get_fragment_ions(HeavyType.SILAC)
     for ion_type, ion_num, light_mass, _heavy_mass in (b_ions + y_ions):
         xic, _all = dia_data.xic_ms2_peaks_extract(
@@ -772,8 +774,9 @@ def _observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict:
         apex = float(np.nanmax(xic["intensity"])) if np.any(
             np.isfinite(xic["intensity"])) else 0.0
         if apex > 0:
-            # frag_pos is 0-indexed cut: b/y ion_num (1-based) -> ion_num-1
-            out[frag_key(ion_type, ion_num - 1, 1)] = apex
+            # b/y ordinal -> 0-indexed cleavage site; y is REVERSED
+            frag_pos = frag_pos_for_ion(ion_type, ion_num, seq_len)
+            out[frag_key(ion_type, frag_pos, 1)] = apex
     return out
 
 
@@ -959,3 +962,11 @@ git commit -m "docs: L1-L4 entries for Phase 1 pred-intensity feature foundation
 - **Task 6 `tests/test_pred_store.py`:** predicted intensities round-trip
   through float32 in the binary (`0.3 → 0.30000001…`), so exact `== 0.3`
   fails. Fix: compare intensities with `pytest.approx(...)` (add `import pytest`).
+- **Task 8 `_observed_light_map` (Critical, found in final review):** y-ion →
+  `frag_pos` must be REVERSED. The library stores b and y at the same
+  0-indexed cleavage site, but `get_fragment_ions` numbers y from the
+  C-terminus, so observed `y_m` maps to `seq_len - m - 1`, not `m - 1`. Fixed
+  by extracting a pure `frag_pos_for_ion(ion_type, ion_num, seq_len)` helper in
+  `pred_store.py` (b: `ion_num-1`; y: `seq_len-ion_num-1`), unit-tested
+  (incl. complementary b_i / y_{L-i} share-a-site), and used by both the gate
+  and Phase-2 integration.

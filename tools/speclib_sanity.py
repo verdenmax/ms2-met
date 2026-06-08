@@ -20,7 +20,8 @@ from spectrum.psm_info import HeavyType
 from manager.light_result_manager import LightResultManager
 from manager import data_manager
 from workflows.pred_features import spectral_angle, spearman_sim
-from workflows.pred_store import build_pred_store, normalize_key, frag_key
+from workflows.pred_store import (
+    build_pred_store, normalize_key, frag_key, frag_pos_for_ion)
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,14 @@ def build_pairs_from_maps(pred_map: dict, obs_map: dict):
 
 def _observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict:
     """{frag_key: apex_intensity} for the PSM's light b/y fragments
-    (singly-charged, matching the dominant predicted fragments)."""
+    (singly-charged, matching the dominant predicted fragments).
+
+    The b/y ordinal from get_fragment_ions is mapped to the library's
+    0-indexed cleavage site via frag_pos_for_ion (y is reversed) so observed
+    and predicted fragments key identically.
+    """
     out = {}
+    seq_len = len(psm._sequence)
     b_ions, y_ions = psm.get_fragment_ions(HeavyType.SILAC)
     for ion_type, ion_num, light_mass, _heavy_mass in (b_ions + y_ions):
         xic, _all = dia_data.xic_ms2_peaks_extract(
@@ -80,7 +87,8 @@ def _observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict:
             continue
         apex = float(np.nanmax(xic["intensity"]))
         if apex > 0:
-            out[frag_key(ion_type, ion_num - 1, 1)] = apex
+            frag_pos = frag_pos_for_ion(ion_type, ion_num, seq_len)
+            out[frag_key(ion_type, frag_pos, 1)] = apex
     return out
 
 
