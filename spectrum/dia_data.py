@@ -784,29 +784,38 @@ class DIAData:
         # Step 1: 找到 _ms2_rt_values 中最接近 rt 的位置
         pos = np.searchsorted(self.ms2_indexs_rt, rt)
 
-        # 候选中心点
-        candidates = []
-        for i in range(1, 6):
-            if pos - i >= 0:
-                candidates.append(pos - i)
-        for i in range(0, 6):
-            if pos + i < len(self.ms2_indexs_rt):
-                candidates.append(pos + i)
+        # Step 1b: 从 pos 向两侧无界扩展，找最近的、窗口含 precursor_mz 的 MS2 谱图。
+        # DIA 每 cycle 轮询 N 个隔离窗口，含 precursor_mz 的窗口每 N 个 MS2 谱图
+        # 才出现一次（N 常 20-70）；固定 ±5 在 N>5 时几乎必然漏掉 → 空 XIC。
+        # 与下方 Step 2/3 的无界左右收集保持一致。
+        n_ms2 = len(self.ms2_indexs_rt)
+
+        def _window_contains(i: int) -> bool:
+            gidx = self.ms2_indexs[i]
+            lo = self._precursor_lower_mz[gidx]
+            up = self._precursor_upper_mz[gidx]
+            if np.isnan(lo) or np.isnan(up):
+                return False
+            return (lo - 0.1) <= precursor_mz <= (up + 0.1)
 
         center_idx = None
         min_diff = float('inf')
-        for i in candidates:
-            global_idx = self.ms2_indexs[i]
-            lower = self._precursor_lower_mz[global_idx] - 0.1
-            upper = self._precursor_upper_mz[global_idx] + 0.1
-
-            if np.isnan(lower) or np.isnan(upper):
-                continue
-            if lower <= precursor_mz <= upper:
-                diff = abs(self.ms2_indexs_rt[i] - rt)
-                if diff < min_diff:
-                    min_diff = diff
-                    center_idx = i  # 在 _ms2_indices 中的位置
+        # 向左（含 pos）找最近的匹配窗口
+        i = min(pos, n_ms2 - 1)
+        while i >= 0:
+            if _window_contains(i):
+                center_idx = i
+                min_diff = abs(self.ms2_indexs_rt[i] - rt)
+                break
+            i -= 1
+        # 向右（pos 之后）找最近的匹配窗口，与 rt 更近者胜出
+        i = pos + 1
+        while i < n_ms2:
+            if _window_contains(i):
+                if abs(self.ms2_indexs_rt[i] - rt) < min_diff:
+                    center_idx = i
+                break
+            i += 1
 
         if center_idx is None:
             dtype = [("rt", "f8"), ("ppm_error", "f8"),
@@ -816,13 +825,6 @@ class DIAData:
             self._n_out_of_window_xic += 1
             logging.debug(
                 "no MS2 window match: precursor_mz=%s", precursor_mz)
-            for i in candidates:
-                gidx = self.ms2_indexs[i]
-                lower = self._precursor_lower_mz[gidx]
-                upper = self._precursor_upper_mz[gidx]
-                logging.debug(
-                    "candidate idx=%s global=%s rt=%.3f window=[%.3f, %.3f)",
-                    i, gidx, self.ms2_indexs_rt[i], lower, upper)
             return np.array([], dtype=dtype), 0.0
 
         # Step 2: 向左收集 xic_cycle_window 个有效谱图

@@ -165,3 +165,37 @@ def test_ms2_xic_empty_path_still_has_cycle_idx_in_dtype():
         mass_tol_ppm=np.float32(10.0))
     assert "cycle_idx" in xic.dtype.names
     assert len(xic) == 0
+
+
+def test_ms2_xic_finds_window_beyond_5_scans():
+    """多窗口 DIA：含 precursor_mz 的隔离窗口每 N 个 MS2 谱图才出现一次。
+    当它距 pos 超过 5 时，旧的 ±5 中心搜索会返回空 XIC（漏掉信号）。
+    回归：center 搜索须向两侧无界扩展找最近匹配窗口。"""
+    N = 10
+    d = DIAData.__new__(DIAData)
+    d.ms2_indexs = np.arange(1, 21, dtype=np.int32)      # 20 个 MS2 (2 cycle×10 窗口)
+    d.ms2_indexs_rt = np.arange(20, dtype=np.float32)    # rt 0..19
+    # global idx g(1..20) 的窗口 = (g-1)%N；窗口 9 = [518,520]
+    d._precursor_lower_mz = np.array(
+        [np.nan] + [500.0 + 2 * ((g - 1) % N) for g in range(1, 21)],
+        dtype=np.float64)
+    d._precursor_upper_mz = np.array(
+        [np.nan] + [502.0 + 2 * ((g - 1) % N) for g in range(1, 21)],
+        dtype=np.float64)
+    d.rt_values = np.arange(21, dtype=np.float32)
+    d._peak_start_idx_list = np.zeros(21, dtype=np.int64)
+    d._peak_stop_idx_list = np.zeros(21, dtype=np.int64)
+    d._mz_values = np.array([], dtype=np.float32)
+    d._intensity_values = np.array([], dtype=np.float32)
+    d.ms1_indexs = np.array([0], dtype=np.int32)
+    d.precursor_scan_ids = np.array([-1] + [100] * 20, dtype=np.int32)
+    d._scan_id_to_index = np.zeros(200, dtype=np.int32)
+    d._scan_id_to_index[100] = 0
+    d._n_out_of_window_xic = 0
+
+    # precursor_mz=519 在窗口 9（global idx 10 与 20）；rt=2 → pos≈2，最近匹配在 j=9（7 远）
+    xic, _ = d.xic_ms2_peaks_extract(
+        rt=np.float32(2.0), xic_cycle_window=2,
+        precursor_mz=np.float32(519.0), ions_mass=np.float32(200.0),
+        mass_tol_ppm=np.float32(10.0))
+    assert len(xic) > 0, "含 precursor 的窗口距 pos>5，center 搜索未找到 → 空 XIC"
