@@ -24,7 +24,9 @@
 
 - 二进制区之后紧跟 `M` 行 ASCII：`"1\t0\t2\t0\t…\tchg_max\t0\t\n"`。
 - **成因**：`pPredMS2.cpp:868-873` 的收尾 `fprintf` 循环在 `if(binary)` 之外，二进制模式下 `curr_pep_id=0/curr_pep_chg=1` 未更新，对每肽段误写一行文本。pFind 引擎只读前 M×chg_max 条、忽略尾巴。
-- **停止规则**：尾巴首 2 字节 `'1'(0x31)'\t'(0x09)` 作 i16 = 12553 > 1000，故读取遇 `n_size<0 或 >max_ions` 即停。
+- **停止规则**：尾巴首 2 字节 `'1'(0x31)'\t'(0x09)` 作小端 i16 = 0x0931 = 2353 > 1000，故读取遇 `n_size<0 或 >max_ions` 即停。
+- **流式实现**：`iter_ms2_records` 用 `mmap`（非 `fh.read()`），真实文件 ~4.4GB 时保持 O(1) 常驻内存；并对 `off + n_size*6 > 文件尾` 做截断防御（干净停止）。
+- **RT 字节序**：`read_rt_pred` 用 `array('f')`（本机字节序），文件为小端；非小端主机上 `byteswap()` 纠正。
 
 ## 边界 / 坑
 

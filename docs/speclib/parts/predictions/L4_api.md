@@ -11,11 +11,13 @@
 ## `read_rt_pred(path: str) -> array('f')`
 
 全量读取 `pepdata.rt.predb`，返回 `array('f')`（M 个 float32，分钟）。按下标随机访问。
+注：`array('f')` 用本机字节序，文件为小端；非小端主机会 `byteswap()` 纠正。
 
 ## `iter_ms2_records(path: str, max_ions: int = MAX_ION_OUTPUT)`
 
 - **产出**：生成器，每次 `list[FragIon]`（一条记录；可能为空 `[]`）。
-- **停止**：遇 `n_size < 0` 或 `n_size > max_ions`（文本尾巴）即结束。
+- **停止**：遇 `n_size < 0` 或 `n_size > max_ions`（文本尾巴）即结束；另对截断（`off+n_size*6` 超出文件尾）干净停止。
+- **流式**：用 `mmap` 读，常驻内存 O(1)（真实文件 ~4.4GB 不 OOM）。
 - **不做**分组；分组到肽段由 `speclib` 按 `chg_max` 锁步完成。
 
 ## `read_chg_max_from_trailer(path: str, tail_bytes: int = 8192) -> int`

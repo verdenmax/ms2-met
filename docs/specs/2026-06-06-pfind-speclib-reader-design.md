@@ -105,7 +105,7 @@ pFind 通过 pPred 生成的谱库以二进制存储，外部读取较复杂：
 - **边界**：`n_size==0` 的记录照样写出（每"肽段-电荷"恒有 2 字节头），读取须当作"存在的空记录"；charge-c 记录只含 `frag_charge ≤ c` 的离子（各桶不对称）；M = Σ mod_pep_num（变体总数）。
 
 **文本尾巴（必须跳过）**：二进制记录区之后追加 `M` 行 ASCII 文本，每行 `"1\t0\t2\t0\t…\tchg_max\t0\t\n"`（行长 `4×chg_max+1` 字节）。成因：`MS2Predictor::predict()` 收尾的 `fprintf` 循环在 `if(binary)` 之外，二进制模式下 `curr_pep_id=0/curr_pep_chg=1` 未更新，故对每肽段都写一行文本残留（pPredMS2.cpp:868-873）。pFind 引擎只读前 `M×chg_max` 条二进制记录、忽略尾巴。
-**读取规则**：逐记录读，当 `n_size < 0` 或 `n_size > MAX_ION_OUTPUT(1000)` 即判定进入尾巴并停止（尾巴首字节 `'1'(0x31)'\t'(0x09)` 作 i16 = 12553 > 1000）。停止后应满足 `有效记录数 == chg_max × M` 且 `剩余字节 == M × (4×chg_max+1)`。
+**读取规则**：逐记录读，当 `n_size < 0` 或 `n_size > MAX_ION_OUTPUT(1000)` 即判定进入尾巴并停止（尾巴首 2 字节 `'1'(0x31)'\t'(0x09)` 作小端 i16 = 0x0931 = 2353 > 1000）。停止后应满足 `有效记录数 == chg_max × M` 且 `剩余字节 == M × (4×chg_max+1)`。
 
 ### 修饰 id 映射（modification.ini）
 

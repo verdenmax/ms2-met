@@ -13,7 +13,7 @@
 **关键格式（已对真实文件验证）：**
 - `pepdata.pdb` 条目头 `struct '<IIbbbbIQ'`（24B）= pro_id u32, pep_start u32, pep_len i8, pro_nc i8, enz i8, miss i8, mod_pep_num u32, mod_pep_bytes u64。随后 mod_pep_num 个变体：`'<db'`（9B）= mass f64 + mod_cnt i8；再 mod_cnt 个 `'<bi'`（5B）= pos i8 + mod_id i32。
 - `pepdata.rt.predb` = M×f32（分钟）。
-- `pepdata.ms2.predb` = `[M×chg_max 二进制记录][M 行文本尾巴]`。每记录 `'<h'`（2B）= n_size，再 n_size 个 `'<bbf'`（6B）= pos,i8; iontype,i8; inten,f32。**文本尾巴**每行 `"1\t0\t…\tchg_max\t0\t\n"`；读取遇 `n_size<0 或 >MAX_ION_OUTPUT(1000)` 即停（尾巴首 2 字节 `'1\t'` 作 i16=12553>1000）。
+- `pepdata.ms2.predb` = `[M×chg_max 二进制记录][M 行文本尾巴]`。每记录 `'<h'`（2B）= n_size，再 n_size 个 `'<bbf'`（6B）= pos,i8; iontype,i8; inten,f32。**文本尾巴**每行 `"1\t0\t…\tchg_max\t0\t\n"`；读取遇 `n_size<0 或 >MAX_ION_OUTPUT(1000)` 即停（尾巴首 2 字节 `'1\t'` 作小端 i16=2353>1000）。**用 mmap 流式读，O(1) 常驻内存（文件 ~4.4GB）。**
 - 序列 = `proteins[pro_id].sequence[pep_start:pep_start+pep_len]`。
 - mod_id = modification.ini 过滤后数据行 1-based read-order（Carbamidomethyl[C]=9, Oxidation[M]=46 已验证）。
 - iontype：偶=b、奇=y；frag_charge=iontype//2+1。
