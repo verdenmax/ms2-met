@@ -6,7 +6,7 @@
 
 **Architecture:** 四个单向依赖的小模块：`config_io`（解析 FASTA/modification.ini/element.ini/aa.ini）→ `pepdata`（流式读 `pepdata.pdb`）+ `predictions`（读 `pepdata.rt.predb` 全量数组、流式读 `pepdata.ms2.predb` 并跳过文本尾巴）→ `speclib`（**锁步流式** loader：pdb+RT+MS2 同序逐肽段 yield + 质量自校验）。外加 `tools/speclib_inspect.py` CLI 做真实文件验证（4.4GB 不 OOM）。
 
-**Tech Stack:** Python 3.10+（仓库实际 3.14），仅用标准库 `struct`/`array`/`dataclasses`/`os`；pytest（`python -m pytest`，repo root）。所有多字节字段小端、x64 位宽。
+**Tech Stack:** Python 3.10+（仓库实际 3.14），主用标准库 `struct`/`array`/`mmap`/`dataclasses`/`os`，MS2 批量解码用 `numpy`（性能优化引入，已是仓库传递依赖）；pytest（`python -m pytest`，repo root）。所有多字节字段小端、x64 位宽。
 
 参考 spec：`docs/specs/2026-06-06-pfind-speclib-reader-design.md`（已对真实 `lib-2th` 验证：mass 100%、RT 数=M、ms2=4×M 二进制+M 行文本尾巴、chg_max=4）。
 

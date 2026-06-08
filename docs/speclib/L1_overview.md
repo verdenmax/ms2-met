@@ -41,6 +41,12 @@ for pep in lib.iter_peptides():               # 锁步流式，内存 O(1)
     print(pep.sequence, pep.mods, pep.pred_rt, pep.pred_ms2[2][:3])
     break
 
+# 性能选项（流式读太慢时）：
+#   decode_ms2="none"   只要 RT/身份，跳过 4.4GB MS2（实测全库 ~9s）
+#   decode_ms2="arrays" pred_ms2 用 numpy 数组，~5-8× 快、~8× 省内存
+for pep in lib.iter_peptides(decode_ms2="none"):
+    use(pep.sequence, pep.pred_rt)
+
 # 质量交叉校验（流式；--limit 控制条数）
 rep = lib.validate_masses("element.ini", "aa.ini", tol=0.01, limit=300000)
 print(rep.passed, "/", rep.total, "max_err", rep.max_abs_error)
