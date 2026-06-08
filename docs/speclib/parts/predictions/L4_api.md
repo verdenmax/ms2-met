@@ -13,10 +13,17 @@
 全量读取 `pepdata.rt.predb`，返回 `array('f')`（M 个 float32，分钟）。按下标随机访问。
 注：`array('f')` 用本机字节序，文件为小端；非小端主机会 `byteswap()` 纠正。
 
+## `iter_ms2_arrays(path: str, max_ions: int = MAX_ION_OUTPUT, copy: bool = True)`
+
+- **产出**：生成器，每次一个 numpy 结构化数组（dtype 字段 `pos:i1, iontype:i1, inten:f4`；可能为空）。
+- **快路径**：比 `iter_ms2_records` 快约 5–8×、省约 8× 内存；数值/性能敏感场景首选。
+- **copy**：`True`（默认）每记录独立副本，可安全保留；`False` 零拷贝视图，**只可取出即用、不可跨迭代保留**（否则 mmap 无法干净关闭）。
+- **停止**：遇 `n_size<0` 或 `>max_ions`（文本尾巴）/截断即结束。
+- iontype→(b/y, 电荷)：`'b' if it%2==0 else 'y'`、`it//2+1`，按需在数组上向量化派生。
+
 ## `iter_ms2_records(path: str, max_ions: int = MAX_ION_OUTPUT)`
 
-- **产出**：生成器，每次 `list[FragIon]`（一条记录；可能为空 `[]`）。
-- **停止**：遇 `n_size < 0` 或 `n_size > max_ions`（文本尾巴）即结束；另对截断（`off+n_size*6` 超出文件尾）干净停止。
+- **产出**：生成器，每次 `list[FragIon]`（一条记录；可能为空 `[]`）。便捷对象 API，建立在 `iter_ms2_arrays(copy=True)` 之上。
 - **流式**：用 `mmap` 读，常驻内存 O(1)（真实文件 ~4.4GB 不 OOM）。
 - **不做**分组；分组到肽段由 `speclib` 按 `chg_max` 锁步完成。
 

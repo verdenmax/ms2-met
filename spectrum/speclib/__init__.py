@@ -2,7 +2,8 @@
 from .config_io import (Protein, ModEntry, parse_fasta, parse_modifications,
                         parse_element_masses, parse_residue_masses, water_mass)
 from .pepdata import LibPeptide, ModSite, iter_pepdata, read_pepdata
-from .predictions import FragIon, read_rt_pred, iter_ms2_records, read_chg_max_from_trailer
+from .predictions import (FragIon, read_rt_pred, iter_ms2_records,
+                         iter_ms2_arrays, read_chg_max_from_trailer)
 from .speclib import SpecLib, MassValidationReport
 
 __all__ = [
@@ -15,5 +16,5 @@ __all__ = [
     "parse_residue_masses", "water_mass",
     # 二进制读取
     "iter_pepdata", "read_pepdata", "read_rt_pred", "iter_ms2_records",
-    "read_chg_max_from_trailer",
+    "iter_ms2_arrays", "read_chg_max_from_trailer",
 ]

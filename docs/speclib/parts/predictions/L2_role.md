@@ -9,9 +9,10 @@
 | 符号 | 签名 | 简述 |
 |---|---|---|
 | `read_rt_pred(path)` | → `array('f')` | M 个 float32（分钟），全量加载 |
-| `iter_ms2_records(path, max_ions=1000)` | → 生成器[`list[FragIon]`] | 逐记录产出离子；遇文本尾巴停 |
+| `iter_ms2_arrays(path, max_ions=1000, copy=True)` | → 生成器[`np.ndarray`] | **快路径**：每记录一个结构化数组(pos,iontype,inten)，~8× 快、~8× 省内存 |
+| `iter_ms2_records(path, max_ions=1000)` | → 生成器[`list[FragIon]`] | 便捷对象 API（建立在 arrays 之上）|
 | `read_chg_max_from_trailer(path, tail_bytes=8192)` | → `int` | 从尾巴行解析 chg_max |
-| `FragIon` | dataclass(`ion_type`,`frag_pos`,`frag_charge`,`intensity`) | 一个碎片离子 |
+| `FragIon` | dataclass(slots)(`ion_type`,`frag_pos`,`frag_charge`,`intensity`) | 一个碎片离子 |
 | `MAX_ION_OUTPUT` | `int` = 1000 | 单记录离子上限（亦作尾巴判据）|
 
 ## 依赖
