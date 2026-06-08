@@ -179,6 +179,20 @@ ModEntry:                          # modification.ini 一条
 - **真实文件验证**：`tools/speclib_inspect.py` 流式跑真实库（4.4GB 不 OOM），输出摘要 + 质量通过率 + chg_max + 尾巴检查 + 样例肽段；支持 `--limit N` 只校验前 N 条加速。
 - 复用仓库现有 `tests/` 约定与 pytest。
 
+## 文档交付（分层 L1–L4，边写代码边填）
+
+随代码同步产出分层文档，结构按组件分目录：
+
+```
+docs/speclib/
+  L1_overview.md                      # 整个模块：目标/架构/数据流/快速上手/关键事实
+  parts/<组件>/L2_role.md             # 组件职责与对外接口
+  parts/<组件>/L3_details.md          # 组件细节：格式/算法/边界/取舍/对应 C++
+  parts/<组件>/L4_api.md              # 逐源文件 API 参考
+```
+
+组件 = `config_io` / `pepdata` / `predictions` / `speclib` / `speclib_inspect`。每个实现任务在测试通过后、提交前写对应 L2–L4 并随代码同 commit；L1 在首个任务建骨架、末个任务回填。
+
 ## 非目标（本步不做）
 
 - 不接入 `workflows/` / `single_work.py` SILAC 特征提取。

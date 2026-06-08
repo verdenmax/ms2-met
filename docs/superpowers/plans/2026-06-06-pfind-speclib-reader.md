@@ -28,12 +28,39 @@
 
 ---
 
+## 分层文档（L1–L4，边写代码边填，随代码提交）
+
+**目录结构（按组件分目录）：**
+
+```
+docs/speclib/
+  L1_overview.md                      # 整个模块：目标/架构/数据流/快速上手/关键事实
+  parts/
+    config_io/{L2_role,L3_details,L4_api}.md
+    pepdata/{L2_role,L3_details,L4_api}.md
+    predictions/{L2_role,L3_details,L4_api}.md
+    speclib/{L2_role,L3_details,L4_api}.md
+    speclib_inspect/{L2_role,L3_details,L4_api}.md
+```
+
+**各层模板（中文撰写）：**
+
+- **L1_overview.md**：`# speclib — pFind 谱库读取模块`；小节：目标 / 架构图（config_io → pepdata + predictions → speclib → CLI）/ 数据流（谱库目录→解析→锁步流式逐肽段）/ 快速上手（`SpecLib.open_dir` + `iter_peptides` 代码示例、`speclib_inspect` 命令）/ 组件索引（链接 parts/\*/L2_role.md）/ 关键事实（M、chg_max=4、MS2 文本尾巴、质量校验 100%）。
+- **L2_role.md**：`# <组件> — 职责与接口`；小节：一句话职责 / 对外接口（函数·类签名 + 一行简述）/ 依赖（依赖谁·被谁依赖）/ 输入·输出。
+- **L3_details.md**：`# <组件> — 细节`；小节：解析·算法细节 / 二进制·文本格式（如适用）/ 边界与坑（按组件：尾巴 / 空记录 / mod_pep_bytes / 锁步对齐 / 质量公式）/ 设计取舍 / 复刻自哪段 C++（带文件:行号）。
+- **L4_api.md**：`# <组件> — API 参考（<源文件路径>）`；逐 public 函数·类：签名、参数、返回、异常、最小示例。
+
+**规则：** 每个 Task 在代码+测试通过后、提交前，写/更新该组件的 `parts/<组件>/{L2_role,L3_details,L4_api}.md`；Task 1 额外创建 `L1_overview.md` 骨架，Task 5 末尾回填 L1 的"组件索引/快速上手/关键事实"。文档与代码**同一次 commit**。文档无需测试。
+
+---
+
 ### Task 1: config_io — FASTA / 修饰 / 元素 / 残基质量解析
 
 **Files:**
 - Create: `spectrum/speclib/__init__.py`
 - Create: `spectrum/speclib/config_io.py`
 - Test: `tests/test_speclib_config_io.py`
+- Docs: `docs/speclib/L1_overview.md`、`docs/speclib/parts/config_io/{L2_role,L3_details,L4_api}.md`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -286,10 +313,18 @@ def water_mass(element_masses: dict[str, float]) -> float:
 Run: `python -m pytest tests/test_speclib_config_io.py -q`
 Expected: PASS（4 passed）
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: 写分层文档**
+
+按"分层文档"模板创建：
+- `docs/speclib/L1_overview.md`（骨架：目标/架构/数据流/快速上手/组件索引/关键事实，后续 Task 持续补全；现可先列出 5 个组件与已知关键事实 M=3,124,520、chg_max=4、MS2 文本尾巴、质量校验 100%）
+- `docs/speclib/parts/config_io/L2_role.md`：职责=解析 FASTA/modification.ini/element.ini/aa.ini；接口=`parse_fasta`/`parse_modifications`/`parse_element_masses`/`parse_residue_masses`/`water_mass`；依赖=纯文本，被 pepdata/speclib 依赖。
+- `docs/speclib/parts/config_io/L3_details.md`：FASTA AC 切分（空格/Tab/`|`>15 规则）、modification.ini read-order id 与跳过规则（name\*/@NUMBER/label_name/Met-loss/Label_）、element 取最高丰度同位素、residue=Σ元素×个数（不含水）、water=2H+O；复刻 Reader.cpp(ReadMod/ReadAA/ReadElementInfo)、fastaparser.cpp。
+- `docs/speclib/parts/config_io/L4_api.md`：`spectrum/speclib/config_io.py` 逐函数与 `Protein`/`ModEntry` 的签名/参数/返回/示例。
+
+- [ ] **Step 6: 提交**
 
 ```bash
-git add spectrum/speclib/__init__.py spectrum/speclib/config_io.py tests/test_speclib_config_io.py
+git add spectrum/speclib/__init__.py spectrum/speclib/config_io.py tests/test_speclib_config_io.py docs/speclib/L1_overview.md docs/speclib/parts/config_io/
 git commit -m "feat(speclib): config_io — FASTA/modification/element/residue mass parsers
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
@@ -303,6 +338,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 - Create: `spectrum/speclib/pepdata.py`
 - Modify: `tests/conftest.py`（加 `build_pdb` fixture）
 - Test: `tests/test_speclib_pepdata.py`
+- Docs: `docs/speclib/parts/pepdata/{L2_role,L3_details,L4_api}.md`
 
 - [ ] **Step 1: 在 conftest.py 增加 pdb 构造 helper**
 
@@ -549,10 +585,16 @@ def read_pepdata(path: str, proteins: list[Protein],
 Run: `python -m pytest tests/test_speclib_pepdata.py -q`
 Expected: PASS（6 passed）
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: 写分层文档**
+
+- `docs/speclib/parts/pepdata/L2_role.md`：职责=流式解析 `pepdata.pdb` → `LibPeptide`；接口=`iter_pepdata`（生成器）/`read_pepdata`（list 包装）/`LibPeptide`/`ModSite`；依赖=config_io，被 speclib 依赖。
+- `docs/speclib/parts/pepdata/L3_details.md`：条目头 `'<IIbbbbIQ'`(24B)、变体 `'<db'`、修饰 `'<bi'`；序列还原 `seq[pep_start:pep_start+pep_len]`；M=Σmod_pep_num（一个头条目多变体）；`mod_pep_bytes` 自校验（确认 size_t=8）；`mod_pep_num==0` 合法；为何用生成器（312 万肽段内存安全）；复刻 Reader.cpp:264 ReadPepData。
+- `docs/speclib/parts/pepdata/L4_api.md`：`spectrum/speclib/pepdata.py` 的 `iter_pepdata`/`read_pepdata` 签名/参数/返回/异常（`ValueError: mod_pep_bytes mismatch`）、`LibPeptide`/`ModSite` 字段表。
+
+- [ ] **Step 7: 提交**
 
 ```bash
-git add spectrum/speclib/pepdata.py tests/conftest.py tests/test_speclib_pepdata.py
+git add spectrum/speclib/pepdata.py tests/conftest.py tests/test_speclib_pepdata.py docs/speclib/parts/pepdata/
 git commit -m "feat(speclib): streaming pepdata.pdb reader with mod_pep_bytes self-check
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
@@ -566,6 +608,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 - Create: `spectrum/speclib/predictions.py`
 - Modify: `tests/conftest.py`（加 `build_rt`/`build_ms2` fixtures）
 - Test: `tests/test_speclib_predictions.py`
+- Docs: `docs/speclib/parts/predictions/{L2_role,L3_details,L4_api}.md`
 
 - [ ] **Step 1: 在 conftest.py 增加 RT/MS2 构造 helper（可带文本尾巴）**
 
@@ -747,10 +790,16 @@ def read_chg_max_from_trailer(path: str, tail_bytes: int = 8192) -> int:
 Run: `python -m pytest tests/test_speclib_predictions.py -q`
 Expected: PASS（5 passed）
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: 写分层文档**
+
+- `docs/speclib/parts/predictions/L2_role.md`：职责=读 RT（全量数组）+ 流式读 MS2（跳尾巴）+ 解析 chg_max；接口=`read_rt_pred`/`iter_ms2_records`/`read_chg_max_from_trailer`/`FragIon`；依赖=无（纯二进制），被 speclib 依赖。
+- `docs/speclib/parts/predictions/L3_details.md`：rt.predb=M×f32（分钟）；ms2.predb=`[M×chg_max 记录][M 行文本尾巴]`；记录 `'<h'`+`'<bbf'`；iontype 偶 b 奇 y、frag_charge=iontype//2+1；**文本尾巴成因**（pPredMS2.cpp:868-873 收尾 fprintf 在 binary 外）+ 停止规则（n_size<0 或 >1000）；`n_size==0` 空记录保留；尾巴行 `"1\t0\t…\tC\t0\t\n"` 解析 chg_max。
+- `docs/speclib/parts/predictions/L4_api.md`：`spectrum/speclib/predictions.py` 的 `read_rt_pred`（返回 `array('f')`）/`iter_ms2_records`（生成器，`max_ions` 参数）/`read_chg_max_from_trailer`（`ValueError` 条件）/`FragIon` 字段。
+
+- [ ] **Step 7: 提交**
 
 ```bash
-git add spectrum/speclib/predictions.py tests/conftest.py tests/test_speclib_predictions.py
+git add spectrum/speclib/predictions.py tests/conftest.py tests/test_speclib_predictions.py docs/speclib/parts/predictions/
 git commit -m "feat(speclib): RT array + streaming MS2 reader (skips text trailer)
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
@@ -764,6 +813,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 - Create: `spectrum/speclib/speclib.py`
 - Modify: `spectrum/speclib/__init__.py`（导出 `SpecLib` 等）
 - Test: `tests/test_speclib_loader.py`
+- Docs: `docs/speclib/parts/speclib/{L2_role,L3_details,L4_api}.md`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1027,10 +1077,16 @@ Expected: PASS（4 passed）
 Run: `python -m pytest tests/test_speclib_config_io.py tests/test_speclib_pepdata.py tests/test_speclib_predictions.py tests/test_speclib_loader.py -q`
 Expected: PASS（19 passed）
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 7: 写分层文档**
+
+- `docs/speclib/parts/speclib/L2_role.md`：职责=顶层锁步流式 loader + 质量自校验；接口=`SpecLib.open`/`open_dir`/`iter_peptides`/`validate_masses`/`num_peptides`/`MassValidationReport`；依赖=config_io+pepdata+predictions。
+- `docs/speclib/parts/speclib/L3_details.md`：`open_dir` 定位三文件；chg_max 从尾巴解析并约束 [1,6]；`iter_peptides` 锁步逻辑（pdb 生成器 + `rt[i]` + 每肽段取 `chg_max` 条 MS2）；对齐校验（peptide 数 vs RT 数、MS2 耗尽报错）；`validate_masses` 流式 + `limit`；质量公式 = Σ残基+H₂O+Σ修饰（C++ 已验证）；为何不全量物化。
+- `docs/speclib/parts/speclib/L4_api.md`：`spectrum/speclib/speclib.py` 的 `SpecLib` 各方法签名/参数/返回/异常、`MassValidationReport` 字段。
+
+- [ ] **Step 8: 提交**
 
 ```bash
-git add spectrum/speclib/speclib.py spectrum/speclib/__init__.py tests/test_speclib_loader.py
+git add spectrum/speclib/speclib.py spectrum/speclib/__init__.py tests/test_speclib_loader.py docs/speclib/parts/speclib/
 git commit -m "feat(speclib): SpecLib lockstep-streaming loader + mass cross-validation
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
@@ -1047,6 +1103,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 - Modify: `tests/conftest.py`（把 `lib_files` fixture 移入以便复用）
 - Modify: `tests/test_speclib_loader.py`（删除本地 `lib_files`，改用 conftest）
 - Test: `tests/test_speclib_inspect_cli.py`
+- Docs: `docs/speclib/parts/speclib_inspect/{L2_role,L3_details,L4_api}.md`、回填 `docs/speclib/L1_overview.md`
 
 - [ ] **Step 1: 把 `lib_files` fixture 从 test_speclib_loader.py 移入 conftest.py**
 
@@ -1216,10 +1273,17 @@ Expected: PASS（5 passed；确认移动 fixture 后 loader 测试仍通过）
 Run: `python -m pytest tests/ -k speclib -q`
 Expected: PASS（20 passed）
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 7: 写分层文档（含回填 L1）**
+
+- `docs/speclib/parts/speclib_inspect/L2_role.md`：职责=真实库验证 CLI；接口=`summarize(...)` 函数 + `main()`/命令行参数；依赖=speclib。
+- `docs/speclib/parts/speclib_inspect/L3_details.md`：流式取样（前 N 肽段不全载）、质量校验 `--mass-limit` 加速、输出字段含义（peptides/chg_max/rt range/样例/mass pass）、4.4GB 不 OOM 的原因。
+- `docs/speclib/parts/speclib_inspect/L4_api.md`：`tools/speclib_inspect.py` 的 `summarize` 签名/参数/返回、CLI 参数表、真实库运行示例命令。
+- 回填 `docs/speclib/L1_overview.md`：补全"快速上手"（`SpecLib.open_dir`+`iter_peptides` 示例、`python -m tools.speclib_inspect` 命令）、"组件索引"（5 个 parts 链接）、"关键事实"，确保 L1 与最终代码一致。
+
+- [ ] **Step 8: 提交**
 
 ```bash
-git add tools/speclib_inspect.py tests/conftest.py tests/test_speclib_inspect_cli.py tests/test_speclib_loader.py
+git add tools/speclib_inspect.py tests/conftest.py tests/test_speclib_inspect_cli.py tests/test_speclib_loader.py docs/speclib/parts/speclib_inspect/ docs/speclib/L1_overview.md
 git commit -m "feat(speclib): speclib_inspect CLI for real-library validation (streaming)
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
@@ -1249,4 +1313,5 @@ python -m tools.speclib_inspect \
 - **Spec coverage**：模块结构（config_io/pepdata/predictions/speclib）✓ Task1–4；二进制格式（pdb/rt/ms2+文本尾巴）✓ Task2–3；mod_id 映射 ✓ Task1；FASTA 解析 ✓ Task1；数据模型 ✓；**锁步流式 + 体量安全** ✓ Task4 `iter_peptides`；**MS2 文本尾巴跳过** ✓ Task3 `iter_ms2_records`；**chg_max 从尾巴解析** ✓ Task3 `read_chg_max_from_trailer`；质量交叉校验 ✓ Task4；`mod_pep_bytes` ✓ Task2；计数一致性（RT 数=M）✓ Task4；CLI 流式不 OOM + `--mass-limit` ✓ Task5；真实文件验证小节 ✓；非目标（不接入 pipeline、不做偏移索引）已遵守。
 - **边界条件覆盖**：B1 M=Σmod_pep_num 逐变体对齐 ✓ Task2/Task4；B2 `n_size==0` 空记录 ✓ Task3；B3 `mod_pep_num==0` ✓ Task2；尾巴停止 ✓ Task3；chg_max∈[1,6] 硬校验 ✓ Task4；各电荷桶不对称——不做对称假设。
 - **Placeholder scan**：无 TBD/TODO；每步含完整代码与精确命令/期望输出。
+- **分层文档**：每个 Task 含 L2/L3/L4 文档步骤并随代码同 commit；Task1 建 L1 骨架、Task5 回填 L1。结构 `docs/speclib/L1_overview.md + parts/<组件>/{L2_role,L3_details,L4_api}.md`。
 - **Type/name consistency**：`Protein/ModEntry/ModSite/LibPeptide/FragIon/MassValidationReport/SpecLib` 跨任务一致；`parse_fasta/parse_modifications/parse_element_masses/parse_residue_masses/water_mass/iter_pepdata/read_pepdata/read_rt_pred/iter_ms2_records/read_chg_max_from_trailer/SpecLib.open/open_dir/iter_peptides/validate_masses` 签名一致；struct 串 `'<IIbbbbIQ'/'<db'/'<bi'/'<h'/'<bbf'` 全程统一；`read_rt_pred` 返回 `array('f')`（测试用 `list(...)` 比较）。
