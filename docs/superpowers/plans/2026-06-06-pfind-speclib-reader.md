@@ -2,29 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在 `spectrum/speclib/` 实现一个独立、自校验的 pFind 谱库二进制读取模块，读入 M 个肽段并生成 M 组预测 RT + MS2。
+**Goal:** 在 `spectrum/speclib/` 实现一个独立、自校验、**内存安全（流式）**的 pFind 谱库二进制读取模块，逐肽段产出预测 RT + MS2。
 
-**Architecture:** 四个单向依赖的小模块：`config_io`（解析 FASTA/modification.ini/element.ini/aa.ini）→ `pepdata`（解析 `pepdata.pdb`）+ `predictions`（解析 `pepdata.rt.predb`/`pepdata.ms2.predb`）→ `speclib`（顶层 loader + 质量交叉校验）。外加 `tools/speclib_inspect.py` CLI 用于真实文件验证。
+**Architecture:** 四个单向依赖的小模块：`config_io`（解析 FASTA/modification.ini/element.ini/aa.ini）→ `pepdata`（流式读 `pepdata.pdb`）+ `predictions`（读 `pepdata.rt.predb` 全量数组、流式读 `pepdata.ms2.predb` 并跳过文本尾巴）→ `speclib`（**锁步流式** loader：pdb+RT+MS2 同序逐肽段 yield + 质量自校验）。外加 `tools/speclib_inspect.py` CLI 做真实文件验证（4.4GB 不 OOM）。
 
-**Tech Stack:** Python 3.10+（仓库实际 3.14），仅用标准库 `struct`/`dataclasses`/`os`；pytest 测试（`python -m pytest`，repo root）。所有多字节字段小端、x64 位宽。
+**Tech Stack:** Python 3.10+（仓库实际 3.14），仅用标准库 `struct`/`array`/`dataclasses`/`os`；pytest（`python -m pytest`，repo root）。所有多字节字段小端、x64 位宽。
 
-参考 spec：`docs/specs/2026-06-06-pfind-speclib-reader-design.md`。
+参考 spec：`docs/specs/2026-06-06-pfind-speclib-reader-design.md`（已对真实 `lib-2th` 验证：mass 100%、RT 数=M、ms2=4×M 二进制+M 行文本尾巴、chg_max=4）。
 
-**关键格式（已对真实 puku 文件验证）：**
-- `pepdata.pdb` 条目头 `struct '<IIbbbbIQ'`（24B）= pro_id,u32; pep_start,u32; pep_len,i8; pro_nc,i8; enz,i8; miss,i8; mod_pep_num,u32; mod_pep_bytes,u64。随后 mod_pep_num 个变体：`'<db'`（9B）= mass,f64; mod_cnt,i8；再 mod_cnt 个 `'<bi'`（5B）= pos,i8; mod_id,i32。
+**关键格式（已对真实文件验证）：**
+- `pepdata.pdb` 条目头 `struct '<IIbbbbIQ'`（24B）= pro_id u32, pep_start u32, pep_len i8, pro_nc i8, enz i8, miss i8, mod_pep_num u32, mod_pep_bytes u64。随后 mod_pep_num 个变体：`'<db'`（9B）= mass f64 + mod_cnt i8；再 mod_cnt 个 `'<bi'`（5B）= pos i8 + mod_id i32。
 - `pepdata.rt.predb` = M×f32（分钟）。
-- `pepdata.ms2.predb` 每记录 `'<h'`（2B）= n_size，再 n_size 个 `'<bbf'`（6B）= pos,i8; iontype,i8; inten,f32。共 M×chg_max 条（肽段外层、电荷内层）。
+- `pepdata.ms2.predb` = `[M×chg_max 二进制记录][M 行文本尾巴]`。每记录 `'<h'`（2B）= n_size，再 n_size 个 `'<bbf'`（6B）= pos,i8; iontype,i8; inten,f32。**文本尾巴**每行 `"1\t0\t…\tchg_max\t0\t\n"`；读取遇 `n_size<0 或 >MAX_ION_OUTPUT(1000)` 即停（尾巴首 2 字节 `'1\t'` 作 i16=12553>1000）。
 - 序列 = `proteins[pro_id].sequence[pep_start:pep_start+pep_len]`。
-- mod_id = modification.ini 过滤后数据行的 1-based read-order（Carbamidomethyl[C]=9, Oxidation[M]=46 已验证）。
+- mod_id = modification.ini 过滤后数据行 1-based read-order（Carbamidomethyl[C]=9, Oxidation[M]=46 已验证）。
 - iontype：偶=b、奇=y；frag_charge=iontype//2+1。
-- 中性质量 = Σ残基 + H₂O(18.0105646837) + Σ修饰单同位素质量（残基质量经 element.ini+aa.ini 验证：G=57.02146, K=128.09496）。**已由 C++ 验证**：`_m2mz(m,chg)=(m+chg*proton)/chg`（sdk.h:881）证明 `lfPepMass` 不含质子；y 离子用 `MOLECULE_MASS_H2O`（Instrument.cpp:45/61）证明含水。
+- 中性质量 = Σ残基 + H₂O(18.0105646837) + Σ修饰单同位素质量。**已由 C++ 验证**（sdk.h:881 不含质子；Instrument.cpp:45/61 含水）。真实库实测 100% 通过（max_err=0）。
 
-**关键边界条件（rubber-duck 复核确认，合成 fixture 必须覆盖）：**
-- **M = Σ mod_pep_num**（修饰变体总数），不是 pdb 头条目数；一个头条目 `mod_pep_num≥2` 会 push 多个 `LibPeptide`，RT/MS2 与之逐变体对齐（loader 测试以 1 头条目 2 变体覆盖）。
-- **MS2 `n_size==0` 记录照样写出**（每"肽段-电荷"恒有一个 2 字节头），读取须当作"存在的空记录"，否则后续全部错位。
-- **`mod_pep_num==0`** 的头条目合法（消耗 24B 头、push 0 肽段）。
-- **chg_max ∈ [1,6]**（MAX_CHG=7 ⇒ 最多 6 价，iontype 0..11）；推断后做硬校验。
-- 各电荷桶离子不对称：charge-c 记录只含 `frag_charge ≤ c` 的离子；**不要**假设各桶离子相同。
+**体量 / 边界条件（rubber-duck + 真实文件复核）：**
+- ms2 ~4.4GB / ~1250 万记录、pdb ~312 万肽段 → **不全量物化**；核心用**锁步流式生成器**逐肽段 yield，内存 O(1)。RT 小（~12MB）全量进 `array('f')`。随机按肽段查 MS2 的缓存偏移索引**本步不做**。
+- **M = Σ mod_pep_num**（变体总数），逐变体与 RT/MS2 对齐。
+- MS2 `n_size==0` 记录照样存在（空记录），不可跳过。
+- chg_max 从尾巴行解析（实测=4），并约束 ∈ [1,6]。
+- charge-c 桶只含 `frag_charge ≤ c` 的离子（各桶不对称），勿假设对称。
 
 ---
 
@@ -251,7 +251,7 @@ def parse_element_masses(path: str) -> dict[str, float]:
 
 
 def parse_residue_masses(path: str, element_masses: dict[str, float]) -> dict[str, float]:
-    """复刻 CReader::ReadAA：残基质量 = Σ 元素质量 × 个数。"""
+    """复刻 CReader::ReadAA：残基质量 = Σ 元素质量 × 个数（不含水）。"""
     residues: dict[str, float] = {}
     with open(path, encoding="latin-1") as fh:
         for raw in fh:
@@ -284,7 +284,7 @@ def water_mass(element_masses: dict[str, float]) -> float:
 - [ ] **Step 4: 运行测试，确认通过**
 
 Run: `python -m pytest tests/test_speclib_config_io.py -q`
-Expected: PASS（5 passed）
+Expected: PASS（4 passed）
 
 - [ ] **Step 5: 提交**
 
@@ -297,14 +297,14 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 
 ---
 
-### Task 2: pepdata — 解析 pepdata.pdb 为 LibPeptide 列表
+### Task 2: pepdata — 流式读 pepdata.pdb
 
 **Files:**
 - Create: `spectrum/speclib/pepdata.py`
 - Modify: `tests/conftest.py`（加 `build_pdb` fixture）
 - Test: `tests/test_speclib_pepdata.py`
 
-- [ ] **Step 1: 在 conftest.py 增加二进制构造 helper**
+- [ ] **Step 1: 在 conftest.py 增加 pdb 构造 helper**
 
 Append to `tests/conftest.py`:
 
@@ -318,8 +318,7 @@ _PDB_MOD = _struct.Struct("<bi")
 
 def _build_pdb(entries):
     """entries: list of dict(pro_id, pep_start, pep_len, pro_nc?, enz?, miss?, variants)
-    variants: list of (mass, [(pos, mod_id), ...])。
-    返回模拟 pepdata.pdb 的 bytes（小端，x64 位宽）。
+    variants: list of (mass, [(pos, mod_id), ...])。返回模拟 pepdata.pdb 的 bytes。
     """
     out = b""
     for e in entries:
@@ -346,10 +345,10 @@ def build_pdb():
 Create `tests/test_speclib_pepdata.py`:
 
 ```python
-"""测试 speclib.pepdata 二进制解析。"""
+"""测试 speclib.pepdata 流式二进制解析。"""
 import pytest
 from spectrum.speclib.config_io import Protein, ModEntry
-from spectrum.speclib.pepdata import read_pepdata, LibPeptide, ModSite
+from spectrum.speclib.pepdata import iter_pepdata, read_pepdata, LibPeptide, ModSite
 
 
 @pytest.fixture
@@ -410,14 +409,26 @@ def test_multiple_variants_and_entries(tmp_path, build_pdb, proteins, mods_by_id
     p = tmp_path / "pepdata.pdb"
     p.write_bytes(data)
     peps = read_pepdata(str(p), proteins, mods_by_id)
-    assert len(peps) == 3
+    assert len(peps) == 3            # M = Σ mod_pep_num = 2 + 1
     assert peps[1].sequence == "PEPTIDEK"
     assert peps[1].mods[0].pos == 8
     assert peps[2].sequence == "SAMPLER"
 
 
+def test_iter_pepdata_is_lazy(tmp_path, build_pdb, proteins, mods_by_id):
+    data = build_pdb([
+        {"pro_id": 0, "pep_start": 0, "pep_len": 8,
+         "variants": [(900.4, []), (942.4, [(8, 2)])]},
+    ])
+    p = tmp_path / "pepdata.pdb"
+    p.write_bytes(data)
+    gen = iter_pepdata(str(p), proteins, mods_by_id)
+    first = next(gen)
+    assert isinstance(first, LibPeptide)
+    assert first.neutral_mass == pytest.approx(900.4)
+
+
 def test_mod_pep_bytes_mismatch_raises(tmp_path, proteins, mods_by_id):
-    # 手工构造一个 mod_pep_bytes 错误的条目
     import struct
     header = struct.pack("<IIbbbbIQ", 0, 0, 8, 0, 0, 0, 1, 999)  # 故意 999
     body = struct.pack("<db", 900.0, 0)
@@ -428,7 +439,6 @@ def test_mod_pep_bytes_mismatch_raises(tmp_path, proteins, mods_by_id):
 
 
 def test_zero_variant_entry_consumed_and_skipped(tmp_path, proteins, mods_by_id):
-    # B3: mod_pep_num==0 的头条目合法，消耗 24B 头、push 0 肽段
     import struct
     e0 = struct.pack("<IIbbbbIQ", 0, 0, 8, 0, 0, 0, 0, 0)            # 0 变体
     e1 = (struct.pack("<IIbbbbIQ", 0, 0, 7, 0, 0, 0, 1, 9)
@@ -450,9 +460,10 @@ Expected: FAIL（`ModuleNotFoundError: No module named 'spectrum.speclib.pepdata
 Create `spectrum/speclib/pepdata.py`:
 
 ```python
-"""读取 pepdata.pdb（二进制肽段库），复刻 CReader::ReadPepData。
+"""流式读取 pepdata.pdb（二进制肽段库），复刻 CReader::ReadPepData。
 
 需要：proteins（parse_fasta 结果，按 pro_id 索引）、mods_by_id（mod_id->ModEntry）。
+体量大（~312 万肽段），核心用生成器 iter_pepdata 逐条产出；read_pepdata 为 list 包装。
 """
 import struct
 from dataclasses import dataclass, field
@@ -487,12 +498,12 @@ class LibPeptide:
     pred_ms2: dict = field(default_factory=dict)  # charge -> list[FragIon]
 
 
-def read_pepdata(path: str, proteins: list[Protein],
+def iter_pepdata(path: str, proteins: list[Protein],
                  mods_by_id: dict[int, ModEntry],
-                 validate_bytes: bool = True) -> list[LibPeptide]:
+                 validate_bytes: bool = True):
+    """逐肽段变体 yield LibPeptide（内存 O(1)，不含预测值）。"""
     with open(path, "rb") as fh:
         data = fh.read()
-    peptides: list[LibPeptide] = []
     off = 0
     n = len(data)
     while off < n:
@@ -516,41 +527,47 @@ def read_pepdata(path: str, proteins: list[Protein],
                     pos=mpos, mod_id=mid,
                     name=entry.name if entry else "",
                     mono_mass=entry.mono_mass if entry else 0.0))
-            peptides.append(LibPeptide(
+            yield LibPeptide(
                 sequence=seq, mods=sites, neutral_mass=mass,
                 protein=protein.ac, is_decoy=protein.is_decoy,
-                pro_nc=pro_nc, enz=enz, miss=miss))
+                pro_nc=pro_nc, enz=enz, miss=miss)
         if validate_bytes and consumed != mod_pep_bytes:
             raise ValueError(
                 f"mod_pep_bytes mismatch at pro_id={pro_id}: "
                 f"consumed {consumed} != declared {mod_pep_bytes}")
-    return peptides
+
+
+def read_pepdata(path: str, proteins: list[Protein],
+                 mods_by_id: dict[int, ModEntry],
+                 validate_bytes: bool = True) -> list[LibPeptide]:
+    """list 包装（小数据 / 测试用）。"""
+    return list(iter_pepdata(path, proteins, mods_by_id, validate_bytes))
 ```
 
 - [ ] **Step 5: 运行测试，确认通过**
 
 Run: `python -m pytest tests/test_speclib_pepdata.py -q`
-Expected: PASS（5 passed）
+Expected: PASS（6 passed）
 
 - [ ] **Step 6: 提交**
 
 ```bash
 git add spectrum/speclib/pepdata.py tests/conftest.py tests/test_speclib_pepdata.py
-git commit -m "feat(speclib): pepdata.pdb binary reader with mod_pep_bytes self-check
+git commit -m "feat(speclib): streaming pepdata.pdb reader with mod_pep_bytes self-check
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
 
-### Task 3: predictions — 解析 RT 与 MS2 预测，按 chg_max 分组
+### Task 3: predictions — RT 数组 + 流式 MS2（跳过文本尾巴）
 
 **Files:**
 - Create: `spectrum/speclib/predictions.py`
 - Modify: `tests/conftest.py`（加 `build_rt`/`build_ms2` fixtures）
 - Test: `tests/test_speclib_predictions.py`
 
-- [ ] **Step 1: 在 conftest.py 增加 RT/MS2 构造 helper**
+- [ ] **Step 1: 在 conftest.py 增加 RT/MS2 构造 helper（可带文本尾巴）**
 
 Append to `tests/conftest.py`:
 
@@ -563,13 +580,18 @@ _MS2_HEAD = _struct.Struct("<h")
 _MS2_ION = _struct.Struct("<bbf")
 
 
-def _build_ms2(records):
-    """records: list of list of (pos, iontype, inten)。返回 pepdata.ms2.predb bytes。"""
+def _build_ms2(records, chg_max=None, n_peptides=None):
+    """records: list of list of (pos, iontype, inten)。
+    若给 chg_max+n_peptides，则在末尾追加 n_peptides 行文本尾巴
+    （每行 '1\\t0\\t...\\tchg_max\\t0\\t\\n'），模拟真实文件。"""
     out = b""
     for ions in records:
         out += _MS2_HEAD.pack(len(ions))
         for pos, iontype, inten in ions:
             out += _MS2_ION.pack(pos, iontype, inten)
+    if chg_max is not None and n_peptides is not None:
+        line = "".join(f"{c}\t0\t" for c in range(1, chg_max + 1)) + "\n"
+        out += (line * n_peptides).encode("latin-1")
     return out
 
 
@@ -588,79 +610,53 @@ def build_ms2():
 Create `tests/test_speclib_predictions.py`:
 
 ```python
-"""测试 speclib.predictions RT/MS2 二进制解析与分组。"""
+"""测试 speclib.predictions：RT 数组 + 流式 MS2（跳过文本尾巴）。"""
 import pytest
 from spectrum.speclib.predictions import (
-    FragIon, read_rt_pred, read_ms2_records, group_ms2_by_peptide,
+    FragIon, read_rt_pred, iter_ms2_records, read_chg_max_from_trailer,
 )
 
 
 def test_read_rt_pred(tmp_path, build_rt):
     p = tmp_path / "pepdata.rt.predb"
     p.write_bytes(build_rt([12.5, 33.0, 7.25]))
-    rts = read_rt_pred(str(p))
-    assert rts == pytest.approx([12.5, 33.0, 7.25])
+    assert list(read_rt_pred(str(p))) == pytest.approx([12.5, 33.0, 7.25])
 
 
-def test_read_ms2_records_ion_decode(tmp_path, build_ms2):
-    # iontype: 0=b1+, 1=y1+, 2=b2+, 3=y2+
-    recs = [
-        [(0, 0, 0.9), (1, 1, 0.5)],   # b(pos0,ch1), y(pos1,ch1)
-        [(2, 2, 0.8), (3, 3, 0.4)],   # b(pos2,ch2), y(pos3,ch2)
-    ]
+def test_iter_ms2_ion_decode(tmp_path, build_ms2):
+    # iontype: 2=b2+, 3=y2+
     p = tmp_path / "pepdata.ms2.predb"
-    p.write_bytes(build_ms2(recs))
-    out = read_ms2_records(str(p))
-    assert len(out) == 2
-    assert out[0][0] == FragIon("b", 0, 1, pytest.approx(0.9))
-    assert out[0][1] == FragIon("y", 1, 1, pytest.approx(0.5))
-    assert out[1][0] == FragIon("b", 2, 2, pytest.approx(0.8))
-    assert out[1][1] == FragIon("y", 3, 2, pytest.approx(0.4))
+    p.write_bytes(build_ms2([[(2, 2, 0.8), (3, 3, 0.4)]]))  # 无尾巴
+    out = list(iter_ms2_records(str(p)))
+    assert len(out) == 1
+    assert out[0][0] == FragIon("b", 2, 2, pytest.approx(0.8))
+    assert out[0][1] == FragIon("y", 3, 2, pytest.approx(0.4))
 
 
-def test_group_ms2_infers_chg_max(tmp_path, build_ms2):
-    # 2 肽段 × chg_max=3 = 6 条记录
-    recs = [[(0, 0, 1.0)]] * 6
+def test_iter_ms2_stops_at_text_trailer(tmp_path, build_ms2):
+    recs = [[(0, 0, 1.0)], [(1, 1, 0.5)], [(0, 0, 0.8)], [(2, 3, 0.3)]]
     p = tmp_path / "pepdata.ms2.predb"
-    p.write_bytes(build_ms2(recs))
-    records = read_ms2_records(str(p))
-    grouped, chg_max = group_ms2_by_peptide(records, num_peptides=2)
-    assert chg_max == 3
-    assert len(grouped) == 2
-    assert set(grouped[0].keys()) == {1, 2, 3}
+    p.write_bytes(build_ms2(recs, chg_max=2, n_peptides=2))  # 含尾巴
+    out = list(iter_ms2_records(str(p)))
+    assert len(out) == 4                       # 尾巴被跳过
+    assert out[0][0] == FragIon("b", 0, 1, pytest.approx(1.0))
+    assert out[3][0] == FragIon("y", 2, 2, pytest.approx(0.3))
 
 
-def test_group_ms2_bad_count_raises(tmp_path, build_ms2):
-    recs = [[(0, 0, 1.0)]] * 5  # 5 不能被 2 整除
-    p = tmp_path / "pepdata.ms2.predb"
-    p.write_bytes(build_ms2(recs))
-    records = read_ms2_records(str(p))
-    with pytest.raises(ValueError, match="not divisible"):
-        group_ms2_by_peptide(records, num_peptides=2)
-
-
-def test_read_ms2_empty_record_in_middle(tmp_path, build_ms2):
-    # B2: n_size==0 的记录照样写出，必须当作"存在的空记录"，否则后续错位
+def test_iter_ms2_empty_record_present(tmp_path, build_ms2):
     recs = [[(0, 0, 1.0)], [], [(1, 1, 0.5)], []]
     p = tmp_path / "pepdata.ms2.predb"
-    p.write_bytes(build_ms2(recs))
-    out = read_ms2_records(str(p))
+    p.write_bytes(build_ms2(recs, chg_max=2, n_peptides=2))
+    out = list(iter_ms2_records(str(p)))
     assert len(out) == 4
     assert out[1] == []
     assert out[3] == []
-    grouped, chg_max = group_ms2_by_peptide(out, num_peptides=2)
-    assert chg_max == 2
-    assert grouped[0][2] == []  # 肽段0 的 charge2 桶为空
 
 
-def test_group_ms2_chg_max_out_of_range_raises(tmp_path, build_ms2):
-    # B5: 推断出的 chg_max 必须 ∈ [1,6]
-    recs = [[(0, 0, 1.0)]] * 7  # 1 肽段 × 7 > 6
+def test_read_chg_max_from_trailer(tmp_path, build_ms2):
     p = tmp_path / "pepdata.ms2.predb"
-    p.write_bytes(build_ms2(recs))
-    records = read_ms2_records(str(p))
-    with pytest.raises(ValueError, match="chg_max"):
-        group_ms2_by_peptide(records, num_peptides=1)
+    p.write_bytes(build_ms2([[(0, 0, 1.0)]] * 8, chg_max=4, n_peptides=2))
+    assert read_chg_max_from_trailer(str(p)) == 4
 ```
 
 - [ ] **Step 3: 运行测试，确认失败**
@@ -673,15 +669,19 @@ Expected: FAIL（`ModuleNotFoundError: No module named 'spectrum.speclib.predict
 Create `spectrum/speclib/predictions.py`:
 
 ```python
-"""读取 pepdata.rt.predb（M 个 float）与 pepdata.ms2.predb（逐肽段-电荷记录）。
+"""读取 pepdata.rt.predb（M 个 float）与 pepdata.ms2.predb（二进制记录 + 文本尾巴）。
 
-复刻 pPredRT.cpp / pPredMS2.cpp 的二进制写出格式。
+复刻 pPredRT.cpp / pPredMS2.cpp 写出格式。MS2 文件结构为
+`[M×chg_max 二进制记录][M 行文本尾巴]`，读取遇尾巴即停。
 """
+import os
 import struct
+from array import array
 from dataclasses import dataclass
 
 _MS2_HEAD = struct.Struct("<h")   # n_size(short)
 _MS2_ION = struct.Struct("<bbf")  # pos(char), iontype(char), inten(float)
+MAX_ION_OUTPUT = 1000
 
 
 @dataclass
@@ -692,22 +692,26 @@ class FragIon:
     intensity: float
 
 
-def read_rt_pred(path: str) -> list[float]:
+def read_rt_pred(path: str) -> "array":
+    """全量读取（~12MB），返回 array('f')。"""
     with open(path, "rb") as fh:
         data = fh.read()
-    count = len(data) // 4
-    return list(struct.unpack(f"<{count}f", data[:count * 4]))
+    a = array("f")
+    a.frombytes(data[:len(data) // 4 * 4])
+    return a
 
 
-def read_ms2_records(path: str) -> list[list[FragIon]]:
+def iter_ms2_records(path: str, max_ions: int = MAX_ION_OUTPUT):
+    """逐记录 yield list[FragIon]；遇 n_size<0 或 >max_ions（文本尾巴）即停。"""
     with open(path, "rb") as fh:
         data = fh.read()
-    records: list[list[FragIon]] = []
     off = 0
     n = len(data)
-    while off < n:
+    while off + 2 <= n:
         (n_size,) = _MS2_HEAD.unpack_from(data, off)
-        off += _MS2_HEAD.size
+        if n_size < 0 or n_size > max_ions:
+            break
+        off += 2
         ions: list[FragIon] = []
         for _ in range(n_size):
             pos, iontype, inten = _MS2_ION.unpack_from(data, off)
@@ -717,58 +721,48 @@ def read_ms2_records(path: str) -> list[list[FragIon]]:
                 frag_pos=pos,
                 frag_charge=iontype // 2 + 1,
                 intensity=inten))
-        records.append(ions)
-    return records
+        yield ions
 
 
-def group_ms2_by_peptide(records: list[list[FragIon]], num_peptides: int,
-                         chg_max: int | None = None):
-    """把扁平 records 按 (肽段外层, 电荷 1..chg_max 内层) 分组。
-
-    返回 (grouped, chg_max)，grouped[i] = {charge: [FragIon]}。
-    chg_max 为 None 时由 len(records)/num_peptides 推断。
-    """
-    total = len(records)
-    if chg_max is None:
-        if num_peptides <= 0 or total % num_peptides != 0:
-            raise ValueError(
-                f"ms2 record count {total} not divisible by "
-                f"num_peptides {num_peptides}")
-        chg_max = total // num_peptides
-    if not (1 <= chg_max <= 6):
-        raise ValueError(f"inferred chg_max {chg_max} out of range [1,6]")
-    grouped: list[dict[int, list[FragIon]]] = []
-    idx = 0
-    for _ in range(num_peptides):
-        d: dict[int, list[FragIon]] = {}
-        for chg in range(1, chg_max + 1):
-            d[chg] = records[idx]
-            idx += 1
-        grouped.append(d)
-    return grouped, chg_max
+def read_chg_max_from_trailer(path: str, tail_bytes: int = 8192) -> int:
+    """从文件末尾文本尾巴解析 chg_max。尾巴行形如 '1\\t0\\t2\\t0\\t...\\tC\\t0\\t'。"""
+    size = os.path.getsize(path)
+    with open(path, "rb") as fh:
+        fh.seek(max(0, size - tail_bytes))
+        tail = fh.read().decode("latin-1", errors="replace")
+    for line in reversed(tail.split("\n")):
+        toks = line.split("\t")
+        charges = toks[0::2]            # 偶数下标为电荷
+        if charges and charges[-1] == "":
+            charges = charges[:-1]
+        if charges and all(c.isdigit() for c in charges):
+            vals = [int(c) for c in charges]
+            if vals == list(range(1, len(vals) + 1)):
+                return len(vals)
+    raise ValueError(f"cannot parse chg_max from trailer of {path}")
 ```
 
 - [ ] **Step 5: 运行测试，确认通过**
 
 Run: `python -m pytest tests/test_speclib_predictions.py -q`
-Expected: PASS（6 passed）
+Expected: PASS（5 passed）
 
 - [ ] **Step 6: 提交**
 
 ```bash
 git add spectrum/speclib/predictions.py tests/conftest.py tests/test_speclib_predictions.py
-git commit -m "feat(speclib): RT/MS2 prediction binary readers + per-peptide grouping
+git commit -m "feat(speclib): RT array + streaming MS2 reader (skips text trailer)
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
 
-### Task 4: speclib — 顶层 loader + 质量交叉校验
+### Task 4: speclib — 锁步流式 loader + 质量自校验
 
 **Files:**
 - Create: `spectrum/speclib/speclib.py`
-- Modify: `spectrum/speclib/__init__.py`（导出 `SpecLib`）
+- Modify: `spectrum/speclib/__init__.py`（导出 `SpecLib` 等）
 - Test: `tests/test_speclib_loader.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -776,7 +770,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 Create `tests/test_speclib_loader.py`:
 
 ```python
-"""测试 SpecLib 顶层 loader 与质量交叉校验。"""
+"""测试 SpecLib 锁步流式 loader 与质量交叉校验。"""
 import pytest
 from spectrum.speclib import SpecLib
 
@@ -806,45 +800,46 @@ def lib_files(tmp_path, build_pdb, build_rt, build_ms2):
         "R7=M|C(5)H(9)N(1)O(1)S(1)|\nR8=P|C(5)H(7)N(1)O(1)S(0)|\n"
         "R9=T|C(4)H(7)N(1)O(2)S(0)|\n", encoding="utf-8")
 
-    # 用同一套质量公式算出正确中性质量，写进 pdb
     from spectrum.speclib.config_io import (
         parse_element_masses, parse_residue_masses, water_mass)
     em = parse_element_masses(str(elem))
     res = parse_residue_masses(str(aa), em)
     w = water_mass(em)
     seq = "PEPTIDEKACDM"  # pep_start 0, len 12
-    # 变体1：无修饰；变体2：Carbamidomethyl[C] 在第 9 位 (C)
     m1 = w + sum(res[a] for a in seq)
-    m2 = m1 + 57.021464
+    m2 = m1 + 57.021464                       # 变体2: Carbamidomethyl[C] 在第 9 位
     pdb = build_pdb([
         {"pro_id": 0, "pep_start": 0, "pep_len": 12,
          "variants": [(m1, []), (m2, [(9, 1)])]},
     ])
     (tmp_path / "pepdata.pdb").write_bytes(pdb)
-    # 2 肽段变体 × chg_max=2 = 4 条 MS2 记录
-    (tmp_path / "pepdata.ms2.predb").write_bytes(build_ms2([
-        [(0, 0, 1.0)], [(1, 1, 0.5)], [(0, 0, 0.8)], [(2, 3, 0.3)]]))
+    # 2 肽段变体 × chg_max=2 = 4 条 MS2 记录 + 文本尾巴
+    (tmp_path / "pepdata.ms2.predb").write_bytes(build_ms2(
+        [[(0, 0, 1.0)], [(1, 1, 0.5)], [(0, 0, 0.8)], [(2, 3, 0.3)]],
+        chg_max=2, n_peptides=2))
     (tmp_path / "pepdata.rt.predb").write_bytes(build_rt([20.0, 21.5]))
     return tmp_path
 
 
-def test_load_dir_end_to_end(lib_files):
-    lib = SpecLib.load_dir(str(lib_files),
+def test_open_dir_and_iter_peptides(lib_files):
+    lib = SpecLib.open_dir(str(lib_files),
                            fasta_path=str(lib_files / "db.fasta"),
                            mod_path=str(lib_files / "modification.ini"))
-    assert len(lib.peptides) == 2
+    assert lib.num_peptides == 2
     assert lib.chg_max == 2
-    assert lib.peptides[0].pred_rt == pytest.approx(20.0)
-    assert lib.peptides[1].pred_rt == pytest.approx(21.5)
-    # B1: 1 个 pdb 头条目(2 变体) → 2 个 LibPeptide，逐变体与 RT/MS2 对齐
-    assert lib.peptides[0].mods == []          # 变体1(无修饰) 对齐 rt=20.0
-    assert set(lib.peptides[0].pred_ms2.keys()) == {1, 2}
-    assert lib.peptides[0].pred_ms2[1][0].ion_type == "b"
-    assert lib.peptides[1].mods[0].name == "Carbamidomethyl[C]"  # 变体2 对齐 rt=21.5
+    peps = list(lib.iter_peptides())
+    assert len(peps) == 2
+    # B1: 锁步对齐 —— 变体1(无修饰) 对 rt=20.0，变体2(Carbamidomethyl[C]) 对 rt=21.5
+    assert peps[0].mods == []
+    assert peps[0].pred_rt == pytest.approx(20.0)
+    assert set(peps[0].pred_ms2.keys()) == {1, 2}
+    assert peps[0].pred_ms2[1][0].ion_type == "b"
+    assert peps[1].mods[0].name == "Carbamidomethyl[C]"
+    assert peps[1].pred_rt == pytest.approx(21.5)
 
 
 def test_validate_masses_all_pass(lib_files):
-    lib = SpecLib.load_dir(str(lib_files),
+    lib = SpecLib.open_dir(str(lib_files),
                            fasta_path=str(lib_files / "db.fasta"),
                            mod_path=str(lib_files / "modification.ini"))
     report = lib.validate_masses(str(lib_files / "element.ini"),
@@ -856,22 +851,29 @@ def test_validate_masses_all_pass(lib_files):
 
 
 def test_validate_masses_flags_wrong_mass(lib_files):
-    lib = SpecLib.load_dir(str(lib_files),
+    # 破坏 pdb 中第一个变体的 mass：直接改文件首个 double
+    import struct
+    pdb = bytearray((lib_files / "pepdata.pdb").read_bytes())
+    off = struct.calcsize("<IIbbbbIQ")  # 第一个变体 mass 的起点
+    bad = struct.pack("<d", struct.unpack_from("<d", pdb, off)[0] + 5.0)
+    pdb[off:off + 8] = bad
+    (lib_files / "pepdata.pdb").write_bytes(bytes(pdb))
+    lib = SpecLib.open_dir(str(lib_files),
                            fasta_path=str(lib_files / "db.fasta"),
                            mod_path=str(lib_files / "modification.ini"))
-    lib.peptides[0].neutral_mass += 5.0  # 人为破坏
     report = lib.validate_masses(str(lib_files / "element.ini"),
                                  str(lib_files / "aa.ini"), tol=1e-4)
     assert report.failed == 1
     assert report.failures[0][0] == 0  # index 0
 
 
-def test_rt_count_mismatch_raises(lib_files, build_rt):
+def test_iter_peptides_rt_count_mismatch_raises(lib_files, build_rt):
     (lib_files / "pepdata.rt.predb").write_bytes(build_rt([1.0]))  # 只有 1 个
+    lib = SpecLib.open_dir(str(lib_files),
+                           fasta_path=str(lib_files / "db.fasta"),
+                           mod_path=str(lib_files / "modification.ini"))
     with pytest.raises(ValueError, match="RT count"):
-        SpecLib.load_dir(str(lib_files),
-                         fasta_path=str(lib_files / "db.fasta"),
-                         mod_path=str(lib_files / "modification.ini"))
+        list(lib.iter_peptides())
 ```
 
 - [ ] **Step 2: 运行测试，确认失败**
@@ -884,14 +886,18 @@ Expected: FAIL（`ImportError: cannot import name 'SpecLib'`）
 Create `spectrum/speclib/speclib.py`:
 
 ```python
-"""SpecLib 顶层 loader：组装 pepdata + RT + MS2 为 M 个 LibPeptide，并提供质量自校验。"""
+"""SpecLib 锁步流式 loader：pdb+RT+MS2 同序逐肽段产出，并提供质量自校验。
+
+体量大（ms2 ~4.4GB），不全量物化：iter_peptides() 流式 yield 已填好
+pred_rt/pred_ms2 的 LibPeptide，由调用方即用即弃。
+"""
 import os
 from dataclasses import dataclass, field
 
 from .config_io import (parse_fasta, parse_modifications,
                         parse_element_masses, parse_residue_masses, water_mass)
-from .pepdata import read_pepdata, LibPeptide
-from .predictions import read_rt_pred, read_ms2_records, group_ms2_by_peptide
+from .pepdata import iter_pepdata, LibPeptide
+from .predictions import read_rt_pred, iter_ms2_records, read_chg_max_from_trailer
 
 
 @dataclass
@@ -904,76 +910,111 @@ class MassValidationReport:
 
 
 class SpecLib:
-    def __init__(self, peptides: list[LibPeptide], chg_max: int):
-        self.peptides = peptides
+    def __init__(self, *, pepdata_path, rt_path, ms2_path,
+                 proteins, mods_by_id, rt, chg_max):
+        self.pepdata_path = pepdata_path
+        self.rt_path = rt_path
+        self.ms2_path = ms2_path
+        self.proteins = proteins
+        self.mods_by_id = mods_by_id
+        self.rt = rt
         self.chg_max = chg_max
 
+    @property
+    def num_peptides(self) -> int:
+        return len(self.rt)
+
     @classmethod
-    def load(cls, *, pepdata_path: str, rt_path: str, ms2_path: str,
+    def open(cls, *, pepdata_path: str, rt_path: str, ms2_path: str,
              fasta_path: str, mod_path: str) -> "SpecLib":
         proteins = parse_fasta(fasta_path)
         mods_by_id = {m.mod_id: m for m in parse_modifications(mod_path)}
-        peptides = read_pepdata(pepdata_path, proteins, mods_by_id)
-
-        rts = read_rt_pred(rt_path)
-        if len(rts) != len(peptides):
-            raise ValueError(
-                f"RT count {len(rts)} != peptide count {len(peptides)}")
-        for pep, rt in zip(peptides, rts):
-            pep.pred_rt = rt
-
-        records = read_ms2_records(ms2_path)
-        grouped, chg_max = group_ms2_by_peptide(records, len(peptides))
-        for pep, g in zip(peptides, grouped):
-            pep.pred_ms2 = g
-
-        return cls(peptides, chg_max)
+        rt = read_rt_pred(rt_path)
+        chg_max = read_chg_max_from_trailer(ms2_path)
+        if not (1 <= chg_max <= 6):
+            raise ValueError(f"chg_max {chg_max} out of range [1,6]")
+        return cls(pepdata_path=pepdata_path, rt_path=rt_path,
+                   ms2_path=ms2_path, proteins=proteins,
+                   mods_by_id=mods_by_id, rt=rt, chg_max=chg_max)
 
     @classmethod
-    def load_dir(cls, library_dir: str, *, fasta_path: str,
+    def open_dir(cls, library_dir: str, *, fasta_path: str,
                  mod_path: str) -> "SpecLib":
-        return cls.load(
+        return cls.open(
             pepdata_path=os.path.join(library_dir, "pepdata.pdb"),
             rt_path=os.path.join(library_dir, "pepdata.rt.predb"),
             ms2_path=os.path.join(library_dir, "pepdata.ms2.predb"),
             fasta_path=fasta_path, mod_path=mod_path)
 
+    def iter_peptides(self):
+        """锁步流式：pdb+RT+MS2 同序逐肽段 yield（已填 pred_rt/pred_ms2）。"""
+        ms2 = iter_ms2_records(self.ms2_path)
+        n_rt = len(self.rt)
+        i = -1
+        for i, pep in enumerate(iter_pepdata(
+                self.pepdata_path, self.proteins, self.mods_by_id)):
+            if i >= n_rt:
+                raise ValueError(
+                    f"peptide count exceeds RT count {n_rt}")
+            pep.pred_rt = self.rt[i]
+            d = {}
+            for chg in range(1, self.chg_max + 1):
+                try:
+                    d[chg] = next(ms2)
+                except StopIteration:
+                    raise ValueError(
+                        f"ms2 records exhausted at peptide {i} charge {chg}")
+            pep.pred_ms2 = d
+            yield pep
+        if i + 1 != n_rt:
+            raise ValueError(
+                f"peptide count {i + 1} != RT count {n_rt}")
+
     def validate_masses(self, element_path: str, aa_path: str,
-                        tol: float = 0.01) -> MassValidationReport:
+                        tol: float = 0.01, limit: int | None = None
+                        ) -> MassValidationReport:
         em = parse_element_masses(element_path)
         res = parse_residue_masses(aa_path, em)
         water = water_mass(em)
         failures = []
         max_err = 0.0
-        passed = 0
-        for i, pep in enumerate(self.peptides):
+        passed = total = 0
+        for pep in iter_pepdata(self.pepdata_path, self.proteins,
+                               self.mods_by_id):
             computed = (water
                         + sum(res.get(a, 0.0) for a in pep.sequence)
                         + sum(m.mono_mass for m in pep.mods))
             err = abs(computed - pep.neutral_mass)
-            max_err = max(max_err, err)
+            if err > max_err:
+                max_err = err
             if err <= tol:
                 passed += 1
-            else:
-                failures.append((i, pep.sequence, computed,
+            elif len(failures) < 20:
+                failures.append((total, pep.sequence, computed,
                                  pep.neutral_mass, err))
+            total += 1
+            if limit is not None and total >= limit:
+                break
         return MassValidationReport(
-            total=len(self.peptides), passed=passed,
-            failed=len(self.peptides) - passed,
+            total=total, passed=passed, failed=total - passed,
             max_abs_error=max_err, failures=failures)
 ```
 
-- [ ] **Step 4: 导出 SpecLib**
+- [ ] **Step 4: 导出符号**
 
 Replace `spectrum/speclib/__init__.py` content with:
 
 ```python
 """pFind 谱库（spectral library）二进制读取模块。"""
 from .speclib import SpecLib, MassValidationReport
-from .pepdata import LibPeptide, ModSite
-from .predictions import FragIon
+from .pepdata import LibPeptide, ModSite, iter_pepdata, read_pepdata
+from .predictions import FragIon, read_rt_pred, iter_ms2_records, read_chg_max_from_trailer
 
-__all__ = ["SpecLib", "MassValidationReport", "LibPeptide", "ModSite", "FragIon"]
+__all__ = [
+    "SpecLib", "MassValidationReport", "LibPeptide", "ModSite", "FragIon",
+    "iter_pepdata", "read_pepdata", "read_rt_pred", "iter_ms2_records",
+    "read_chg_max_from_trailer",
+]
 ```
 
 - [ ] **Step 5: 运行测试，确认通过**
@@ -981,59 +1022,35 @@ __all__ = ["SpecLib", "MassValidationReport", "LibPeptide", "ModSite", "FragIon"
 Run: `python -m pytest tests/test_speclib_loader.py -q`
 Expected: PASS（4 passed）
 
-- [ ] **Step 6: 跑全部 speclib 测试 + 确认未破坏既有测试**
+- [ ] **Step 6: 跑全部 speclib 测试**
 
 Run: `python -m pytest tests/test_speclib_config_io.py tests/test_speclib_pepdata.py tests/test_speclib_predictions.py tests/test_speclib_loader.py -q`
-Expected: PASS（全部通过，19 passed）
+Expected: PASS（19 passed）
 
 - [ ] **Step 7: 提交**
 
 ```bash
 git add spectrum/speclib/speclib.py spectrum/speclib/__init__.py tests/test_speclib_loader.py
-git commit -m "feat(speclib): SpecLib loader + neutral-mass cross-validation
+git commit -m "feat(speclib): SpecLib lockstep-streaming loader + mass cross-validation
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
 
-### Task 5: CLI — 真实谱库验证工具
+### Task 5: CLI — 真实谱库验证工具（流式，不 OOM）
 
-> 用户拿到真实谱库文件后，用此 CLI 加载并做质量交叉校验，打印摘要、样例肽段、质量误差分布。这是 spec 中"真实文件验证"步骤的落地。
+> 用此 CLI 流式加载真实谱库（4.4GB 不全载内存），打印摘要、样例肽段、质量交叉校验。`--mass-limit N` 只校验前 N 条以加速。
 
 **Files:**
 - Create: `tools/speclib_inspect.py`
+- Modify: `tests/conftest.py`（把 `lib_files` fixture 移入以便复用）
+- Modify: `tests/test_speclib_loader.py`（删除本地 `lib_files`，改用 conftest）
 - Test: `tests/test_speclib_inspect_cli.py`
 
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1: 把 `lib_files` fixture 从 test_speclib_loader.py 移入 conftest.py**
 
-Create `tests/test_speclib_inspect_cli.py`:
-
-```python
-"""测试 speclib_inspect CLI 的核心 summarize 逻辑（不依赖真实大文件）。"""
-import pytest
-from tools.speclib_inspect import summarize
-
-
-def test_summarize_runs_on_fixture(lib_files):
-    # 复用 test_speclib_loader 的 lib_files fixture（在 conftest 之外，需共享）
-    text = summarize(
-        library_dir=str(lib_files),
-        fasta_path=str(lib_files / "db.fasta"),
-        mod_path=str(lib_files / "modification.ini"),
-        element_path=str(lib_files / "element.ini"),
-        aa_path=str(lib_files / "aa.ini"),
-        n_samples=1, tol=1e-4)
-    assert "peptides: 2" in text
-    assert "chg_max: 2" in text
-    assert "mass pass: 2/2" in text
-```
-
-- [ ] **Step 2: 把 `lib_files` fixture 提到 conftest 以便 CLI 测试复用**
-
-Move the `lib_files` fixture from `tests/test_speclib_loader.py` into `tests/conftest.py` (cut its full definition from the test file and paste at end of conftest, keeping the `import pytest` already present). After moving, `tests/test_speclib_loader.py` keeps using `lib_files` as a fixture argument (no local definition needed).
-
-Append to `tests/conftest.py` (the fixture body, identical to Task 4 Step 1's `lib_files`):
+Cut the entire `lib_files` fixture definition (the `@pytest.fixture def lib_files(...)` block) from `tests/test_speclib_loader.py`, and append it to `tests/conftest.py` (identical body — `import pytest` is already present in conftest):
 
 ```python
 @pytest.fixture
@@ -1073,13 +1090,34 @@ def lib_files(tmp_path, build_pdb, build_rt, build_ms2):
          "variants": [(m1, []), (m2, [(9, 1)])]},
     ])
     (tmp_path / "pepdata.pdb").write_bytes(pdb)
-    (tmp_path / "pepdata.ms2.predb").write_bytes(build_ms2([
-        [(0, 0, 1.0)], [(1, 1, 0.5)], [(0, 0, 0.8)], [(2, 3, 0.3)]]))
+    (tmp_path / "pepdata.ms2.predb").write_bytes(build_ms2(
+        [[(0, 0, 1.0)], [(1, 1, 0.5)], [(0, 0, 0.8)], [(2, 3, 0.3)]],
+        chg_max=2, n_peptides=2))
     (tmp_path / "pepdata.rt.predb").write_bytes(build_rt([20.0, 21.5]))
     return tmp_path
 ```
 
-Then delete the duplicate `lib_files` fixture definition from `tests/test_speclib_loader.py` (leave the four test functions intact).
+- [ ] **Step 2: 写失败测试**
+
+Create `tests/test_speclib_inspect_cli.py`:
+
+```python
+"""测试 speclib_inspect CLI 的 summarize（用合成 fixture，不依赖大文件）。"""
+from tools.speclib_inspect import summarize
+
+
+def test_summarize_runs_on_fixture(lib_files):
+    text = summarize(
+        library_dir=str(lib_files),
+        fasta_path=str(lib_files / "db.fasta"),
+        mod_path=str(lib_files / "modification.ini"),
+        element_path=str(lib_files / "element.ini"),
+        aa_path=str(lib_files / "aa.ini"),
+        n_samples=1, tol=1e-4)
+    assert "peptides: 2" in text
+    assert "chg_max: 2" in text
+    assert "mass pass: 2/2" in text
+```
 
 - [ ] **Step 3: 运行测试，确认失败**
 
@@ -1091,12 +1129,13 @@ Expected: FAIL（`ModuleNotFoundError: No module named 'tools.speclib_inspect'`�
 Create `tools/speclib_inspect.py`:
 
 ```python
-"""加载 pFind 谱库并打印摘要 + 质量交叉校验，用于真实文件验证。
+"""流式加载 pFind 谱库并打印摘要 + 质量交叉校验，用于真实文件验证。
 
 用法:
   python -m tools.speclib_inspect --library-dir DIR \\
       --fasta merge_human_ecoli_yeast.fasta --mod modification.ini \\
-      [--element element.ini --aa aa.ini] [--n-samples 5] [--tol 0.01]
+      [--element element.ini --aa aa.ini] [--n-samples 5] \\
+      [--tol 0.01] [--mass-limit N]
 """
 import argparse
 
@@ -1105,30 +1144,36 @@ from spectrum.speclib import SpecLib
 
 def summarize(*, library_dir: str, fasta_path: str, mod_path: str,
               element_path: str | None = None, aa_path: str | None = None,
-              n_samples: int = 5, tol: float = 0.01) -> str:
-    lib = SpecLib.load_dir(library_dir, fasta_path=fasta_path,
+              n_samples: int = 5, tol: float = 0.01,
+              mass_limit: int | None = None) -> str:
+    lib = SpecLib.open_dir(library_dir, fasta_path=fasta_path,
                            mod_path=mod_path)
     lines = []
-    lines.append(f"peptides: {len(lib.peptides)}")
+    lines.append(f"peptides: {lib.num_peptides}")
     lines.append(f"chg_max: {lib.chg_max}")
-    rts = [p.pred_rt for p in lib.peptides if p.pred_rt is not None]
-    if rts:
-        lines.append(f"rt range (min): {min(rts):.3f} .. {max(rts):.3f}")
+    if len(lib.rt):
+        lines.append(f"rt range (min): {min(lib.rt):.3f} .. {max(lib.rt):.3f}")
 
-    for pep in lib.peptides[:n_samples]:
+    # 流式取前 n_samples 个肽段（含 RT/MS2），不全载
+    samples = []
+    for pep in lib.iter_peptides():
+        samples.append(pep)
+        if len(samples) >= n_samples:
+            break
+    for pep in samples:
         modstr = ",".join(f"{m.pos}:{m.name}" for m in pep.mods) or "-"
-        top = sorted(
-            (ion for ions in pep.pred_ms2.values() for ion in ions),
-            key=lambda x: x.intensity, reverse=True)[:3]
+        top = sorted((ion for ions in pep.pred_ms2.values() for ion in ions),
+                     key=lambda x: x.intensity, reverse=True)[:3]
         topstr = " ".join(
             f"{i.ion_type}{i.frag_pos}^{i.frag_charge}={i.intensity:.2f}"
             for i in top)
         lines.append(
             f"  {pep.sequence} mods=[{modstr}] mass={pep.neutral_mass:.4f} "
-            f"rt={pep.pred_rt} top_ms2=[{topstr}]")
+            f"rt={pep.pred_rt:.2f} top_ms2=[{topstr}]")
 
     if element_path and aa_path:
-        rep = lib.validate_masses(element_path, aa_path, tol=tol)
+        rep = lib.validate_masses(element_path, aa_path, tol=tol,
+                                  limit=mass_limit)
         lines.append(f"mass pass: {rep.passed}/{rep.total} "
                      f"(max_abs_err={rep.max_abs_error:.5f}, tol={tol})")
         for idx, seq, computed, stored, err in rep.failures[:5]:
@@ -1148,11 +1193,13 @@ def main():
     ap.add_argument("--aa", default=None)
     ap.add_argument("--n-samples", type=int, default=5)
     ap.add_argument("--tol", type=float, default=0.01)
+    ap.add_argument("--mass-limit", type=int, default=None,
+                    help="只校验前 N 条质量（加速）")
     args = ap.parse_args()
     print(summarize(
         library_dir=args.library_dir, fasta_path=args.fasta,
         mod_path=args.mod, element_path=args.element, aa_path=args.aa,
-        n_samples=args.n_samples, tol=args.tol))
+        n_samples=args.n_samples, tol=args.tol, mass_limit=args.mass_limit))
 
 
 if __name__ == "__main__":
@@ -1164,7 +1211,7 @@ if __name__ == "__main__":
 Run: `python -m pytest tests/test_speclib_inspect_cli.py tests/test_speclib_loader.py -q`
 Expected: PASS（5 passed；确认移动 fixture 后 loader 测试仍通过）
 
-- [ ] **Step 6: 跑全部 speclib 相关测试**
+- [ ] **Step 6: 跑全部 speclib 测试**
 
 Run: `python -m pytest tests/ -k speclib -q`
 Expected: PASS（20 passed）
@@ -1172,37 +1219,34 @@ Expected: PASS（20 passed）
 - [ ] **Step 7: 提交**
 
 ```bash
-git add tools/speclib_inspect.py tests/test_speclib_inspect_cli.py tests/conftest.py tests/test_speclib_loader.py
-git commit -m "feat(speclib): speclib_inspect CLI for real-library validation
+git add tools/speclib_inspect.py tests/conftest.py tests/test_speclib_inspect_cli.py tests/test_speclib_loader.py
+git commit -m "feat(speclib): speclib_inspect CLI for real-library validation (streaming)
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
 
-## 真实文件验证（用户拿到谱库后执行）
+## 真实文件验证（实现后执行）
 
-谱库到手后，运行（路径按实际情况替换）：
+谱库已确认在 `~/share/2026_06_07_kongweisa_guangshan_puku/{lib-2th,lib_5th,lib-normal}`（目录含 `pepdata.pdb`/`pepdata.rt.predb`/`pepdata.ms2.predb`）。运行：
 
 ```bash
 python -m tools.speclib_inspect \
-  --library-dir <谱库目录> \
+  --library-dir ~/share/2026_06_07_kongweisa_guangshan_puku/lib-2th \
   --fasta ../puku/merge_human_ecoli_yeast.fasta \
   --mod ../puku/modification.ini \
   --element ../puku/element.ini --aa ../puku/aa.ini \
-  --n-samples 10 --tol 0.01
+  --n-samples 10 --tol 0.01 --mass-limit 200000
 ```
 
-**判读：**
-- `mass pass` 接近 100% ⇒ 序列+修饰解码正确。
-- 若 `max_abs_err` 是一个**恒定常数**（≈1.0073=质子、≈18.0106=水、≈ 某修饰质量），说明 `lfPepMass` 的定义与"中性=Σ残基+H₂O+Σ修饰"假设有系统偏差 → 在 `SpecLib.validate_masses` 的 `computed` 公式按该常数校正，并更新 spec。
-- 若"一个文件"实为单文件/压缩包而非目录 ⇒ 视形态加一个适配 loader（如 `SpecLib.load(pepdata_path=..., rt_path=..., ms2_path=...)` 已支持显式三路径；压缩包先解压或加 zip 适配）。
+**预期（已用一次性脚本预验证）：** `peptides: 3124520`、`chg_max: 4`、`mass pass: N/N`（100%，max_abs_err≈0）。`--mass-limit` 控制质量校验条数（全量 312 万约 30s）；不带 limit 跑全量以最终确认。
 
 ---
 
 ## Self-Review
 
-- **Spec coverage**：模块结构（config_io/pepdata/predictions/speclib）✓ Task1–4；二进制格式三表 ✓ Task2–3；mod_id 映射 ✓ Task1；FASTA 解析 ✓ Task1；数据模型（LibPeptide/FragIon/ModEntry/ModSite）✓；chg_max 推断 ✓ Task3；四层自校验中"质量交叉校验"✓ Task4、"mod_pep_bytes"✓ Task2、"计数一致性"✓ Task3/4；测试策略（合成 fixture + 真实文件）✓ Task1–5 + 验证小节；非目标（不接入 pipeline）已遵守。
-- **边界条件覆盖（rubber-duck 复核）**：B1 M=Σmod_pep_num 逐变体对齐 ✓ Task4 `test_load_dir_end_to_end`；B2 `n_size==0` 空记录 ✓ Task3 `test_read_ms2_empty_record_in_middle`；B3 `mod_pep_num==0` ✓ Task2 `test_zero_variant_entry_consumed_and_skipped`；B5 `chg_max∈[1,6]` 硬校验 ✓ Task3 `test_group_ms2_chg_max_out_of_range_raises`；B4 各电荷桶离子不对称——reader 不做对称假设，validate 亦不假设。
-- **Placeholder scan**：无 TBD/TODO；每个代码步骤含完整代码与精确命令/期望输出。
-- **Type/name consistency**：`Protein/ModEntry/ModSite/LibPeptide/FragIon/MassValidationReport/SpecLib` 跨任务一致；`parse_fasta/parse_modifications/parse_element_masses/parse_residue_masses/water_mass/read_pepdata/read_rt_pred/read_ms2_records/group_ms2_by_peptide/SpecLib.load/load_dir/validate_masses` 签名一致；struct 格式串 `'<IIbbbbIQ'/'<db'/'<bi'/'<h'/'<bbf'` 全程统一。
+- **Spec coverage**：模块结构（config_io/pepdata/predictions/speclib）✓ Task1–4；二进制格式（pdb/rt/ms2+文本尾巴）✓ Task2–3；mod_id 映射 ✓ Task1；FASTA 解析 ✓ Task1；数据模型 ✓；**锁步流式 + 体量安全** ✓ Task4 `iter_peptides`；**MS2 文本尾巴跳过** ✓ Task3 `iter_ms2_records`；**chg_max 从尾巴解析** ✓ Task3 `read_chg_max_from_trailer`；质量交叉校验 ✓ Task4；`mod_pep_bytes` ✓ Task2；计数一致性（RT 数=M）✓ Task4；CLI 流式不 OOM + `--mass-limit` ✓ Task5；真实文件验证小节 ✓；非目标（不接入 pipeline、不做偏移索引）已遵守。
+- **边界条件覆盖**：B1 M=Σmod_pep_num 逐变体对齐 ✓ Task2/Task4；B2 `n_size==0` 空记录 ✓ Task3；B3 `mod_pep_num==0` ✓ Task2；尾巴停止 ✓ Task3；chg_max∈[1,6] 硬校验 ✓ Task4；各电荷桶不对称——不做对称假设。
+- **Placeholder scan**：无 TBD/TODO；每步含完整代码与精确命令/期望输出。
+- **Type/name consistency**：`Protein/ModEntry/ModSite/LibPeptide/FragIon/MassValidationReport/SpecLib` 跨任务一致；`parse_fasta/parse_modifications/parse_element_masses/parse_residue_masses/water_mass/iter_pepdata/read_pepdata/read_rt_pred/iter_ms2_records/read_chg_max_from_trailer/SpecLib.open/open_dir/iter_peptides/validate_masses` 签名一致；struct 串 `'<IIbbbbIQ'/'<db'/'<bi'/'<h'/'<bbf'` 全程统一；`read_rt_pred` 返回 `array('f')`（测试用 `list(...)` 比较）。
