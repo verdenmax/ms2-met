@@ -18,11 +18,15 @@ SILAC 轻重标 MS2 校验工具的**编排与特征提取层**：从配置/搜�
 | `data_to_npz(mgr, filepath, workpath)` | → `(name, shared_path)` | 把 DIA 数据缓存成 `.dia.npz`（mmap 共享） |
 | `process_batch_single / _pair / _pair_shuffle(...)` | → `(results, n_errors)` | 进程池批处理工作函数（三种 `feature_type`） |
 | `Q1aAccumulator` | `class(split_window, ...)` | 逐 PSM 累计 b/y 碎片配对召回，输出 11 个 q1a 特征 |
+| `pred_features.*`（谱库预测强度，Phase 1） | 纯函数 | `spectral_angle`/`spearman_sim`/`select_topk_separable`/`i1_pattern_features`（轻重关系特征底座） |
+| `pred_store.*`（谱库预测强度，Phase 1） | 肽段→预测 lookup | `normalize_key`/`frag_key`/`build_pred_store` → `PredStore`（一遍流式、O(命中)） |
 
 ## 依赖
 
 - 依赖：`spectrum`（`DIAData`、`PSMInfo`、SILAC 质量/同位素工具）、`manager`（`DataManager`、`LightResultManager`）、`constant.keys.ConfigKeys`；数值栈 `numpy`/`scipy`，进度条 `rich`。
 - 被依赖：`main.py` 直接构造并运行 `PairFlow`。
+
+> **谱库预测强度特征（Phase 1 基础，未接入主流程）**：`pred_features.py`（度量/top-K/I1 纯函数）、`pred_store.py`（肽段→预测一遍流式 lookup）与 `tools/speclib_sanity.py`（前置 go/no-go gate）已就绪，仅供 CLI 与单测；接入 `result.csv` 见 `docs/specs/2026-06-08-speclib-predicted-intensity-features-design.md` 的 Phase 2。
 
 ## 输入 / 输出
 

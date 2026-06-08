@@ -55,3 +55,29 @@
   - `__init__(self, split_window: bool, intensity_floor=..., apex_delta_fraction=..., pearson_min=...)`
   - `add(self, ion_type: str, light_mass: float, heavy_mass: float, light_xic, heavy_xic) -> None` — 累计一个理论碎片；`ion_type` 非 b/y 抛 `ValueError`；非有限质量或负位移发 `RuntimeWarning` 并跳过；不可分离或无 light 信号静默丢弃。
   - `compute_features(self) -> dict` — 返回 11 字段 q1a 特征（recall 系列在桶 < 3 时 NaN，count 系列恒整数）。
+
+## workflows/pred_features.py（谱库预测强度特征，Phase 1 基础）
+
+纯数值函数，无 I/O；degenerate 输入一律返回 NaN（不返回 0/越界值），并发 `logger.debug` 暴露问题。
+
+- `spectral_angle(a, b) -> float` — 谱角相似度 ∈[0,1]；长度<2 / 长度不等 / 零范数 / **非有限**输入 → NaN；尺度不变；perfect-match 处把 cos snap 到 ±1（避免 arccos 噪声）。
+- `spearman_sim(a, b) -> float` — Spearman 秩相关 ∈[-1,1]；零方差/退化 → NaN。
+- `_weighted_pearson(x, y, w) -> float` — 预测强度加权 Pearson；权重<0 截断为 0，零权重和/零加权方差 → NaN。
+- `select_topk_separable(fragments, k) -> list` — 在 `separable=True` 的碎片里按 `pred_intensity` 降序取前 K；丢弃 `pred_intensity` 非有限者（NaN 会排到最前）。
+- `i1_pattern_features(pred, obs_heavy, obs_light) -> dict` — I1 强度模式一致性（spec §4.3）：`spec_pattern_SA_heavy`=谱角(pred,obs_heavy)、`spec_pattern_spearman_heavy`=Spearman、`spec_pattern_LH_consistency`=预测加权 corr(obs_light,obs_heavy)。
+
+## workflows/pred_store.py（肽段→预测 lookup，Phase 1 基础）
+
+- `normalize_mods(mods) -> tuple` — 把 `(pos,mod_id)` 元组或 `ModSite` 对象规范成位置排序的 `((pos,mod_id),...)`。
+- `normalize_key(sequence, mods, charge) -> tuple` — 规范肽段变体键 `(sequence, sorted-mods, int charge)`，可哈希。
+- `frag_key(ion_type, frag_pos, frag_charge) -> tuple` — 预测/实测共用的碎片键 `(str, int, int)`。
+- `class PredStore` — `.get(key)` → `{'frags':{frag_key:intensity},'pred_rt':float}|None`、`.n_hit`、`.n_miss`、`.wanted`。
+- `build_pred_store(lib, wanted_keys, decode_ms2="objects") -> PredStore` — **一遍流式**扫 `SpecLib`，只留命中（被鉴定）肽段，内存 O(命中数)；末尾 `logger.info` 记 `hit/miss` 覆盖率。
+
+## tools/speclib_sanity.py（前置 sanity gate / go-no-go CLI）
+
+- `similarity_distribution(pairs, metric=spectral_angle) -> dict` — `{n,median,p25,p75}`，跳过非有限相似度。
+- `gate_pass(stats, min_sim) -> bool` — 有数据且 `median > min_sim`（严格）。
+- `build_pairs_from_maps(pred_map, obs_map) -> (pred_vec, obs_vec)` — 在共同碎片键上对齐预测/实测强度。
+- `_observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict` — 取 PSM 各 light b/y 碎片 XIC apex；b/y 序号 → `frag_pos = ion_num-1`，单电荷。
+- `main()` — CLI：`--library-dir/--fasta/--mod/--psm-file/--raw/--metric/--min-sim/...`；记 coverage、stats、`GATE PASS/FAIL`，exit 0(过)/2(不过)。

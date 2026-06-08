@@ -64,3 +64,13 @@
 - 批函数捕获每条 PSM 异常计入 `n_errors`，不中断整批；`distribute` 汇总错误率，>1% 告警。
 - 进程池 `BrokenProcessPool`（常见 OOM）时提前 break，仍写出已完成部分并落 `*.PARTIAL_INCOMPLETE` 标记，供下游识别 CSV 不完整。
 - 进程池 `max_tasks_per_child=4` 限制单 worker 任务数以控内存；out-of-window XIC 请求按 worker 汇总记日志（不再逐次告警）。
+
+## 谱库预测强度特征（Phase 1 基础，未接入主流程）
+
+把 pFind 谱库的**预测碎片强度**路由进轻重关系特征（设计见 `docs/specs/2026-06-08-speclib-predicted-intensity-features-design.md`）。Phase 1 只落地可复用基础 + 前置 gate，**不**改 `result.csv`：
+
+- **度量**（`pred_features`）：谱角（对稀疏强度向量比 Pearson 稳）、Spearman（抗模型绝对强度偏差）、预测加权 Pearson。所有度量对退化/**非有限**输入返回 NaN（与各兄弟函数一致），避免把“未定义”混成“真实低相似”。
+- **top-K**（`select_topk_separable`）：在**可分**碎片里取预测最强 K 个，驱动后续碎片级特征；丢弃非有限预测强度。
+- **I1**（`i1_pattern_features`）：以 L 的预测相对强度构造“预测重标谱”，与实测重标比（谱角/Spearman），并出预测加权 corr(obs_L,obs_H)。直击情形 B（干扰肽段复现不了 L 的预测强度模式）。
+- **lookup**（`build_pred_store`）：一遍流式扫库、只留被鉴定肽段；`(seq,mods,charge)` 与碎片 `(ion_type,frag_pos,frag_charge)` 经规范化键对齐；覆盖率 hit/miss 记日志。
+- **前置 sanity gate**（`tools/speclib_sanity.py`）：在高置信轻标 PSM 上比“预测 vs 实测轻标”相似度分布；中位过阈才放行 Phase 2。b/y↔frag_pos 对齐约定为 `frag_pos = ion_num-1`，由该 gate 验证。

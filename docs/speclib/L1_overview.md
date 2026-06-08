@@ -77,3 +77,7 @@ python -m tools.speclib_inspect \
 - RT = M 个 f32（分钟）。
 - MS2 = `[M×chg_max 二进制记录][M 行文本尾巴]`，**chg_max = 4**；读取须在 `n_size>1000` 处停止跳过尾巴；`iter_ms2_records` 用 `mmap` 流式（4.4GB 峰值 RSS ~184MB）。
 - 中性质量交叉校验 **100%**（首 30 万条 max_err = 0）。
+
+## 接入特征提取（Phase 1 已就绪）
+
+谱库的**预测碎片强度**已开始接入 SILAC 特征：`workflows/pred_features.py`（谱角/Spearman/top-K/I1 纯函数）、`workflows/pred_store.py`（肽段→预测一遍流式 lookup）与 `tools/speclib_sanity.py`（前置 go/no-go gate）构成 Phase 1 基础，尚未改 `result.csv`。设计与后续接入（I2/I3/J2/J5 + 特征列）见 `docs/specs/2026-06-08-speclib-predicted-intensity-features-design.md`，实现计划见 `docs/superpowers/plans/2026-06-08-speclib-pred-features-phase1.md`。
