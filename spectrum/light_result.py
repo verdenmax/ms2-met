@@ -207,9 +207,12 @@ class LightResult:
                     pass
 
             proteins = str(row.ProteinNames or "")
-            if (proteins.startswith("REV_")
-                    or proteins.startswith("_REV")
-                    or proteins.startswith("DECOY_")):
+            # 与 pFind 一致：仅当所有蛋白 token 都是 decoy 才丢弃（decoy-led 但
+            # 含 target 的组应保留）。DIA-NN ProteinNames 以 ';' 分隔。
+            protein_tokens = [t.strip() for t in proteins.split(";") if t.strip()]
+            if protein_tokens and all(
+                    t.startswith(("REV_", "_REV", "DECOY_"))
+                    for t in protein_tokens):
                 n_decoy += 1
                 continue
 

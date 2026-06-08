@@ -206,3 +206,21 @@ def test_diann_modify_positions_are_0based_residue_index():
     assert parse_diann_peptide_modify("PEM(UniMod:35)K") == [(2, 35)]
     # N 端修饰（前导括号）仍为位置 0
     assert parse_diann_peptide_modify("(UniMod:1)PEPK") == [(0, 1)]
+
+
+def test_diann_decoy_kept_when_group_contains_a_target(tmp_path):
+    """与 pFind 规则一致：仅当所有蛋白 token 都是 decoy 才丢弃。
+    decoy-led 但含真 target 的蛋白组应保留（旧实现 startswith 整串会误删）。"""
+    parquet = _build_diann_parquet(tmp_path, [
+        _diann_row(**{"Modified.Sequence": "PEPTIDEK",
+                      "Stripped.Sequence": "PEPTIDEK",
+                      "Protein.Names": "REV_P1;P2"}),        # 含 target → 保留
+        _diann_row(**{"Modified.Sequence": "PEPTIDER",
+                      "Stripped.Sequence": "PEPTIDER",
+                      "Protein.Names": "REV_P1;REV_P2"}),    # 全 decoy → 丢弃
+    ])
+    lr = LightResult()
+    lr._load_from_dia_nn_input(parquet, qvalue_threshold=0.01)
+    seqs = {p._sequence for p in lr.psm_info}
+    assert "PEPTIDEK" in seqs       # decoy-led 但含 target → 保留
+    assert "PEPTIDER" not in seqs   # 全 decoy → 丢弃
