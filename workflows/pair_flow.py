@@ -250,69 +250,45 @@ class PairFlow:
                 max_workers=pool_workers,
                 max_tasks_per_child=4) as executor:
 
-            multi_sample_futures = []
+            multi_sample_futures = {}
 
             if feature_type == 0:
                 for shared_path, batch_tasks in task_groups.items():
                     # 切分成每批最多 BATCH_SIZE 个
                     for i in range(0, len(batch_tasks), BATCH_SIZE):
                         chunk = batch_tasks[i:i + BATCH_SIZE]
-                        multi_sample_futures.append(
-                            executor.submit(
-                                process_batch_single,
-                                shared_path, chunk, self._config)
-                        )
+                        fut = executor.submit(
+                            process_batch_single,
+                            shared_path, chunk, self._config)
+                        multi_sample_futures[fut] = len(chunk)
             elif feature_type == 1:
                 for (shared1, shared2), batch_tasks in task_groups.items():
                     for i in range(0, len(batch_tasks), BATCH_SIZE):
                         chunk = batch_tasks[i:i + BATCH_SIZE]
-                        multi_sample_futures.append(
-                            executor.submit(
-                                process_batch_pair,
-                                shared1, shared2,
-                                chunk, self._config)
-                        )
+                        fut = executor.submit(
+                            process_batch_pair,
+                            shared1, shared2,
+                            chunk, self._config)
+                        multi_sample_futures[fut] = len(chunk)
             elif feature_type == 2:
                 for (shared1, shared2), batch_tasks in task_groups.items():
                     for i in range(0, len(batch_tasks), BATCH_SIZE):
                         chunk = batch_tasks[i:i + BATCH_SIZE]
-                        multi_sample_futures.append(
-                            executor.submit(
-                                process_batch_pair_shuffle,
-                                shared1, shared2,
-                                chunk, self._config)
-                        )
+                        fut = executor.submit(
+                            process_batch_pair_shuffle,
+                            shared1, shared2,
+                            chunk, self._config)
+                        multi_sample_futures[fut] = len(chunk)
 
             with Progress() as progress:
                 rich_task_progress = progress.add_task(
                     "[cyan] 处理进度 ...", total=len(multi_sample_futures))
 
-                # 收集结果（as_completed 可尽早获取已完成任务）
-                n_total_errors = 0
-                n_total_attempted = 0
-                pool_broken = False
-                for future in as_completed(multi_sample_futures):
-                    progress.update(rich_task_progress, advance=1)
-                    try:
-                        result = future.result()
-                        if isinstance(result, tuple) and len(result) == 2:
-                            batch_results, batch_errors = result
-                            ans.extend(batch_results)
-                            n_total_errors += batch_errors
-                            n_total_attempted += (
-                                len(batch_results) + batch_errors)
-                        else:
-                            # Backward-compat fallback (list return)
-                            ans.extend(result)
-                            n_total_attempted += len(result)
-                    except BrokenProcessPool:
-                        logging.error(
-                            "进程池崩溃（可能内存不足），尝试减少 workers 数量或数据量")
-                        pool_broken = True
-                        break
-                    except Exception as e:
-                        logging.error(f"批次处理异常: {e}")
-                        n_total_errors += 1
+                # 收集结果（as_completed 可尽早获取已完成任务）；整批失败按
+                # chunk_size 计入丢失，避免静默丢数据（见 _collect_batch_results）
+                ans, n_total_errors, n_total_attempted, pool_broken = (
+                    self._collect_batch_results(
+                        multi_sample_futures, progress, rich_task_progress))
 
         # 汇总错误率
         if n_total_attempted > 0:
@@ -364,6 +340,47 @@ class PairFlow:
             except Exception as e:
                 logging.error(
                     f"无法写入 PARTIAL_INCOMPLETE 标记 {marker}: {e}")
+
+    @staticmethod
+    def _collect_batch_results(future_to_size, progress=None, task_id=None):
+        """收集各批次 future 结果并统计成功/丢失数。
+
+        关键修复：整批 future 抛异常时，丢失的是整个 chunk（最多 BATCH_SIZE 个
+        PSM），必须把 chunk_size 同时计入 n_total_errors 与 n_total_attempted，
+        否则错误率分母漏掉这些 PSM、警告永不触发 → 静默丢数据。
+
+        返回 (ans, n_total_errors, n_total_attempted, pool_broken)。
+        """
+        ans = []
+        n_total_errors = 0
+        n_total_attempted = 0
+        pool_broken = False
+        for future in as_completed(future_to_size):
+            if progress is not None and task_id is not None:
+                progress.update(task_id, advance=1)
+            chunk_size = future_to_size[future]
+            try:
+                result = future.result()
+                if isinstance(result, tuple) and len(result) == 2:
+                    batch_results, batch_errors = result
+                    ans.extend(batch_results)
+                    n_total_errors += batch_errors
+                    n_total_attempted += len(batch_results) + batch_errors
+                else:
+                    # Backward-compat fallback (list return)
+                    ans.extend(result)
+                    n_total_attempted += len(result)
+            except BrokenProcessPool:
+                logging.error(
+                    "进程池崩溃（可能内存不足），尝试减少 workers 数量或数据量")
+                pool_broken = True
+                break
+            except Exception as e:
+                logging.error(
+                    f"批次处理异常，丢失 {chunk_size} 个 PSM: {e}")
+                n_total_errors += chunk_size
+                n_total_attempted += chunk_size
+        return ans, n_total_errors, n_total_attempted, pool_broken
 
     def run(self) -> None:
         logging.info(f"运行任务 {self.workname}")
