@@ -4,10 +4,12 @@
 pred_rt/pred_ms2 的 LibPeptide，由调用方即用即弃。
 """
 import os
+from array import array
 from dataclasses import dataclass, field
 
 from .config_io import (parse_fasta, parse_modifications,
-                        parse_element_masses, parse_residue_masses, water_mass)
+                        parse_element_masses, parse_residue_masses, water_mass,
+                        Protein, ModEntry)
 from .pepdata import iter_pepdata, LibPeptide
 from .predictions import read_rt_pred, iter_ms2_records, read_chg_max_from_trailer
 
@@ -22,8 +24,15 @@ class MassValidationReport:
 
 
 class SpecLib:
-    def __init__(self, *, pepdata_path, rt_path, ms2_path,
-                 proteins, mods_by_id, rt, chg_max):
+    """pFind 谱库的锁步流式读取器。
+
+    open/open_dir 预加载 proteins/mods/RT/chg_max；pdb 与 4.4GB 的 ms2 延迟到
+    iter_peptides/validate_masses 时按"同序拉链"流式读取，内存 O(1)。
+    """
+
+    def __init__(self, *, pepdata_path: str, rt_path: str, ms2_path: str,
+                 proteins: list[Protein], mods_by_id: dict[int, ModEntry],
+                 rt: array, chg_max: int):
         self.pepdata_path = pepdata_path
         self.rt_path = rt_path
         self.ms2_path = ms2_path
@@ -62,7 +71,7 @@ class SpecLib:
         """锁步流式：pdb+RT+MS2 同序逐肽段 yield（已填 pred_rt/pred_ms2）。"""
         ms2 = iter_ms2_records(self.ms2_path)
         n_rt = len(self.rt)
-        i = -1
+        i = -1   # 哨兵：空 pdb 时 i+1==0，下面的对齐校验会触发
         for i, pep in enumerate(iter_pepdata(
                 self.pepdata_path, self.proteins, self.mods_by_id)):
             if i >= n_rt:

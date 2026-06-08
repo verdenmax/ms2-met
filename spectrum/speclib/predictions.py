@@ -28,7 +28,7 @@ def read_rt_pred(path: str) -> "array":
     with open(path, "rb") as fh:
         data = fh.read()
     a = array("f")
-    a.frombytes(data[:len(data) // 4 * 4])
+    a.frombytes(data[:len(data) // 4 * 4])   # 丢弃不足 4 字节的尾部
     if sys.byteorder != "little":   # array('f') 用本机字节序；文件是小端
         a.byteswap()
     return a

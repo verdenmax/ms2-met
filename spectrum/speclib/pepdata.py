@@ -24,14 +24,14 @@ class ModSite:
 @dataclass
 class LibPeptide:
     sequence: str
-    mods: list  # list[ModSite]
+    mods: list[ModSite]
     neutral_mass: float
     protein: str
     is_decoy: bool
     pro_nc: int = 0
     enz: int = 0
     miss: int = 0
-    charge_mask: int = 0
+    charge_mask: int = 0  # pdb 读取恒为 0（对应 C++ PepInfo.chg，预测库不限电荷）
     pred_rt: float | None = None
     pred_ms2: dict = field(default_factory=dict)  # charge -> list[FragIon]
 

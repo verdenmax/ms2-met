@@ -26,22 +26,23 @@ class ModEntry:
 
 
 def _parse_fasta_header(line: str):
-    """复刻 CFastaParser::ReadOnePrteinEntry 的 AC/DE 切分。"""
+    """复刻 CFastaParser::ReadOnePrteinEntry 的 AC/DE 切分。
+
+    AC = '>' 后到第一个空格/Tab；'|' 仅当位置 >15 时才作分隔符
+    （uniprot 头 'sp|P12345|NAME' 的首个 '|' 在低位，不分隔，AC 取到空格）。
+    """
     s = line.rstrip("\r\n")
 
     def find(ch: str) -> int:
         i = s.find(ch)
         return i if i != -1 else len(s)
 
-    tpos = find(" ")
-    t2 = find("\t")
-    if t2 < tpos:
-        tpos = t2
-    t2 = find("|")
-    if t2 < tpos and t2 > 15:
-        tpos = t2
-    ac = s[1:tpos]
-    de = s[tpos + 1:]
+    cut = min(find(" "), find("\t"))
+    pipe_pos = find("|")
+    if pipe_pos < cut and pipe_pos > 15:
+        cut = pipe_pos
+    ac = s[1:cut]
+    de = s[cut + 1:]
     return ac, de
 
 
@@ -73,6 +74,8 @@ def parse_modifications(path: str) -> list[ModEntry]:
             if "=" not in line:
                 continue
             key, _, val = line.partition("=")
+            # 跳过非"数据行"（复刻 CReader::ReadMod）：name* 标题行、计数行、
+            # label_name、一条与 Acetyl 重复的特例、Label_* 同位素标记；均不占 id
             if key.startswith("name"):
                 continue
             if key == "@NUMBER_MODIFICATION":
@@ -102,6 +105,7 @@ def parse_element_masses(path: str) -> dict[str, float]:
             line = raw.rstrip("\r\n")
             if not line.startswith("E"):
                 continue
+            # 行格式: E<n>=<名称>|<质量,逗号分隔>|<丰度,逗号分隔>|
             value = line[line.find("=") + 1:]
             p1 = value.find("|")
             name = value[:p1]
@@ -128,6 +132,7 @@ def parse_residue_masses(path: str, element_masses: dict[str, float]) -> dict[st
             line = raw.rstrip("\r\n")
             if not line.startswith("R"):
                 continue
+            # 行格式: R<n>=<氨基酸>|<元素组成，如 C(6)H(12)N(2)O(1)S(0)>|
             value = line[line.find("=") + 1:]
             p1 = value.find("|")
             name = value[:p1]
@@ -148,4 +153,5 @@ def parse_residue_masses(path: str, element_masses: dict[str, float]) -> dict[st
 
 
 def water_mass(element_masses: dict[str, float]) -> float:
+    """水的单同位素质量 = 2×H + O。"""
     return 2 * element_masses["H"] + element_masses["O"]
