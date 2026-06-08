@@ -296,7 +296,9 @@ def parse_diann_peptide_modify(sequence: str):
                     f"DIA-NN 非 UniMod 修饰，跳过: '{group}' (in {sequence!r})")
             else:
                 unimod_id = int(match.group(1))
-                modifications.append((count_index, unimod_id))
+                # count_index 在遇到 '(' 前已把被修饰残基计入，故残基修饰需 -1
+                # 得到 0-based 残基下标；N 端修饰（前导括号，count_index=0）保持 0。
+                modifications.append((max(count_index - 1, 0), unimod_id))
 
             index = rindex
         else:

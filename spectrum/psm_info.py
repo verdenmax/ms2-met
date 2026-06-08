@@ -265,7 +265,7 @@ def get_theoretical_isotope_ratios(sequence: str) -> list:
 
 
 def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5,
-                                 seed=None):
+                                 seed=None, max_tries=10):
     """
     anchor_len=1: 保留C端K/R（标准做法）
     anchor_len=2: 保留C端"XK"或"XR"（保留y1+y2离子）
@@ -274,6 +274,10 @@ def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5,
         instance for deterministic shuffle. If None, use module-level
         random (backward compat, non-deterministic).
         (P2-4, Pipeline-I2, 2026-06-03 audit.)
+
+    保证打乱后序列与原序列不同（否则 feature_type=2 负样本=正样本，标签污染）：
+    n_shuffle 至少为 2，并重试至多 max_tries 次直到 core 改变；当 core 无法产生
+    不同排列（长度<2 或只有一种字符）时原样返回，调用方应跳过该负样本。
     """
     rng = random.Random(seed) if seed is not None else random
 
@@ -283,13 +287,28 @@ def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5,
     core = peptide[:-anchor_len]   # 可shuffle部分
     anchor = peptide[-anchor_len:]  # C端锚定部分（通常是"K"或"R"）
 
-    # 部分shuffle核心区域
-    n_shuffle = max(1, int(len(core) * shuffle_ratio))
-    indices = rng.sample(range(len(core)), n_shuffle)
-    chars = list(core)
-    shuffled_vals = [chars[i] for i in indices]
-    rng.shuffle(shuffled_vals)
-    for idx, val in zip(indices, shuffled_vals):
-        chars[idx] = val
+    # core 无法打乱出不同序列：原样返回（调用方应跳过）
+    if len(core) < 2 or len(set(core)) < 2:
+        return peptide
 
-    return ''.join(chars) + anchor
+    # 至少打乱 2 个位置才可能改变；重试直到 core 确实变化
+    n_shuffle = min(max(2, int(len(core) * shuffle_ratio)), len(core))
+    for _ in range(max_tries):
+        indices = rng.sample(range(len(core)), n_shuffle)
+        sel = [core[i] for i in indices]
+        if len(set(sel)) < 2:
+            continue   # 选中位置全是同一字符，换一组
+        # 打乱选中值直到排列与原来不同（选中子集含 ≥2 种字符，必然可达）
+        shuffled_vals = sel[:]
+        for _ in range(20):
+            rng.shuffle(shuffled_vals)
+            if shuffled_vals != sel:
+                break
+        chars = list(core)
+        for idx, val in zip(indices, shuffled_vals):
+            chars[idx] = val
+        candidate = ''.join(chars)
+        if candidate != core:
+            return candidate + anchor
+
+    return peptide   # 多次仍未变（极少见）：原样返回，调用方应跳过

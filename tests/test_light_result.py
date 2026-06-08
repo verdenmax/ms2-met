@@ -193,3 +193,16 @@ def test_alphadia_unknown_mod_skipped_not_none():
             f"unknown mod was appended as None: {result}")
     # Carbamidomethyl should remain
     assert any(uid == 4 for _, uid in result)
+
+
+def test_diann_modify_positions_are_0based_residue_index():
+    """DIA-NN 残基修饰位置应为 0-based 残基下标（与 pFind/alphadia 及消费方一致）。
+
+    C(UniMod:4)PEPK：carbamidomethyl 在 C（残基 0）→ 应 (0,4)，而非 (1,4)。
+    物理依据：b1（=该 C）必须带 +57.02146；off-by-one 会把修饰挂到下一个残基。
+    """
+    from spectrum.light_result import parse_diann_peptide_modify
+    assert parse_diann_peptide_modify("C(UniMod:4)PEPK") == [(0, 4)]
+    assert parse_diann_peptide_modify("PEM(UniMod:35)K") == [(2, 35)]
+    # N 端修饰（前导括号）仍为位置 0
+    assert parse_diann_peptide_modify("(UniMod:1)PEPK") == [(0, 1)]

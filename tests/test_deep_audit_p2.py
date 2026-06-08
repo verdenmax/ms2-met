@@ -257,3 +257,23 @@ def test_spec_trainer_main_creates_logpath_parent():
     src = open(src_path).read()
     assert "os.makedirs(os.path.dirname(args.logpath)" in src, (
         "P2-8: spec_trainer main.py missing mkdir for logpath parent")
+
+
+def test_shuffle_negative_differs_from_positive():
+    """shuffle 负样本不应等于正样本，否则 feature_type=2 标签污染。
+
+    旧实现 n_shuffle 可能=1（空操作），短肽几乎必然产出原序列
+    （实测 len5 100%、len6 59% 与正样本相同）。
+    """
+    from spectrum.psm_info import sequence_controlled_shuffle
+    for pep in ["PEPTK", "PEPTIK", "PEPTIDEK", "ACDEFGHIK"]:
+        same = sum(sequence_controlled_shuffle(pep, seed=s) == pep
+                   for s in range(100))
+        assert same == 0, f"{pep}: {same}/100 个 shuffle 与正样本相同"
+
+
+def test_shuffle_unshufflable_returns_unchanged():
+    """无法打乱出不同序列时原样返回（core<2 或单一字符），调用方应跳过。"""
+    from spectrum.psm_info import sequence_controlled_shuffle
+    assert sequence_controlled_shuffle("AAK", seed=1) == "AAK"    # core "A"
+    assert sequence_controlled_shuffle("AAAK", seed=1) == "AAAK"  # core "AA" 同字符
