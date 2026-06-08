@@ -45,3 +45,36 @@ def _build_pdb(entries):
 @pytest.fixture
 def build_pdb():
     return _build_pdb
+
+
+def _build_rt(values):
+    return _struct.pack(f"<{len(values)}f", *values)
+
+
+_MS2_HEAD = _struct.Struct("<h")
+_MS2_ION = _struct.Struct("<bbf")
+
+
+def _build_ms2(records, chg_max=None, n_peptides=None):
+    """records: list of list of (pos, iontype, inten)。
+    若给 chg_max+n_peptides，则在末尾追加 n_peptides 行文本尾巴
+    （每行 '1\\t0\\t...\\tchg_max\\t0\\t\\n'），模拟真实文件。"""
+    out = b""
+    for ions in records:
+        out += _MS2_HEAD.pack(len(ions))
+        for pos, iontype, inten in ions:
+            out += _MS2_ION.pack(pos, iontype, inten)
+    if chg_max is not None and n_peptides is not None:
+        line = "".join(f"{c}\t0\t" for c in range(1, chg_max + 1)) + "\n"
+        out += (line * n_peptides).encode("latin-1")
+    return out
+
+
+@pytest.fixture
+def build_rt():
+    return _build_rt
+
+
+@pytest.fixture
+def build_ms2():
+    return _build_ms2
