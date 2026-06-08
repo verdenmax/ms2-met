@@ -21,6 +21,9 @@ def spectral_angle(a, b) -> float:
     if a.size < 2 or b.size < 2 or a.size != b.size:
         logger.debug("spectral_angle: degenerate sizes a=%s b=%s", a.size, b.size)
         return float("nan")
+    if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
+        logger.debug("spectral_angle: non-finite input -> NaN")
+        return float("nan")
     a = np.clip(a, 0.0, None)
     b = np.clip(b, 0.0, None)
     na = float(np.linalg.norm(a))
@@ -84,11 +87,25 @@ def select_topk_separable(fragments, k):
     """Return the up-to-k separable fragments with the highest predicted
     intensity. `fragments` is a list of dicts with keys 'pred_intensity'
     (float) and 'separable' (bool). Non-separable fragments give no
-    light/heavy contrast, so they never occupy a slot."""
-    separable = [f for f in fragments if f.get("separable")]
+    light/heavy contrast, so they never occupy a slot. Fragments with a
+    non-finite predicted intensity are dropped (a NaN would otherwise sort
+    to the front and crowd out valid fragments)."""
+    separable = []
+    n_bad = 0
+    for f in fragments:
+        if not f.get("separable"):
+            continue
+        pi = f.get("pred_intensity")
+        if pi is None or not np.isfinite(pi):
+            n_bad += 1
+            continue
+        separable.append(f)
+    if n_bad:
+        logger.debug("select_topk_separable: dropped %d separable frags with "
+                     "non-finite pred_intensity", n_bad)
     separable.sort(key=lambda f: f["pred_intensity"], reverse=True)
     chosen = separable[:k]
-    logger.debug("select_topk_separable: %d separable, returning %d (k=%d)",
+    logger.debug("select_topk_separable: %d valid separable, returning %d (k=%d)",
                  len(separable), len(chosen), k)
     return chosen
 
