@@ -13,13 +13,14 @@
 
 | type | 配对方式 | 批函数 | 负例构造 |
 |---|---|---|---|
-| 0 | 单文件，按 `shared1` 分组，每 PSM 自身推 heavy | `process_batch_single` → `single_pair_work` | label 来自 `psm._label_type`（上游打标） |
-| 1 | 双文件，重复样本两两组合 | `process_batch_pair` → `multi_batch_work` | 负例把 `psm2._rt += 10`（人为错位） |
-| 2 | 双文件，同上 | `process_batch_pair_shuffle` → `multi_batch_work` | 负例对序列做 `sequence_controlled_shuffle` |
+| 0 | 单文件，按 `shared1` 分组，每 PSM 自身推 heavy | `process_batch_single` → `single_pair_work` | label 来自 `psm._label_type`（上游打标，**现行：陷阱库 entrapment 负例**） |
+| 1 | 双文件，重复样本两两组合 | `process_batch_pair` → `multi_batch_work` | 负例把 `psm2._rt += 10`（人为错位，**已弃用**） |
+| 2 | 双文件，同上 | `process_batch_pair_shuffle` → `multi_batch_work` | 负例对序列做 `sequence_controlled_shuffle`（in-silico） |
 
+- **⚠️ DEPRECATED（type 1，RT+10 in-silico 负例）**：固定 +10 偏移到空 XIC 区域时，全零特征会成为 label proxy（模型学到“全零⇒负例”而非真实信号）。现行流程**直接使用陷阱库(entrapment)作为负例**（type 0，label 由 `entrapment_classifier` 上游打标）。RT+10 路径（`process_batch_pair` / `process_psm_pair_shared` / `PairFlow._process_group` 的负例半段）仅为兼容旧配置保留，不应用于新实验。
 - type 0：`_make_result_row_single` 把 `_label_type`（"positive"/"negative"）映射成 1/0；若为 `None` 直接抛 `ValueError`（避免 NaN 标签让 LightGBM 训练崩溃）。
 - type 2 的 shuffle 用 `random_seed`（缺省 42）+ `zlib.crc32(sequence)` 生成每条 PSM 唯一种子；用 crc32 而非内置 `hash()`，因为 `hash()` 受 `PYTHONHASHSEED` 随机化会破坏可复现性。
-- `PairFlow.multi_handle` / `_process_group` 是单进程内的等价路径（负例用 `copy.copy(psm)` 偏移 `_rt`，避免就地累加 +10/+20）。
+- `PairFlow.multi_handle` / `_process_group` 是单进程内的等价路径（负例用 `copy.copy(psm)` 偏移 `_rt`，避免就地累加 +10/+20；同属已弃用的 RT+10 路径）。
 
 ## DIA 缓存校验（`flow_utils.data_to_npz`）
 

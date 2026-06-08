@@ -14,17 +14,17 @@
 - `distribute(self) -> None` — 两阶段：① 进程池 `data_to_npz` 生成 DIA npz 缓存；② 按 `feature_type`(0/1/2) 生成任务、按 shared 路径分桶切 `BATCH_SIZE`，进程池跑批函数，`as_completed` 汇总写 `result_file`；崩溃写 `*.PARTIAL_INCOMPLETE`。
 - `multi_handle(self, psm1: PSMInfo, psm2: PSMInfo, label: int) -> dict` — 单进程路径：调 `multi_batch_work`，返回元数据+特征+`label` 行。
 - `pharse_data(self, tot_raw_path: str) -> tuple[str, DIAData]` — 经 `DataManager` 取 DIA 对象。
-- `_process_group(self, group) -> list[dict]` — 组内两两组合生成正例与（heavy `_rt+10` 的）负例。
+- `_process_group(self, group) -> list[dict]` — 组内两两组合生成正例与（heavy `_rt+10` 的）负例。**⚠️ DEPRECATED**：负例半段（RT+10 in-silico）已弃用，改用陷阱库 entrapment 负例（feature_type 0）。
 
 ## workflows/flow_utils.py
 
 - `get_filename_stem(filepath: str) -> str` — 去目录与扩展名。
 - `data_to_npz(raw_file_manager: DataManager, filepath: str, _workpath: str = ".") -> tuple[str, str]` — 校验/重建 `<name>.dia.npz` 缓存，返回 `(name, shared_path)`。
-- `process_psm_pair_shared(psm1_dict, psm2_dict, shared1_file, shared2_file, config, label) -> dict` — mmap 加载两 DIA，`label==0` 时 heavy `_rt+=10`，调 `multi_batch_work`，返回结果行。
+- `process_psm_pair_shared(psm1_dict, psm2_dict, shared1_file, shared2_file, config, label) -> dict` — mmap 加载两 DIA，`label==0` 时 heavy `_rt+=10`，调 `multi_batch_work`，返回结果行。**⚠️ DEPRECATED**：RT+10 in-silico 负例已弃用（见 L3）。
 - `process_psm_single(psm1_dict, shared1_file, config) -> dict` — mmap 加载单 DIA，调 `single_pair_work`，经 `_make_result_row_single` 返回行。
 - `_make_result_row_single(psm, features: dict) -> dict` — 把 `psm._label_type` 映射成 1/0；为 `None` 抛 `ValueError`。
 - `process_batch_single(shared_path: str, batch_psm_dicts: list, config) -> tuple[list, int]` — 批处理 feature_type 0；逐 PSM 捕获异常计数。
-- `process_batch_pair(shared1, shared2, batch_items: list, config) -> tuple[list, int]` — 批处理 feature_type 1（负例 heavy `_rt+=10`）。
+- `process_batch_pair(shared1, shared2, batch_items: list, config) -> tuple[list, int]` — 批处理 feature_type 1（负例 heavy `_rt+=10`）。**⚠️ DEPRECATED**：RT+10 in-silico 负例已弃用，改用陷阱库 entrapment 负例（feature_type 0）。
 - `process_batch_pair_shuffle(shared1, shared2, batch_items: list, config) -> tuple[list, int]` — 批处理 feature_type 2（负例 `sequence_controlled_shuffle`，种子 = `random_seed` + `crc32(seq)`）。
 
 > 批函数返回 `(results, n_errors)`；`results` 为成功行列表，`n_errors` 为被捕获并记录的逐 PSM 异常数。

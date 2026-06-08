@@ -140,6 +140,9 @@ class PairFlow:
             res = self.multi_handle(a, b, 1)
             ans.append(res)
 
+        # DEPRECATED: 以下 in-silico 负样本生成（重复样本两两组合 + heavy
+        # RT +10 人为错位）已弃用。现行流程直接使用陷阱库(entrapment)作为
+        # 负例并提取特征（单流程 feature_type 0）。此路径仅为兼容旧配置保留。
         # 在重复样本中，找到负样本
         for a, b in combinations(group, 2):
             # label 设置为 0,记为负样本

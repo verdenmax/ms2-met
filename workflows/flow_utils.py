@@ -81,6 +81,10 @@ def process_psm_pair_shared(
     psm2 = PSMInfo.from_dict(psm2_dict)
 
     if label == 0:
+        # DEPRECATED: in-silico 负样本（heavy RT +10 人为错位）已弃用。
+        # 现行流程改用陷阱库(entrapment)直接作为负例并提取特征
+        # （feature_type 0 单流程，label 来自 psm._label_type）。
+        # 该 RT+10 路径仅为兼容旧配置保留，不应用于新实验。
         psm2._rt += 10
 
     # TODO: 计算出信息
@@ -206,6 +210,9 @@ def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
             psm1 = PSMInfo.from_dict(psm1_dict)
             psm2 = PSMInfo.from_dict(psm2_dict)
             if label == 0:
+                # DEPRECATED: 同 process_psm_pair_shared，in-silico 负样本
+                # （heavy RT +10）已弃用，改用陷阱库(entrapment)负例
+                # （feature_type 0）。此路径仅为兼容旧配置保留。
                 psm2._rt += 10
 
             tot_features = multi_batch_work(
