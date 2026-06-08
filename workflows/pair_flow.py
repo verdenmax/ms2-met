@@ -153,6 +153,47 @@ class PairFlow:
 
         return ans
 
+    @staticmethod
+    def _resolve_raw_paths(config, raw_file_nums):
+        """读取 raw_path_1..N；缺失时给出清晰错误（而非裸 KeyError/NoSectionError）。"""
+        paths = []
+        for i in range(raw_file_nums):
+            key = f"{ConfigKeys.RAW_PATH}_{i + 1}"
+            if not config.has_option(ConfigKeys.INPUT, key):
+                raise ValueError(
+                    f"配置缺少 {key}（raw_num={raw_file_nums}，请检查 [input] 下 "
+                    f"raw_path_* 的数量是否与 raw_num 匹配）")
+            paths.append(config[ConfigKeys.INPUT][key])
+        return paths
+
+    @staticmethod
+    def _build_raw_tasks(psm_groups, name_to_shared, feature_type):
+        """构建任务列表；PSM 的 raw_title 不在配置的 raw 文件中时跳过并计数
+        （而非裸 KeyError 中断整个任务）。返回 (tasks, n_skipped)。"""
+        tasks = []
+        n_skipped = 0
+        if feature_type == 0:
+            for group in psm_groups.values():
+                for a in group:
+                    if a._raw_title not in name_to_shared:
+                        n_skipped += 1
+                        continue
+                    tasks.append((a.to_dict(), name_to_shared[a._raw_title]))
+        else:  # feature_type 1 或 2
+            for group in psm_groups.values():
+                for a, b in combinations(group, 2):
+                    if (a._raw_title not in name_to_shared
+                            or b._raw_title not in name_to_shared):
+                        n_skipped += 1
+                        continue
+                    shared_a = name_to_shared[a._raw_title]
+                    shared_b = name_to_shared[b._raw_title]
+                    tasks.append(
+                        (a.to_dict(), b.to_dict(), shared_a, shared_b, 1))
+                    tasks.append(
+                        (a.to_dict(), b.to_dict(), shared_a, shared_b, 0))
+        return tasks, n_skipped
+
     def distribute(self):
         # 处理每一个任务
         # 对于每一个文件，需要传递给他一个质谱数据、一个输入数据、config
@@ -167,12 +208,8 @@ class PairFlow:
 
             # 记录所有 shared 文件对应信息，就是 name 对应的 shared_path
             shared_files = []
-            for i in range(raw_file_nums):
-                tot_raw_path_key = f"{ConfigKeys.RAW_PATH}_{i + 1}"
-
-                # 读取配置文件中的 RAW PATH
-                tot_raw_path = self._config[ConfigKeys.INPUT][tot_raw_path_key]
-
+            raw_paths = self._resolve_raw_paths(self._config, raw_file_nums)
+            for tot_raw_path in raw_paths:
                 # 分发任务，去分配不同的进程进行读取 mz 数据
                 futures.append(executor.submit(
                     data_to_npz,
@@ -199,35 +236,13 @@ class PairFlow:
         feature_type = self._config.getint(
             ConfigKeys.GENERAL, ConfigKeys.FEATURE_TYPE, fallback=0)
 
-        # 不同的类型
-        if feature_type == 0:
-            # 真实的轻重标数据
-
-            for group in psm_groups.values():
-                for a in group:
-                    tasks.append(
-                        (a.to_dict(),
-                         name_to_shared[a._raw_title]))
-
-        elif feature_type == 1 or feature_type == 2:
-            # 重复样本之间直接进行构造数据，直接使用 RT 偏移来构造负例
-            # 或者使用shuffle 进行生成负例
-            # 两两之间进行处理任务
-            for group in psm_groups.values():
-                for a, b in combinations(group, 2):
-                    # 添加正样本
-                    tasks.append(
-                        (a.to_dict(), b.to_dict(),
-                         name_to_shared[a._raw_title],
-                         name_to_shared[b._raw_title],
-                         1))
-
-                    # 添加负样本
-                    tasks.append(
-                        (a.to_dict(), b.to_dict(),
-                         name_to_shared[a._raw_title],
-                         name_to_shared[b._raw_title],
-                         0))
+        # raw_title 不在配置 raw 文件中的 PSM 跳过并计数（而非裸 KeyError 中断）
+        tasks, n_skipped_unknown_raw = self._build_raw_tasks(
+            psm_groups, name_to_shared, feature_type)
+        if n_skipped_unknown_raw:
+            logging.warning(
+                f"跳过 {n_skipped_unknown_raw} 个 PSM/对：raw_title 不在配置的 "
+                f"raw 文件中（检查 [input] raw_path_* 与结果中的 Run/RawName 一致性）")
 
         if feature_type == 0:
             # 单文件：按 shared1 分组
