@@ -12,7 +12,7 @@
 | `SpecLib.open_dir(library_dir, *, fasta_path, mod_path)` | → `SpecLib` | 目录内三文件名固定 |
 | `SpecLib.num_peptides` | property → `int` | M（= RT 数）|
 | `SpecLib.chg_max` | 属性 | 从尾巴解析（约束 [1,6]）|
-| `SpecLib.iter_peptides()` | → 生成器[`LibPeptide`] | 锁步逐肽段，已填 `pred_rt`/`pred_ms2` |
+| `SpecLib.iter_peptides(decode_ms2="objects")` | → 生成器[`LibPeptide`] | 锁步逐肽段，已填 `pred_rt`/`pred_ms2`；`decode_ms2`: objects/arrays/none |
 | `SpecLib.validate_masses(element_path, aa_path, tol=0.01, limit=None)` | → `MassValidationReport` | 流式质量交叉校验 |
 | `MassValidationReport` | dataclass | `total/passed/failed/max_abs_error/failures` |
 

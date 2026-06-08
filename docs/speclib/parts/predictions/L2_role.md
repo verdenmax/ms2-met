@@ -17,7 +17,7 @@
 
 ## 依赖
 
-- 依赖：标准库 `struct`/`array`/`os`。
+- 依赖：标准库 `struct`/`array`/`mmap`/`os` + `numpy`（MS2 批量解码）。
 - 被依赖：`speclib`（锁步流式用 `read_rt_pred`+`iter_ms2_records`+`read_chg_max_from_trailer`）。
 
 ## 输入 / 输出

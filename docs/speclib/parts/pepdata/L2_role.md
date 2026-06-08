@@ -15,7 +15,7 @@
 
 ## 依赖
 
-- 依赖：`config_io`（`Protein`/`ModEntry`）、标准库 `struct`。
+- 依赖：`config_io`（`Protein`/`ModEntry`）、标准库 `struct`/`mmap`/`os`。
 - 被依赖：`speclib`（`iter_peptides` / `validate_masses` 流式消费 `iter_pepdata`）。
 
 ## 输入 / 输出

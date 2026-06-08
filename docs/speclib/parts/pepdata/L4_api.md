@@ -1,10 +1,10 @@
 # pepdata — API 参考（`spectrum/speclib/pepdata.py`）
 
-## `ModSite` (dataclass)
+## `ModSite` (dataclass, slots)
 
 字段：`pos: int`、`mod_id: int`、`name: str = ""`、`mono_mass: float = 0.0`。
 
-## `LibPeptide` (dataclass)
+## `LibPeptide` (dataclass, slots)
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -16,7 +16,7 @@
 | `pro_nc` / `enz` / `miss` | int | 头中的 N/C 端属性 / 酶切特异性 / 漏切 |
 | `charge_mask` | int | pdb 读取恒 0 |
 | `pred_rt` | float \| None | 预测 RT（speclib 锁步填充）|
-| `pred_ms2` | dict[int, list[FragIon]] | 电荷→离子（speclib 锁步填充）|
+| `pred_ms2` | dict[int, list[FragIon] \| np.ndarray] | 电荷→离子（speclib 锁步填充；`decode_ms2="arrays"` 时为 numpy 结构化数组，`"none"` 时为 `{}`）|
 
 ## `iter_pepdata(path, proteins, mods_by_id, validate_bytes=True)`
 

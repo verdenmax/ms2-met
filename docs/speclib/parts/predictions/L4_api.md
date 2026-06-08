@@ -1,6 +1,6 @@
 # predictions — API 参考（`spectrum/speclib/predictions.py`）
 
-## `FragIon` (dataclass)
+## `FragIon` (dataclass, slots)
 
 字段：`ion_type: str`（'b'|'y'）、`frag_pos: int`（0-indexed 切割位）、`frag_charge: int`（1..6）、`intensity: float`。
 
@@ -37,10 +37,16 @@
 
 ```python
 from spectrum.speclib.predictions import (
-    read_rt_pred, iter_ms2_records, read_chg_max_from_trailer)
+    read_rt_pred, iter_ms2_arrays, iter_ms2_records, read_chg_max_from_trailer)
 
 rt = read_rt_pred("pepdata.rt.predb")           # array('f')
 chg_max = read_chg_max_from_trailer("pepdata.ms2.predb")   # 4
+
+# 快路径（numpy 数组）
+for arr in iter_ms2_arrays("pepdata.ms2.predb"):
+    ...  # arr["pos"], arr["iontype"], arr["inten"]
+
+# 便捷对象路径
 for ions in iter_ms2_records("pepdata.ms2.predb"):
     ...  # ions: list[FragIon]
 ```
