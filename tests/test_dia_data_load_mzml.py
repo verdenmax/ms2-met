@@ -702,3 +702,30 @@ def test_sparse_scan_ids_npz_save_load_roundtrip(tmp_path, monkeypatch):
     assert len(d2._scan_id_to_index) == len(d._scan_id_to_index)
     assert int(d2._scan_id_to_index[42]) == 0
     assert int(d2._scan_id_to_index[999]) == 1
+
+
+def test_process_single_spectrum_without_spectrum_title():
+    """无 'spectrum title' 的 mzML（如 ProteoWizard 转换）不应崩溃。
+
+    回归：dia_data.py 曾 spectrum.get('spectrum title', None).split() →
+    None.split() AttributeError，会中断整文件加载。"""
+    d = DIAData.__new__(DIAData)
+    d.has_ms1 = False
+    d.has_mobility = False
+    d._centroid_enabled = False
+    d.precursor_scan_ids = np.zeros(1, dtype=np.int64)
+    d.rt_values = np.zeros(1, dtype=np.float32)
+    d._peak_start_idx_list = np.zeros(1, dtype=np.int64)
+    d._peak_stop_idx_list = np.zeros(1, dtype=np.int64)
+    d._precursor_lower_mz = np.zeros(1, dtype=np.float32)
+    d._precursor_upper_mz = np.zeros(1, dtype=np.float32)
+    d._scan_id_to_index = np.zeros(2, dtype=np.int64)
+    spectrum = {
+        'id': 'controllerType=0 controllerNumber=1 scan=1',
+        'm/z array': np.array([100.0, 200.0], dtype=np.float32),
+        'intensity array': np.array([10.0, 20.0], dtype=np.float32),
+        'ms level': 1,
+        # 故意没有 'spectrum title'
+    }
+    mz, inten = d._process_single_spectrum(spectrum, 0, 0)
+    assert len(mz) == 2 and len(inten) == 2

@@ -58,7 +58,7 @@ class LightResultManager(BaseManager):
             light_result._load_from_pfind_input(
                 light_result_path, qvalue_threshold=qvalue_threshold)
         else:
-            logging.error(
-                f"错误搜索引擎类型: {search_engine_type}（支持 0/1/2/3）")
+            raise ValueError(
+                f"非法 search_engine_type: {search_engine_type}（仅支持 0/1/2/3）")
 
         return light_result

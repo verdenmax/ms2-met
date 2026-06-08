@@ -403,9 +403,6 @@ class DIAData:
         # 获取质谱的scan id，不需要使用 spectrum_idx
         scan_id = self._extract_scan_number(spectrum['id'])
 
-        # 获取spec title
-        spec_title = spectrum.get('spectrum title', None).split()[0]
-
         # 获取 MS 级别
         ms_level = spectrum.get('ms level', 1)
 
