@@ -101,3 +101,25 @@ def test_zero_variant_entry_consumed_and_skipped(tmp_path, proteins, mods_by_id)
     peps = read_pepdata(str(p), proteins, mods_by_id)
     assert len(peps) == 1
     assert peps[0].sequence == "PEPTIDE"
+
+
+def test_truncated_record_raises(tmp_path, proteins, mods_by_id):
+    import struct
+    # 头声称 1 个变体，但缺少变体字节 → 应 struct.error 大声失败，而非静默产出垃圾
+    data = struct.pack("<IIbbbbIQ", 0, 0, 8, 0, 0, 0, 1, 9)  # 无 body
+    p = tmp_path / "pepdata.pdb"
+    p.write_bytes(data)
+    with pytest.raises(struct.error):
+        read_pepdata(str(p), proteins, mods_by_id)
+
+
+def test_early_break_skips_byte_check(tmp_path, proteins, mods_by_id):
+    import struct
+    # 单条目 mod_pep_bytes 故意错误；只取第一个肽段(早退)不应触发校验
+    data = (struct.pack("<IIbbbbIQ", 0, 0, 8, 0, 0, 0, 1, 999)
+            + struct.pack("<db", 900.0, 0))
+    p = tmp_path / "pepdata.pdb"
+    p.write_bytes(data)
+    gen = iter_pepdata(str(p), proteins, mods_by_id)
+    first = next(gen)                       # 早退：不继续消费
+    assert first.sequence == "PEPTIDEK"     # 无异常抛出
