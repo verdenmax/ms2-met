@@ -947,3 +947,15 @@ git commit -m "docs: L1-L4 entries for Phase 1 pred-intensity feature foundation
 ## Execution Handoff
 
 (Filled by the writing-plans skill at hand-off time.)
+
+---
+
+## Execution Notes (deviations found during implementation)
+
+- **Task 1 `spectral_angle`:** the perfect-match case landed at `0.99999999`
+  (arccos amplifies sub-1e-12 rounding near cos=1), failing a `<1e-9`
+  assertion. Fix: after the `min/max` clamp, snap `cos` to exactly ±1.0 when
+  within `1e-12`. No change to orthogonal/degenerate semantics.
+- **Task 6 `tests/test_pred_store.py`:** predicted intensities round-trip
+  through float32 in the binary (`0.3 → 0.30000001…`), so exact `== 0.3`
+  fails. Fix: compare intensities with `pytest.approx(...)` (add `import pytest`).
