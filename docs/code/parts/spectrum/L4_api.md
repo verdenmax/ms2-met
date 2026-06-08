@@ -61,15 +61,16 @@ arr, total = dia.xic_ms2_peaks_extract(rt=33.5, xic_cycle_window=5,
 - `get_key_with_raw() -> (..., raw_title)` — 含 raw 的去重键。
 - `valid() -> bool` — 含 `X` 即 False。
 - `get_modify_mass(end_idx) -> float` — `[0, end_idx]` 内修饰单同位素质量之和。
-- `get_SILAC_precursor_mz() -> float` / `get_C_N_HEAVY_precursor_mz(heavy_type) -> float` — 重标前体 m/z。
-- `get_fragment_ions(heavy_type) -> (b_ans, y_ans)` — 元素为 `("b"/"y", 序号, light_mass, heavy_mass)`。
+- `_assert_heavy_supported(heavy_type) -> None` — 守卫：`heavy_type∈{CHEAVY,NHEAVY}` 且 `_modify` 非空时抛 `NotImplementedError`（修饰原子重标未实现，避免静默错误质量）。
+- `get_SILAC_precursor_mz() -> float` / `get_C_N_HEAVY_precursor_mz(heavy_type) -> float` — 重标前体 m/z（后者带修饰 + CHEAVY/NHEAVY 会抛 `NotImplementedError`）。
+- `get_fragment_ions(heavy_type) -> (b_ans, y_ans)` — 元素为 `("b"/"y", 序号, light_mass, heavy_mass)`（带修饰 + CHEAVY/NHEAVY 会抛 `NotImplementedError`）。
 - `get_heavy_info(heavy_type) -> (heavy_precursor_mz, b_ions + y_ions)`。
 
 ### `get_SILAC_increase_mass(sequence) -> float`
 K +8.014204、R +10.008275。
 
 ### `get_heavy_increase_mass(sequence, heavy_type) -> float`
-SILAC 委托上者；CHEAVY=`C数×1.003355`；NHEAVY=`N数×0.997035`。
+SILAC 委托上者；CHEAVY=`C数×1.003355`；NHEAVY=`N数×0.997035`。**仅统计序列原子，不含修饰原子**——带修饰肽段的 CHEAVY/NHEAVY 已在调用方 (`_assert_heavy_supported`) 拦截抛错。
 
 ### `get_theoretical_isotope_ratios(sequence) -> list`
 返回 `[1.0, λ, λ²/2]`（Poisson 近似 M0/M1/M2）。

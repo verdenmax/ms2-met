@@ -140,13 +140,26 @@ class PSMInfo:
 
         return heavy_mass / self._charge
 
+    def _assert_heavy_supported(self, heavy_type: HeavyType) -> None:
+        """CHEAVY/NHEAVY 全代谢标记下，修饰基团里的 C/N 原子也应被 13C/15N
+        替换，但当前未实现。带修饰肽段走该路径会得到静默错误的重标质量，
+        因此显式抛错。SILAC 只标记 K/R，不涉及修饰，故不受影响。"""
+        if heavy_type in (HeavyType.CHEAVY, HeavyType.NHEAVY) and self._modify:
+            raise NotImplementedError(
+                "CHEAVY/NHEAVY 重标尚未支持带修饰的肽段："
+                "修饰基团中的 C/N 原子未做 13C/15N 重标 (TODO)。"
+                f"sequence={self._sequence!r}, modify={self._modify!r}")
+
     def get_C_N_HEAVY_precursor_mz(self, heavy_type: HeavyType):
         """
         根据轻序列计算出重标重量，根据C和N两种不同的
         """
 
-        # NOTE: 注意这里还要实现修饰的重标
-        # TODO: 实现修饰的重标，这里重点是是否需要重标
+        # TODO: 实现修饰原子的重标。全 13C/15N 代谢标记(CHEAVY/NHEAVY)下，
+        # 修饰基团里的 C/N 原子同样应被 13C/15N 替换，但 get_heavy_increase_mass
+        # 只统计了序列骨架/侧链原子，未覆盖修饰原子。带修饰肽段在此路径下会得到
+        # 静默错误的重标质量，故先抛 NotImplementedError 让其显式失败。
+        self._assert_heavy_supported(heavy_type)
         heavy_mass = self._precursor_mz * self._charge
 
         heavy_mass += get_heavy_increase_mass(self._sequence, heavy_type)
@@ -168,6 +181,9 @@ class PSMInfo:
     def get_fragment_ions(self, heavy_type: HeavyType):
         """返回两个列表：b_ions, y_ions"""
 
+        # TODO: 同 get_C_N_HEAVY_precursor_mz —— 修饰原子在 CHEAVY/NHEAVY
+        # 下未被重标，带修饰肽段会得到静默错误的碎片质量，先显式失败。
+        self._assert_heavy_supported(heavy_type)
         b_ions = []
         y_ions = []
 
@@ -176,8 +192,6 @@ class PSMInfo:
         all_modify_mass = self.get_modify_mass(n)
         # 遍历所有长度，得到所有b,y离子
         for i in range(1, n):
-            # NOTE: 这里还没有添加修饰
-            # TODO: 修饰同上
             # 先获得b离子
             b_mass = mass.fast_mass(self._sequence[0:i], ion_type='b')
             b_mass += self.get_modify_mass(i-1)
