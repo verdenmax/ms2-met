@@ -81,6 +81,14 @@ class SpecLib:
         if i + 1 != n_rt:
             raise ValueError(
                 f"peptide count {i + 1} != RT count {n_rt}")
+        # 对称校验：MS2 不应多于 chg_max×M（过供 = 与 pdb 错位）
+        try:
+            next(ms2)
+        except StopIteration:
+            pass
+        else:
+            raise ValueError(
+                "ms2 has more records than chg_max * peptides")
 
     def validate_masses(self, element_path: str, aa_path: str,
                         tol: float = 0.01, limit: int | None = None
