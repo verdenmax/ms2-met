@@ -123,14 +123,20 @@ class SpecLib:
         em = parse_element_masses(element_path)
         res = parse_residue_masses(aa_path, em)
         water = water_mass(em)
+        # ord->残基质量查表，避免逐残基 dict.get 哈希（mass 校验是热点）
+        res_by_ord = [0.0] * 256
+        for a, m in res.items():
+            if len(a) == 1:
+                res_by_ord[ord(a)] = m
         failures = []
         max_err = 0.0
         passed = total = 0
         for pep in iter_pepdata(self.pepdata_path, self.proteins,
                                self.mods_by_id):
-            computed = (water
-                        + sum(res.get(a, 0.0) for a in pep.sequence)
-                        + sum(m.mono_mass for m in pep.mods))
+            seq_sum = 0.0
+            for a in pep.sequence:
+                seq_sum += res_by_ord[ord(a)]
+            computed = water + seq_sum + sum(m.mono_mass for m in pep.mods)
             err = abs(computed - pep.neutral_mass)
             if err > max_err:
                 max_err = err
