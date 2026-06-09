@@ -81,3 +81,13 @@
 - `build_pairs_from_maps(pred_map, obs_map) -> (pred_vec, obs_vec)` — 在共同碎片键上对齐预测/实测强度。
 - `_observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict` — 取 PSM 各 light b/y 碎片 XIC apex；b/y 序号 → `frag_pos = ion_num-1`，单电荷。
 - `main()` — CLI：`--library-dir/--fasta/--mod/--psm-file/--raw/--metric/--min-sim/...`；记 coverage、stats、`GATE PASS/FAIL`，exit 0(过)/2(不过)。
+
+## workflows/pred_integrate.py（谱库 I1 特征接入，Phase 2a）
+
+- `I1_KEYS` — I1 固定输出列名元组（LightGBM schema 稳定）。
+- `compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict` — 纯函数：对已可分的逐碎片记录（`ion_type`/`ion_num`/`light_apex`/`heavy_apex`）配上预测强度，取预测最强 top-K，**按 ion-type 分开**算谱角（`spec_pattern_SA_b`/`_SA_y`/`_SA`=两者均值）+ 预测加权 `spec_pattern_LH_consistency` + `n_fragments_in_F`；无覆盖/退化 → 固定列 NaN（DEBUG 日志）。
+
+接入参数变更：
+- `single_pair_work(psm, dia_data, config, pred_frags=None, speclib_enabled=False)` — 循环内收集**可分**碎片记录，`return` 前合并 I1 + `has_lib_pred`/`psm_is_split_window`/`heavy_out_of_range`（仅当 `speclib_enabled`）。
+- `PairFlow._build_pred_store() -> PredStore|None` — `[speclib] speclib_dir` 配了才一遍流式扫库（记 hit/miss）。
+- `PairFlow._build_raw_tasks(..., pred_store=None)` — `feature_type=0` 时给每个任务 dict 附 `pred_frags`（命中=预测碎片 dict，未命中=None；speclib 关闭则不附）。

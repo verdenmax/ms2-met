@@ -74,3 +74,13 @@
 - **I1**（`i1_pattern_features`）：以 L 的预测相对强度构造“预测重标谱”，与实测重标比（谱角/Spearman），并出预测加权 corr(obs_L,obs_H)。直击情形 B（干扰肽段复现不了 L 的预测强度模式）。
 - **lookup**（`build_pred_store`）：一遍流式扫库、只留被鉴定肽段；`(seq,mods,charge)` 与碎片 `(ion_type,frag_pos,frag_charge)` 经规范化键对齐；覆盖率 hit/miss 记日志。
 - **前置 sanity gate**（`tools/speclib_sanity.py`）：在高置信轻标 PSM 上比“预测 vs 实测轻标”相似度分布；中位过阈才放行 Phase 2。b/y↔frag_pos 对齐约定为 `frag_pos = ion_num-1`，由该 gate 验证。
+
+## 谱库 I1 特征接入 feature_type=0（Phase 2a）
+
+把 Phase 1 地基接入主流程的**单流程路径**（设计见 `docs/specs/2026-06-08-...-design.md` v1.2 §4.1–§4.3/§7）：
+
+- `PairFlow.distribute()` 启动时 `_build_pred_store()` 一遍流式扫库建 `PredStore`（仅当 `[speclib] speclib_dir` 配置；记覆盖率 hit/miss）。`_build_raw_tasks` 给 `feature_type=0` 的每个任务 dict 附该 PSM 的 `pred_frags`（小字典，随任务 pickle 到 worker；**不**把整个 PredStore 传进 worker）。
+- `single_pair_work` 在既有碎片循环里收集**可分**碎片记录（heavy 不在 raw、或同窗且无 SILAC 位移的碎片在更早处已 `continue`，故记录的天然是可分碎片；空 heavy 的可分碎片也记 `heavy_apex=0`）。`return` 前经 `compute_speclib_i1` 产出 `spec_pattern_SA_b/_y/_SA/_LH_consistency` + `has_lib_pred` + `psm_is_split_window`（`check_in_same_ms2` 取反）+ `heavy_out_of_range`（`check_in_raw` 取反）。
+- **增量旁路**：`speclib_dir` 空 → 不建 PredStore → 任务 dict 无 `pred_frags` 键 → `single_pair_work` 不出任何新列（schema 与现状一致）。
+- 度量**按 ion-type 分开**（§7 实测：预测 b:y 整体比例标定有偏，混算会拖低）。
+- Phase 2b：I2/I3/J2/J5 + `feature_type=1/2` 路径 + 提速开关。

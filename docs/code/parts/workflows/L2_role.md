@@ -20,6 +20,7 @@ SILAC 轻重标 MS2 校验工具的**编排与特征提取层**：从配置/搜�
 | `Q1aAccumulator` | `class(split_window, ...)` | 逐 PSM 累计 b/y 碎片配对召回，输出 11 个 q1a 特征 |
 | `pred_features.*`（谱库预测强度，Phase 1） | 纯函数 | `spectral_angle`/`spearman_sim`/`select_topk_separable`/`i1_pattern_features`（轻重关系特征底座） |
 | `pred_store.*`（谱库预测强度，Phase 1） | 肽段→预测 lookup | `normalize_key`/`frag_key`/`build_pred_store` → `PredStore`（一遍流式、O(命中)） |
+| `pred_integrate.*`（谱库 I1，Phase 2a） | 接入 feature_type=0 | `compute_speclib_i1`（按 ion-type 谱角）→ `single_pair_work` 出 `spec_pattern_*`/`has_lib_pred`/窗口 meta |
 
 ## 依赖
 
