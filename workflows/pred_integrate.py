@@ -149,3 +149,51 @@ def compute_speclib_i2_i3_j2(frag_records, pred_frags, top_k, seq_len,
             out["unexpected_heavy_intensity_ratio"] = (
                 sum(r["heavy_apex"] for r in w_present) / (heavy_F + 1e-9))
     return out
+
+
+ADAPTIVE_KEYS = ("global_lh_ratio", "pred_coverage_adaptive")
+
+
+def _nan_adaptive() -> dict:
+    return {k: float("nan") for k in ADAPTIVE_KEYS}
+
+
+def compute_speclib_adaptive(frag_records, pred_frags, top_k, seq_len,
+                             alpha) -> dict:
+    """J5 adaptive coverage (spec v1.2 4.7, corrected formula): a
+    predicted-strong fragment is 'present' iff its heavy apex meets the
+    per-fragment expectation `alpha * light_apex * global_lh_ratio`, where
+    global_lh_ratio = median(H/L) over F. Returns fixed ADAPTIVE_KEYS; NaN
+    where undefined. (Observed light_apex already carries the per-fragment
+    intensity, so the spec's extra pred_rel_i factor is dropped.)
+    """
+    if not pred_frags or not frag_records:
+        logger.debug("adaptive: no pred_frags or no records -> NaN")
+        return _nan_adaptive()
+
+    cands = []
+    for r in frag_records:
+        fp = frag_pos_for_ion(r["ion_type"], r["ion_num"], seq_len)
+        pi = pred_frags.get(frag_key(r["ion_type"], fp, 1))
+        if pi is not None and np.isfinite(pi):
+            cands.append({**r, "pred": float(pi)})
+    if not cands:
+        return _nan_adaptive()
+
+    cands.sort(key=lambda r: r["pred"], reverse=True)
+    F = cands[:top_k]
+
+    out = _nan_adaptive()
+    ratios = [r["heavy_apex"] / r["light_apex"]
+              for r in F if r["light_apex"] > 0 and r["heavy_apex"] > 0]
+    if not ratios:
+        return out
+    glh = float(np.median(ratios))
+    out["global_lh_ratio"] = glh
+
+    valid = [r for r in F if r["light_apex"] > 0]
+    if valid:
+        present = [r for r in valid
+                   if r["heavy_apex"] >= alpha * r["light_apex"] * glh]
+        out["pred_coverage_adaptive"] = len(present) / len(valid)
+    return out
