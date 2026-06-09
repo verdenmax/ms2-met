@@ -147,6 +147,7 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 
 - 分母 = `|F|`；分子 = `F` 中重标信号「存在」（用 §4.7 的 J5 判据）的碎片数。
 - **特征**：`pred_coverage`（命中/|F|）、`pred_coverage_wpred`（按预测强度加权命中）。
+- **双端在场（轻重都有信号）**：`n_both_present` = `F` 中 `light_apex > floor` **且** `heavy_apex > floor` 的碎片**数目**；`pred_both_present_fraction` = 该数目 / `|F|`。与 `pred_coverage`（只看重标在场）互补——真肽两条链都应出现，trap 常只剩轻、重缺。无库覆盖时为 NaN（与「有库但 0 个双端在场」的可疑情形区分）。
 - **攻击**：身份错的肽段更难让「该强的碎片」在重标同时出现。
 
 ### 4.6 J2 · 意外峰污染（I3 的反面）
@@ -186,6 +187,7 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 | `spec_pattern_LH_consistency` | I1 | 预测加权 corr(obs_L, obs_H) |
 | `hl_ratio_cv_weighted` / `hl_ratio_mad` | I2 | H/L 比离散度 |
 | `pred_coverage` / `pred_coverage_wpred` | I3 | 预测覆盖度 |
+| `n_both_present` / `pred_both_present_fraction` | I3 | top-K 中轻重**都有**信号的碎片数 / 占比 |
 | `unexpected_heavy_fraction` / `unexpected_heavy_intensity_ratio` | J2 | 意外峰污染 |
 | `global_lh_ratio` / `pred_coverage_adaptive` | J5（Phase 2c） | 全局 H/L 比中位数 / 自适应覆盖度（`heavy≥α·light·glh`） |
 | （可选）`*_topk` / `*_wpred` 版既有聚合特征 | 4.2 | 在 F 上/预测加权重算的既有特征 |

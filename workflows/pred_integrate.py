@@ -88,6 +88,8 @@ I2I3J2_KEYS = (
     "pred_coverage_wpred",
     "unexpected_heavy_fraction",
     "unexpected_heavy_intensity_ratio",
+    "pred_both_present_fraction",
+    "n_both_present",
 )
 
 
@@ -97,9 +99,12 @@ def _nan_i2i3j2() -> dict:
 
 def compute_speclib_i2_i3_j2(frag_records, pred_frags, top_k, seq_len,
                              presence_floor) -> dict:
-    """I2 (H/L ratio consistency), I3 (predicted coverage), J2 (unexpected
-    heavy on library-unpredicted fragments). Same per-fragment records as I1.
-    See spec v1.2 4.4/4.5/4.6. Returns fixed I2I3J2_KEYS; NaN where undefined.
+    """I2 (H/L ratio consistency), I3 (predicted coverage + both-channel
+    presence), J2 (unexpected heavy on library-unpredicted fragments). Same
+    per-fragment records as I1. See spec v1.2 4.4/4.5/4.6. Returns fixed
+    I2I3J2_KEYS; NaN where undefined. `n_both_present` counts top-K fragments
+    whose light AND heavy apex both exceed `presence_floor` (NaN when there is
+    no library coverage, distinguishing 'unknown' from a genuine 0).
     """
     if not pred_frags or not frag_records:
         logger.debug("i2/i3/j2: no pred_frags or no records -> NaN")
@@ -141,6 +146,12 @@ def compute_speclib_i2_i3_j2(frag_records, pred_frags, top_k, seq_len,
         if sum_pred > 0:
             out["pred_coverage_wpred"] = (
                 sum(r["pred"] for r in present) / sum_pred)
+
+        both = [r for r in F
+                if r["light_apex"] > presence_floor
+                and r["heavy_apex"] > presence_floor]
+        out["n_both_present"] = float(len(both))
+        out["pred_both_present_fraction"] = len(both) / len(F)
 
         if W:
             w_present = [r for r in W if r["heavy_apex"] > presence_floor]

@@ -257,3 +257,43 @@ def test_nan_predicted_intensity_routes_fragment_to_W():
     assert out["unexpected_heavy_fraction"] == pytest.approx(1.0)
     # ratio = 50 / 100 (heavy_F = 100 from the single F fragment)
     assert out["unexpected_heavy_intensity_ratio"] == pytest.approx(0.5)
+
+
+# --------------------------------------------------------------------------
+# n_both_present / pred_both_present_fraction: top-K fragments where BOTH
+# light AND heavy carry signal (strict '>' floor on each channel).
+# --------------------------------------------------------------------------
+def test_both_present_floor_strict_on_each_channel():
+    floor = 100.0
+    # j=1: light == floor (absent), heavy present -> not both
+    # j=2: light present, heavy == floor (absent) -> not both
+    # j=3: both > floor -> both present
+    recs, pred = [], {}
+    for j, lv, hv in zip((1, 2, 3), (100.0, 200.0, 200.0),
+                         (200.0, 100.0, 300.0)):
+        recs.append(_rec("y", j, lv, hv))
+        pred[_key("y", j)] = 1.0
+    out = compute_speclib_i2_i3_j2(recs, pred, 6, SEQ_LEN, floor)
+    assert out["n_both_present"] == 1
+    assert out["pred_both_present_fraction"] == pytest.approx(1.0 / 3.0)
+
+
+def test_both_present_respects_top_k_cutoff():
+    floor = 100.0
+    # 3 predicted, all both-present, but top_k=2 keeps only the 2 strongest;
+    # the excluded weak fragment must NOT be counted.
+    recs, pred = [], {}
+    for j, pv in zip((1, 2, 3), (9.0, 8.0, 1.0)):
+        recs.append(_rec("y", j, 500.0, 500.0))
+        pred[_key("y", j)] = pv
+    out = compute_speclib_i2_i3_j2(recs, pred, 2, SEQ_LEN, floor)
+    assert out["n_both_present"] == 2
+    assert out["pred_both_present_fraction"] == pytest.approx(1.0)
+
+
+def test_both_present_nan_when_no_library_coverage():
+    # pred is empty -> no F -> distinguishes "unknown" (NaN) from "0 present".
+    out = compute_speclib_i2_i3_j2([_rec("y", 1, 500.0, 500.0)], {}, 6,
+                                   SEQ_LEN, 100.0)
+    assert math.isnan(out["pred_both_present_fraction"])
+    assert math.isnan(out["n_both_present"])

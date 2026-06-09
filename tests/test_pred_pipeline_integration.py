@@ -117,7 +117,8 @@ def test_single_pair_work_emits_i2i3j2_columns():
         pred_frags={_fk2("b", 0, 1): 1.0}, speclib_enabled=True)
     for col in ("pred_hl_ratio_cv", "pred_hl_ratio_mad", "pred_coverage",
                 "pred_coverage_wpred", "unexpected_heavy_fraction",
-                "unexpected_heavy_intensity_ratio"):
+                "unexpected_heavy_intensity_ratio",
+                "pred_both_present_fraction", "n_both_present"):
         assert col in feats
 
 

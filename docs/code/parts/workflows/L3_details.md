@@ -90,7 +90,7 @@
 复用 Phase 2a 收集的 `speclib_frag_records`（无需新增 XIC），`single_pair_work` 在 I1 之后再合并 `compute_speclib_i2_i3_j2`：
 - **划分**：`cands`=可分且库有预测的碎片，`F`=cands 按预测强度 top-K；`W`=可分但库**未**预测的碎片；`present` = `heavy_apex > pred_presence_floor`。
 - **I2**（H/L 比一致性）`pred_hl_ratio_cv`/`pred_hl_ratio_mad`：F 上 log10(H/L) 的预测加权 std 与 MAD（与既有 `*_log_lh_ratio_*` 区分：后者在全碎片，前者在预测可靠的 F）。
-- **I3**（预测覆盖度）`pred_coverage`/`pred_coverage_wpred`：F 中重标「存在」的（加权）占比。
+- **I3**（预测覆盖度）`pred_coverage`/`pred_coverage_wpred`：F 中重标「存在」的（加权）占比；另出 `n_both_present`/`pred_both_present_fraction`：F 中轻重**都有**信号（两端 apex 均 > floor）的碎片数与占比，捕捉「真肽两条链都该在」。
 - **J2**（意外峰污染）`unexpected_heavy_fraction`/`unexpected_heavy_intensity_ratio`：库未预测的碎片上冒出重标信号的占比/强度比——情形 B 的反面证据。
 - 仍是增量旁路（speclib 关闭则不出列）；Phase 2c：J5 自适应判据、`feature_type=1/2`、提速。
 

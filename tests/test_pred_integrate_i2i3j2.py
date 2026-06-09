@@ -66,3 +66,20 @@ def test_j2_nan_when_no_unpredicted_fragments():
         pred[frag_key("y", frag_pos_for_ion("y", j, seq_len), 1)] = 1.0
     out = compute_speclib_i2_i3_j2(recs, pred, 6, seq_len, 0.0)
     assert math.isnan(out["unexpected_heavy_fraction"])
+
+
+def test_both_present_counts_light_and_heavy_signals():
+    seq_len = 12
+    # 4 predicted fragments; floor=0 so any value > 0 counts as present.
+    #   j=1: light>0, heavy>0  -> both present
+    #   j=2: light>0, heavy=0  -> heavy missing, not both
+    #   j=3: light=0, heavy>0  -> light missing, not both
+    #   j=4: light>0, heavy>0  -> both present
+    recs, pred = [], {}
+    for j, li, hi in ((1, 1.0, 5.0), (2, 1.0, 0.0),
+                      (3, 0.0, 7.0), (4, 2.0, 3.0)):
+        recs.append(_rec("y", j, li, hi))
+        pred[frag_key("y", frag_pos_for_ion("y", j, seq_len), 1)] = 1.0
+    out = compute_speclib_i2_i3_j2(recs, pred, 6, seq_len, 0.0)
+    assert out["n_both_present"] == 2
+    assert abs(out["pred_both_present_fraction"] - 0.5) < 1e-9
