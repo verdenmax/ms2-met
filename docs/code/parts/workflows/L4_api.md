@@ -79,7 +79,7 @@
 - `similarity_distribution(pairs, metric=spectral_angle) -> dict` — `{n,median,p25,p75}`，跳过非有限相似度。
 - `gate_pass(stats, min_sim) -> bool` — 有数据且 `median > min_sim`（严格）。
 - `build_pairs_from_maps(pred_map, obs_map) -> (pred_vec, obs_vec)` — 在共同碎片键上对齐预测/实测强度。
-- `_observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict` — 取 PSM 各 light b/y 碎片 XIC apex；b/y 序号 → `frag_pos = ion_num-1`，单电荷。
+- `_observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict` — 取 PSM 各 light b/y 碎片 XIC apex；b/y 序号经 `frag_pos_for_ion` → frag_pos（b：`ion_num-1`；**y 反向**：`seq_len-ion_num-1`），单电荷，使观测与预测同键对齐。
 - `main()` — CLI：`--library-dir/--fasta/--mod/--psm-file/--raw/--metric/--min-sim/...`；记 coverage、stats、`GATE PASS/FAIL`，exit 0(过)/2(不过)。
 
 ## workflows/pred_integrate.py（谱库 I1 特征接入，Phase 2a）

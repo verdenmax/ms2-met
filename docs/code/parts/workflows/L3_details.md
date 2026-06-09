@@ -73,7 +73,7 @@
 - **top-K**（`select_topk_separable`）：在**可分**碎片里取预测最强 K 个，驱动后续碎片级特征；丢弃非有限预测强度。
 - **I1**（`i1_pattern_features`）：以 L 的预测相对强度构造“预测重标谱”，与实测重标比（谱角/Spearman），并出预测加权 corr(obs_L,obs_H)。直击情形 B（干扰肽段复现不了 L 的预测强度模式）。
 - **lookup**（`build_pred_store`）：一遍流式扫库、只留被鉴定肽段；`(seq,mods,charge)` 与碎片 `(ion_type,frag_pos,frag_charge)` 经规范化键对齐；覆盖率 hit/miss 记日志。
-- **前置 sanity gate**（`tools/speclib_sanity.py`）：在高置信轻标 PSM 上比“预测 vs 实测轻标”相似度分布；中位过阈才放行 Phase 2。b/y↔frag_pos 对齐约定为 `frag_pos = ion_num-1`，由该 gate 验证。
+- **前置 sanity gate**（`tools/speclib_sanity.py`）：在高置信轻标 PSM 上比“预测 vs 实测轻标”相似度分布；中位过阈才放行 Phase 2。b/y↔frag_pos 对齐约定为 `frag_pos_for_ion`（b：`ion_num-1`；**y 反向**：`seq_len-ion_num-1`，使同一裂解位点的 b/y 对齐到同键），由该 gate 验证。
 
 ## 谱库 I1 特征接入 feature_type=0（Phase 2a）
 
