@@ -91,3 +91,12 @@
 - `single_pair_work(psm, dia_data, config, pred_frags=None, speclib_enabled=False)` — 循环内收集**可分**碎片记录，`return` 前合并 I1 + `has_lib_pred`/`psm_is_split_window`/`heavy_out_of_range`（仅当 `speclib_enabled`）。
 - `PairFlow._build_pred_store() -> PredStore|None` — `[speclib] speclib_dir` 配了才一遍流式扫库（记 hit/miss）。
 - `PairFlow._build_raw_tasks(..., pred_store=None)` — `feature_type=0` 时给每个任务 dict 附 `pred_frags`（命中=预测碎片 dict，未命中=None；speclib 关闭则不附）。
+
+### workflows/pred_integrate.py 续（Phase 2b：I2/I3/J2）
+
+- `I2I3J2_KEYS` — I2/I3/J2 固定输出列名元组。
+- `compute_speclib_i2_i3_j2(frag_records, pred_frags, top_k, seq_len, presence_floor) -> dict` — 纯函数，复用同一批可分碎片记录：
+  - **I2** `pred_hl_ratio_cv`（F 上 log10(H/L) 的预测加权标准差）、`pred_hl_ratio_mad`（log-ratio 的 MAD）；F 中两端 apex 均 >0 且 ≥2 个才有值。
+  - **I3** `pred_coverage`（F 中 `heavy_apex > presence_floor` 的占比）、`pred_coverage_wpred`（按预测强度加权占比）。
+  - **J2** `unexpected_heavy_fraction`（W=可分但库未预测的碎片中、有可信重标信号的占比）、`unexpected_heavy_intensity_ratio`（W 上重标强度和 / F 上重标强度和）。
+  - 无预测/无记录/无候选 → 固定列 NaN。`presence_floor` 来自 `[speclib] pred_presence_floor`（缺省 0.0）。

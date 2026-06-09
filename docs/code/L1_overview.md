@@ -33,7 +33,7 @@ config.ini → main.py → PairFlow(workflows)
 | manager | 数据管理层（Pickle 持久化基类 + 各 manager）| [parts/manager](parts/manager/L2_role.md) |
 | tools | 顶层 CLI/工具（extract_common、eval_*、entrapment_classify）| [parts/tools](parts/tools/L2_role.md) |
 | spec_trainer | 训练/评估分类器（多后端 lgb/xgb/sklearn）| [parts/spec_trainer](parts/spec_trainer/L2_role.md) |
-| **speclib** | **pFind 谱库二进制读取（独立模块，未接入 pipeline）** | [docs/speclib/L1_overview.md](../speclib/L1_overview.md) |
+| **speclib** | **pFind 谱库二进制读取（独立模块）+ 预测强度特征接入 feature_type=0（Phase 2a/2b：I1/I2/I3/J2）** | [docs/speclib/L1_overview.md](../speclib/L1_overview.md) |
 
 ## 关键技术 / 约定
 
