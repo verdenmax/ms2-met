@@ -19,6 +19,15 @@ def test_resolve_raw_paths_ok():
     assert PairFlow._resolve_raw_paths(cfg, 2) == ["a.mzML", "b.mzML"]
 
 
+def test_resolve_raw_paths_expands_home(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/u")
+    cfg = configparser.ConfigParser()
+    cfg["input"] = {"raw_path_1": "~/share/x.mzML", "raw_path_2": "/abs/y.mzML"}
+    # ~ expands; absolute path is left untouched (expanduser is idempotent).
+    assert PairFlow._resolve_raw_paths(cfg, 2) == [
+        "/home/u/share/x.mzML", "/abs/y.mzML"]
+
+
 def _psm(seq, raw):
     return PSMInfo(seq, 2, [], np.float32(30.0), np.float32(500.0), raw, "P")
 

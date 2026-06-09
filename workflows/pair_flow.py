@@ -76,7 +76,7 @@ class PairFlow:
                 self._workpath, self.LIGHT_RESULT_MANAGER_PUCKEL),
         )
 
-        light_result_path = (
+        light_result_path = os.path.expanduser(
             self._config[ConfigKeys.INPUT][ConfigKeys.LIGHT_RESULT_PATH])
         self._light_result = self._light_result_manager.get_light_result_object(
             light_result_path)
@@ -166,7 +166,7 @@ class PairFlow:
                 raise ValueError(
                     f"配置缺少 {key}（raw_num={raw_file_nums}，请检查 [input] 下 "
                     f"raw_path_* 的数量是否与 raw_num 匹配）")
-            paths.append(config[ConfigKeys.INPUT][key])
+            paths.append(os.path.expanduser(config[ConfigKeys.INPUT][key]))
         return paths
 
     @staticmethod
@@ -207,13 +207,16 @@ class PairFlow:
         """[speclib] speclib_dir 配置了 → 一遍流式扫库建 PredStore；否则 None。"""
         if not self._config.has_option(ConfigKeys.SPECLIB, ConfigKeys.SPECLIB_DIR):
             return None
-        speclib_dir = self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_DIR].strip()
+        speclib_dir = os.path.expanduser(
+            self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_DIR].strip())
         if not speclib_dir:
             return None
         from spectrum.speclib import SpecLib
         from workflows.pred_store import build_pred_store, normalize_key
-        fasta = self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_FASTA]
-        mod = self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_MOD]
+        fasta = os.path.expanduser(
+            self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_FASTA])
+        mod = os.path.expanduser(
+            self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_MOD])
         lib = SpecLib.open_dir(speclib_dir, fasta_path=fasta, mod_path=mod)
         wanted = {normalize_key(p._sequence, p._modify, p._charge)
                   for p in self._light_result.psm_info}
@@ -352,9 +355,9 @@ class PairFlow:
         # NOTE: 保存结果
         ans_df = pd.DataFrame(ans)
 
-        result_file = self._config.get(
+        result_file = os.path.expanduser(self._config.get(
             ConfigKeys.GENERAL, ConfigKeys.RESULT_FILE,
-            fallback="result.csv")
+            fallback="result.csv"))
 
         result_dir = os.path.dirname(result_file)
         if result_dir:

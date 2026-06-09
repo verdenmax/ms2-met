@@ -59,8 +59,8 @@ def main():
     # 显式抓 NoSectionError 因为 configparser 的 fallback 只覆盖缺失 option，
     # 不覆盖缺失 section（rubber-duck B2，2026-06-03）。
     try:
-        work_path = config.get("general", "work_directory",
-                                fallback="./workspace")
+        work_path = os.path.expanduser(config.get(
+            "general", "work_directory", fallback="./workspace"))
     except configparser.NoSectionError:
         work_path = "./workspace"
     workflow = PairFlow(workname="main", config=config,
