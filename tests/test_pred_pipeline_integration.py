@@ -119,3 +119,8 @@ def test_single_pair_work_emits_i2i3j2_columns():
                 "pred_coverage_wpred", "unexpected_heavy_fraction",
                 "unexpected_heavy_intensity_ratio"):
         assert col in feats
+
+
+def test_pred_signal_alpha_key_exists():
+    from constant.keys import ConfigKeys
+    assert ConfigKeys.PRED_SIGNAL_ALPHA == "pred_signal_alpha"

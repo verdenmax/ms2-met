@@ -43,3 +43,4 @@ class ConfigKeys(metaclass=ConstantsClass):
     SPECLIB_MOD = "speclib_mod"
     PRED_TOP_K = "pred_top_k"
     PRED_PRESENCE_FLOOR = "pred_presence_floor"
+    PRED_SIGNAL_ALPHA = "pred_signal_alpha"
