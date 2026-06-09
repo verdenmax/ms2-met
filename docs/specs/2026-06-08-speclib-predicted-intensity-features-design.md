@@ -1,6 +1,6 @@
 # 设计：用 pFind 谱库预测强度赋能轻重标验证特征（第一版）
 
-> 文档版本：1.1（2026-06-09，加入 Phase 1 实测验证 + 修正判据，见 §11）
+> 文档版本：1.2（2026-06-09，固化 split-aware 可分性规则 + 中心化硬前提，见 §4.1.5/§11）
 > 状态：Phase 1 基础已实现并**实测验证通过**（修正后判据）；Phase 2 待写实现计划
 > 关联：
 > - `docs/specs/2026-05-13-silac-validation-framework.md`（SILAC 验证框架，类2/3/4、情形 B、Q1a）
@@ -62,10 +62,11 @@ pair_flow 启动阶段（一次）
   命中 key → 抽 pred_ms2 进内存字典 PredStore：key → 预测碎片强度（按 (ion_type, frag_pos, frag_charge)）
         │  （未命中肽段：无预测 → fallback）
         ▼
-single_work 碎片循环（每 PSM）
+single_work 碎片循环（每 PSM，**中心化谱图**）
+  算 heavy 母离子 m/z → is_split_window 判「分窗/同窗」（§4.1.5）
   由 PredStore 给每个枚举碎片打上 pred_intensity
         │
-        ├─ top-K（可分碎片中预测最强 K 个）= 碎片集 F
+        ├─ 可分碎片（分窗→全部碎片；同窗→仅 SILAC 位移碎片）中取预测最强 K 个 = 碎片集 F
         ├─ 现有逐碎片特征仅在 F 上算（去噪/提速）
         ├─ I1：构造 pred_H、obs_H → 谱角/Spearman
         ├─ I2：F 上 H/L 比离散度（预测加权）
@@ -86,7 +87,7 @@ single_work 碎片循环（每 PSM）
 
 - **入口**：扩展 `tools/speclib_inspect.py` 或新增 `tools/speclib_sanity.py`，离线运行，不进主流程热路径。
 - **输入**：一批高置信轻标 PSM（如 pFind q<0.01 且 `light_max_intensity` 高）+ 谱库目录 + 对应 raw。
-- **算法**：对每条 PSM，按 `(ion_type, frag_pos, frag_charge)` 对齐「预测相对强度 `p`」与「实测轻标碎片强度 `l`」（实测取 XIC apex 或积分），计算谱角相似度与 Spearman；汇总分布（中位、p25/p75、过阈比例）。
+- **算法**：**在中心化谱图上**，对每条 PSM，按 `(ion_type, frag_pos, frag_charge)` 对齐「预测相对强度 `p`」与「实测轻标碎片强度 `l`」（XIC apex），**只取可分碎片**（§4.1.5；同窗时观测到的轻标未位移碎片会被重标污染，须排除），**b、y 分开**计算谱角相似度；汇总分布（中位、p25/p75）。
 - **决策门槛**：在**可分碎片**上算中位谱角相似度 `> SANITY_MIN`（**默认 0.6**，可配；见 §11 实测）→ gate 通过；否则停止并报告，重点排查：单位、**b/y 序号 ↔ frag_pos 对齐**、电荷选择、修饰映射。**度量须分 ion-type**（b、y 不混进同一向量，见 §7/§11）。
 - **产出**：一份统计报告（stdout + 可选 CSV）。该步**只用轻标**，是工具自检，不产出最终特征。
 
@@ -100,9 +101,26 @@ single_work 碎片循环（每 PSM）
 - **b/y 序号 ↔ frag_pos 对齐**：管线碎片来自 `psm.get_heavy_info(SILAC)`，元素 `(ion_type, ion_num, light_mass, heavy_mass)`，`ion_num` 为 1-based b/y 序号；库 `FragIon.frag_pos` 为 0-indexed 切割位。需建立映射（如 b 的 `ion_num=i` ↔ `frag_pos=i-1`，y 同理但方向相反），**该映射的正确性由 4.0 sanity gate 验证**（错位会让相似度系统性变差）。
 - **覆盖率/fallback**：每 PSM 记 `has_lib_pred ∈ {0,1}`；未命中 → 所有库特征列 NaN，主流程其余不变。汇总命中率写日志。
 
+### 4.1.5 可分碎片判定（split-window-aware）+ 中心化要求（核心；实测见 §11）
+
+> 这是整套库特征的**地基规则**，被 §4.0 与 §4.2–§4.7 共同依赖。
+
+**中心化硬前提**：speclib 特征的所有 XIC 提取与强度比较**必须在中心化谱图上**进行（`centroid_enabled=True`，§6）。实测 profile→centroid 各切片相似度 **+0.07~0.10**（y 离子受益最大）；**profile（未中心化）数据下库特征不可信，应关闭/置 NaN**。
+
+**可分性规则**：一个碎片是否「可用于轻重标验证」取决于轻、重**母离子**是否落在同一 isolation window —
+
+1. 算重标母离子 m/z：`heavy_pre_mz = light_pre_mz + ΔSILAC / charge`，其中 `ΔSILAC = get_SILAC_increase_mass(seq)`（= 8.014·#K + 10.008·#R）。
+2. `split = is_split_window( get_window_info(light_pre_mz), get_window_info(heavy_pre_mz) )`。
+3. **分窗（split=True）→ 所有碎片都可用**：轻、重肽段在**不同 MS2** 里被碎裂；轻碎片从轻窗口（用 `light_pre_mz`）提取得**纯轻**，重碎片从重窗口（用 `heavy_pre_mz`）提取得**纯重**，互不污染。
+4. **同窗（split=False，co-isolated）→ 只有被 SILAC 改变了 m/z 的碎片可用**：轻、重在**同一 MS2**；含 K/R 的碎片（`heavy_mass≠light_mass`）轻在 light-m/z、重在 heavy-m/z，可分开 → 可用；**未位移碎片**（如不含 K/R 的 b 离子）轻重落**同一 m/z、重叠**，分不开 → **不可用**。
+5. **undecided（split=None）**：重标母离子 m/z 查不到窗口（常因落在本采集 50-Da 范围外 → 重标可能在**另一个采集文件**）。保守**按同窗处理**（只用位移碎片），并记 `heavy_out_of_range` 标志，留待跨文件处理。
+6. 综合即 `is_separable_fragment(light_mass, heavy_mass, split)`（= 位移 **OR** 分窗）。
+
+**实测（§11，2Da DDIA）**：~93% PSM 分窗（split=1391 / coiso=8 / undecided=101）→ 绝大多数碎片可用（**含 b**）；**不要把可分性简化成「只用 y」**。
+
 ### 4.2 top-K 碎片选择 / 加权
 
-- **碎片集 F**：在该 PSM 的**可分碎片**（`is_separable_fragment(light_mass, heavy_mass, split_window)`）中，按 `pred_intensity` 降序取前 `TOP_K`（默认 6，可配）。可分碎片不足 K 时取实际数量。
+- **碎片集 F**：先按 §4.1.5 定出该 PSM 的**可分碎片集**（分窗→全部碎片；同窗→仅 SILAC 位移碎片；undecided→仅位移），再在其中按 `pred_intensity` 降序取前 `TOP_K`（默认 6，可配）；不足 K 取实际数量。**仅在中心化谱图上**算。
 - **加权**：聚合碎片级特征到 PSM 级时，按 `pred_intensity` 归一权重加权（如加权均值）。
 - **既有特征改造**：现有逐碎片 Pearson/cosine/apex_delta/mz_err/SNR 等的**聚合**改为在 `F` 上（并提供预测加权版）。为不破坏既有列与测试，新列以新名输出（如 `*_topk`、`*_wpred`），**保留旧列**或由 config 开关切换（见 §6）。
 - **元特征**：`n_separable_in_predicted_topK`（预测 top 中可分的数量）、`n_fragments_in_F`。
@@ -111,7 +129,7 @@ single_work 碎片循环（每 PSM）
 ### 4.3 I1 · 强度模式一致性（构造预测重标谱）
 
 - **构造 `pred_H`**：对 `F` 中每碎片，取其预测相对强度（即 L 的预测强度，化学等价 → 重标强度模式与轻标一致），形成向量（位置=重标碎片）。
-- **`obs_H`**：实测重标各碎片强度（XIC apex 或积分），与 `pred_H` 同序对齐、同一归一化（L2 或和归一）。
+- **`obs_H`**：实测重标各碎片强度（XIC apex 或积分），与 `pred_H` 同序对齐、同一归一化（L2 或和归一）。提取用**重标母离子 m/z** 定位重标窗口（分窗时是另一个窗口，§4.1.5）；中心化谱图。
 - **特征**：
   - `spec_pattern_SA_heavy` = 谱角相似度(`pred_H`, `obs_H`)。
   - `spec_pattern_spearman_heavy` = Spearman(`pred_H`, `obs_H`)（抗模型绝对强度偏差）。
@@ -133,7 +151,7 @@ single_work 碎片循环（每 PSM）
 
 ### 4.6 J2 · 意外峰污染（I3 的反面）
 
-- **预测弱集合 W**：在所有理论可分碎片里，取 `pred_intensity` 最低的若干（或 `pred_intensity ≈ 0` 者），与 `F` 不相交。
+- **预测弱集合 W**：在该 PSM 的**可分碎片**（§4.1.5）里，取 `pred_intensity` 最低的若干（或 `pred_intensity ≈ 0` 者），与 `F` 不相交。
 - **特征**：
   - `unexpected_heavy_fraction` = W 中出现可信重标信号（J5 判据或简单 floor）的比例。
   - `unexpected_heavy_intensity_ratio` = W 上重标信号强度和 / `F` 上重标信号强度和。
@@ -159,6 +177,7 @@ single_work 碎片循环（每 PSM）
 |---|---|---|
 | `has_lib_pred` | 4.1 | 该 PSM 是否命中谱库预测（0/1） |
 | `n_fragments_in_F` / `n_separable_in_predicted_topK` | 4.2 | top-K 碎片集规模/可分计数 |
+| `psm_is_split_window` / `heavy_out_of_range` | 4.1.5 | 轻重母离子是否分窗 / 重标母离子是否超出本采集范围 |
 | `spec_pattern_SA_heavy` | I1 | 预测重标谱 vs 实测重标 谱角相似度 |
 | `spec_pattern_spearman_heavy` | I1 | 同上，Spearman |
 | `spec_pattern_LH_consistency` | I1 | 预测加权 corr(obs_L, obs_H) |
@@ -183,6 +202,8 @@ single_work 碎片循环（每 PSM）
 | `pred_use_adaptive_floor` | false（首版保守） | 是否启用 J5 自适应存在判据 |
 | `pred_extract_only_topk` | false | 是否只对 F 抽 XIC（性能红利开关） |
 | `sanity_min_similarity` | **0.6** | gate 通过阈值（仅 sanity 工具；可分-中心化谱角，见 §11） |
+
+> **中心化为硬前提**（§4.1.5）：speclib 特征要求 `centroid_enabled = true`。若为 `false`（profile），实测库特征不可信（§11），应整套关闭并把库特征列置 NaN。
 
 ---
 
@@ -227,7 +248,7 @@ single_work 碎片循环（每 PSM）
 
 ## 10. 分阶段落地顺序（供实现计划参考）
 
-1. **P0 · sanity gate（4.0）+ PredStore（4.1）**：先验证可用性与对齐，建好 lookup。**gate 通过是后续前提。**
+1. **P0 · sanity gate（4.0）+ PredStore（4.1）+ 可分性/中心化（4.1.5）**：先验证可用性、b/y 对齐、split-aware 可分性与中心化收益，建好 lookup。**gate 通过是后续前提。**
 2. **P1 · top-K（4.2）+ I1（4.3）**：地基 + 最打情形 B 的新维度。
 3. **P2 · I2（4.4）+ I3（4.5）+ J2（4.6）**：补齐关系/覆盖/污染三特征。
 4. **P3 · J5（4.7）+ 性能红利（4.8）**：判据升级与提速（带 config 开关，保守默认）。
