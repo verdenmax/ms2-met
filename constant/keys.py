@@ -35,3 +35,10 @@ class ConfigKeys(metaclass=ConstantsClass):
     # mzML centroiding (loaded by manager/data_manager.py)
     CENTROID_ENABLED = "centroid_enabled"
     CENTROID_REL_THRESHOLD = "centroid_rel_threshold"
+
+    # speclib predicted-intensity features (Phase 2)
+    SPECLIB = "speclib"
+    SPECLIB_DIR = "speclib_dir"
+    SPECLIB_FASTA = "speclib_fasta"
+    SPECLIB_MOD = "speclib_mod"
+    PRED_TOP_K = "pred_top_k"
