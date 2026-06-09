@@ -828,11 +828,15 @@ def single_pair_work(
 
     if speclib_enabled:
         from workflows.pred_integrate import (compute_speclib_i1,
-                                              compute_speclib_i2_i3_j2)
+                                              compute_speclib_i2_i3_j2,
+                                              compute_speclib_adaptive)
         presence_floor = (config.getfloat(ConfigKeys.SPECLIB,
                                           ConfigKeys.PRED_PRESENCE_FLOOR,
                                           fallback=0.0)
                           if config.has_section(ConfigKeys.SPECLIB) else 0.0)
+        alpha = (config.getfloat(ConfigKeys.SPECLIB,
+                                 ConfigKeys.PRED_SIGNAL_ALPHA, fallback=0.2)
+                 if config.has_section(ConfigKeys.SPECLIB) else 0.2)
         features["has_lib_pred"] = 1 if pred_frags else 0
         features["psm_is_split_window"] = 0 if is_same_ms2 else 1
         features["heavy_out_of_range"] = 0 if heavy_in_raw else 1
@@ -841,6 +845,9 @@ def single_pair_work(
         features.update(compute_speclib_i2_i3_j2(
             speclib_frag_records, pred_frags, pred_top_k, len(psm._sequence),
             presence_floor))
+        features.update(compute_speclib_adaptive(
+            speclib_frag_records, pred_frags, pred_top_k, len(psm._sequence),
+            alpha))
 
     return features
 

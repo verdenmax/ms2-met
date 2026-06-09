@@ -124,3 +124,12 @@ def test_single_pair_work_emits_i2i3j2_columns():
 def test_pred_signal_alpha_key_exists():
     from constant.keys import ConfigKeys
     assert ConfigKeys.PRED_SIGNAL_ALPHA == "pred_signal_alpha"
+
+
+def test_single_pair_work_emits_adaptive_columns():
+    from workflows.pred_store import frag_key as _fk3
+    feats = single_pair_work(
+        _psm2(), _FakeDia(), _cfg2(),
+        pred_frags={_fk3("b", 0, 1): 1.0}, speclib_enabled=True)
+    assert "global_lh_ratio" in feats
+    assert "pred_coverage_adaptive" in feats
