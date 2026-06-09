@@ -100,3 +100,8 @@
   - **I3** `pred_coverage`（F 中 `heavy_apex > presence_floor` 的占比）、`pred_coverage_wpred`（按预测强度加权占比）。
   - **J2** `unexpected_heavy_fraction`（W=可分但库未预测的碎片中、有可信重标信号的占比）、`unexpected_heavy_intensity_ratio`（W 上重标强度和 / F 上重标强度和）。
   - 无预测/无记录/无候选 → 固定列 NaN。`presence_floor` 来自 `[speclib] pred_presence_floor`（缺省 0.0）。
+
+### workflows/pred_integrate.py 续（Phase 2c：J5 自适应覆盖度）
+
+- `ADAPTIVE_KEYS` — `("global_lh_ratio", "pred_coverage_adaptive")`。
+- `compute_speclib_adaptive(frag_records, pred_frags, top_k, seq_len, alpha) -> dict` — `global_lh_ratio`=F 中 `heavy/light` 中位数（两端 apex>0）；`pred_coverage_adaptive`=F 中 light>0 且 `heavy ≥ α·light·glh` 的占比；无效 → NaN。`α` 来自 `[speclib] pred_signal_alpha`（缺省 0.2）。**更正**：期望强度 = `light·glh`（不乘预测相对强度，避免双重计量，见 spec §4.7）。

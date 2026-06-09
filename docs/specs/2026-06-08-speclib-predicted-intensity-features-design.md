@@ -1,6 +1,6 @@
 # 设计：用 pFind 谱库预测强度赋能轻重标验证特征（第一版）
 
-> 文档版本：1.2（2026-06-09，固化 split-aware 可分性规则 + 中心化硬前提，见 §4.1.5/§11）
+> 文档版本：1.3（2026-06-09，加入 Phase 2c J5 自适应覆盖度 + 更正 §4.7 公式）
 > 状态：Phase 1 基础已实现并**实测验证通过**（修正后判据）；Phase 2 待写实现计划
 > 关联：
 > - `docs/specs/2026-05-13-silac-validation-framework.md`（SILAC 验证框架，类2/3/4、情形 B、Q1a）
@@ -157,13 +157,16 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
   - `unexpected_heavy_intensity_ratio` = W 上重标信号强度和 / `F` 上重标信号强度和。
 - **攻击**：情形 B 的反面——干扰肽段常在 L 未预测的碎片上出信号。
 
-### 4.7 J5 · 自适应信号存在判据
+### 4.7 J5 · 自适应信号存在判据（Phase 2c 已实现「自适应覆盖度」版）
 
-- 现状：`q1a_helpers.is_signal_present_heavy` 用绝对 `intensity_floor=100`。
-- 改造：引入**期望重标强度** `E_i = pred_rel_i × light_apex_i × global_LH_ratio`，「存在」判定改为 `heavy_max ≥ α · E_i` **且**沿用既有共流出/峰形两条件（apex_delta、Pearson）。
-  - `global_LH_ratio`：用 `F` 中强配对碎片的 `r_i` 中位数估计；估不出时回退固定 floor。
-  - `α`：可配（默认 0.2）。
-- **兼容**：J5 作为**可选判据**注入（config 开关）；关闭时 `is_signal_present_heavy` 行为不变，保护既有 Q1a 测试。预测缺失（`has_lib_pred=0`）的碎片自动回退固定 floor。
+- 现状：`q1a_helpers.is_signal_present_heavy` 用绝对 `intensity_floor=100`；speclib I3/J2 用固定 `pred_presence_floor`。
+- **⚠️ 公式更正**（Phase 2c 实测）：期望重标强度应为 `E_i = light_apex_i × global_LH_ratio`。原稿 `E_i = pred_rel_i × light_apex_i × global_LH_ratio` 里的 `pred_rel_i` 是**重复计量**——观测到的 `light_apex_i` 本身已携带该碎片的逐碎片强度，再乘预测相对强度会双重计数。正确的物理期望就是「该碎片轻标强度 × 全局 L:H 比」。
+- **判据**：碎片「存在」⇔ `heavy_apex_i ≥ α · light_apex_i · global_LH_ratio`。
+  - `global_LH_ratio`（`global_lh_ratio` 列）：F 中两端 apex 均 >0 碎片的 `heavy/light` **中位数**；估不出 → NaN。
+  - `α`：`[speclib] pred_signal_alpha`，缺省 0.2。
+- **Phase 2c 落地形态（feature_type=0）**：作为**增量列** `global_lh_ratio` + `pred_coverage_adaptive`（= F 中 light>0 且满足上式的占比）经 `compute_speclib_adaptive` 输出,**不**改既有 I3/J2 的固定-floor 判定(并存,模型可同时用)。
+- **未来**：把 `q1a_helpers.is_signal_present_heavy` 也改成可选的自适应判据（config 开关；关闭时行为不变，保护既有 Q1a 测试）——留待后续。
+
 
 ### 4.8 性能红利
 
@@ -184,6 +187,7 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 | `hl_ratio_cv_weighted` / `hl_ratio_mad` | I2 | H/L 比离散度 |
 | `pred_coverage` / `pred_coverage_wpred` | I3 | 预测覆盖度 |
 | `unexpected_heavy_fraction` / `unexpected_heavy_intensity_ratio` | J2 | 意外峰污染 |
+| `global_lh_ratio` / `pred_coverage_adaptive` | J5（Phase 2c） | 全局 H/L 比中位数 / 自适应覆盖度（`heavy≥α·light·glh`） |
 | （可选）`*_topk` / `*_wpred` 版既有聚合特征 | 4.2 | 在 F 上/预测加权重算的既有特征 |
 
 未命中 PSM 的上述列统一为 NaN。
@@ -251,7 +255,7 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 1. **P0 · sanity gate（4.0）+ PredStore（4.1）+ 可分性/中心化（4.1.5）**：先验证可用性、b/y 对齐、split-aware 可分性与中心化收益，建好 lookup。**gate 通过是后续前提。**
 2. **P1 · top-K（4.2）+ I1（4.3）**：地基 + 最打情形 B 的新维度。
 3. **P2 · I2（4.4）+ I3（4.5）+ J2（4.6）**：补齐关系/覆盖/污染三特征。
-4. **P3 · J5（4.7）+ 性能红利（4.8）**：判据升级与提速（带 config 开关，保守默认）。
+4. **P3 · J5（4.7）+ 性能红利（4.8）**：判据升级与提速（带 config 开关，保守默认）。**Phase 2c 已落地 J5 的「自适应覆盖度」增量列**（`global_lh_ratio`/`pred_coverage_adaptive`，feature_type=0，公式见 §4.7 更正）；`is_signal_present_heavy` 自适应版、性能红利、`feature_type=1/2` 路径留待后续。
 
 每阶段 TDD + 既有测试回归 + 提交。
 

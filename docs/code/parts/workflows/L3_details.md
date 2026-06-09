@@ -93,3 +93,7 @@
 - **I3**（预测覆盖度）`pred_coverage`/`pred_coverage_wpred`：F 中重标「存在」的（加权）占比。
 - **J2**（意外峰污染）`unexpected_heavy_fraction`/`unexpected_heavy_intensity_ratio`：库未预测的碎片上冒出重标信号的占比/强度比——情形 B 的反面证据。
 - 仍是增量旁路（speclib 关闭则不出列）；Phase 2c：J5 自适应判据、`feature_type=1/2`、提速。
+
+### J5 自适应覆盖度接入（Phase 2c）
+
+`single_pair_work` 在 I1 / I2-I3-J2 之后再合并 `compute_speclib_adaptive`，复用同一批可分碎片记录，新增 `global_lh_ratio`（F 上 `heavy/light` 中位数）与 `pred_coverage_adaptive`（F 中 light>0 且 `heavy ≥ α·light·global_lh` 的占比；`α`=`pred_signal_alpha`，缺省 0.2）。这是比固定 floor 更物理的「该碎片是否如预期出现重标」判据，作**增量列**与既有固定-floor 的 I3/J2 并存。公式按 spec §4.7 更正（期望=`light·glh`，不重复乘预测相对强度）。
