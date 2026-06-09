@@ -152,6 +152,8 @@ def process_psm_single(
     # 子进程：mmap 加载（物理内存共享）
     dia1 = DIAData.load_from_file(shared1_file, use_mmap=True)
 
+    speclib_enabled = "pred_frags" in psm1_dict
+    pred_frags = psm1_dict.get("pred_frags")
     psm1 = PSMInfo.from_dict(psm1_dict)
 
     # TODO: 计算出信息
@@ -159,6 +161,8 @@ def process_psm_single(
         psm=psm1,
         dia_data=dia1,
         config=config,
+        pred_frags=pred_frags,
+        speclib_enabled=speclib_enabled,
     )
 
     return _make_result_row_single(psm1, tot_features)
@@ -177,8 +181,12 @@ def process_batch_single(shared_path: str, batch_psm_dicts: list, config):
     n_errors = 0
     for (psm_dict,) in batch_psm_dicts:
         try:
+            speclib_enabled = "pred_frags" in psm_dict
+            pred_frags = psm_dict.get("pred_frags")
             psm = PSMInfo.from_dict(psm_dict)
-            features = single_pair_work(psm=psm, dia_data=dia_data, config=config)
+            features = single_pair_work(
+                psm=psm, dia_data=dia_data, config=config,
+                pred_frags=pred_frags, speclib_enabled=speclib_enabled)
             results.append(_make_result_row_single(psm, features))
         except Exception:
             logging.error(f"PSM处理失败 seq={psm_dict.get('sequence','?')} "

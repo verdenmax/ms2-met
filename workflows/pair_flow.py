@@ -170,9 +170,12 @@ class PairFlow:
         return paths
 
     @staticmethod
-    def _build_raw_tasks(psm_groups, name_to_shared, feature_type):
-        """构建任务列表；PSM 的 raw_title 不在配置的 raw 文件中时跳过并计数
-        （而非裸 KeyError 中断整个任务）。返回 (tasks, n_skipped)。"""
+    def _build_raw_tasks(psm_groups, name_to_shared, feature_type,
+                         pred_store=None):
+        """构建任务列表；raw_title 不在配置 raw 中则跳过计数。pred_store 非空
+        （speclib 开启）时给 feature_type=0 的每个任务 dict 附 pred_frags
+        （命中=预测碎片 dict，未命中=None）。返回 (tasks, n_skipped)。"""
+        from workflows.pred_store import normalize_key
         tasks = []
         n_skipped = 0
         if feature_type == 0:
@@ -181,8 +184,13 @@ class PairFlow:
                     if a._raw_title not in name_to_shared:
                         n_skipped += 1
                         continue
-                    tasks.append((a.to_dict(), name_to_shared[a._raw_title]))
-        else:  # feature_type 1 或 2
+                    d = a.to_dict()
+                    if pred_store is not None:
+                        rec = pred_store.get(
+                            normalize_key(a._sequence, a._modify, a._charge))
+                        d["pred_frags"] = rec["frags"] if rec is not None else None
+                    tasks.append((d, name_to_shared[a._raw_title]))
+        else:  # feature_type 1 或 2 (Phase 2b 再附 pred_frags)
             for group in psm_groups.values():
                 for a, b in combinations(group, 2):
                     if (a._raw_title not in name_to_shared
@@ -191,11 +199,28 @@ class PairFlow:
                         continue
                     shared_a = name_to_shared[a._raw_title]
                     shared_b = name_to_shared[b._raw_title]
-                    tasks.append(
-                        (a.to_dict(), b.to_dict(), shared_a, shared_b, 1))
-                    tasks.append(
-                        (a.to_dict(), b.to_dict(), shared_a, shared_b, 0))
+                    tasks.append((a.to_dict(), b.to_dict(), shared_a, shared_b, 1))
+                    tasks.append((a.to_dict(), b.to_dict(), shared_a, shared_b, 0))
         return tasks, n_skipped
+
+    def _build_pred_store(self):
+        """[speclib] speclib_dir 配置了 → 一遍流式扫库建 PredStore；否则 None。"""
+        if not self._config.has_option(ConfigKeys.SPECLIB, ConfigKeys.SPECLIB_DIR):
+            return None
+        speclib_dir = self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_DIR].strip()
+        if not speclib_dir:
+            return None
+        from spectrum.speclib import SpecLib
+        from workflows.pred_store import build_pred_store, normalize_key
+        fasta = self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_FASTA]
+        mod = self._config[ConfigKeys.SPECLIB][ConfigKeys.SPECLIB_MOD]
+        lib = SpecLib.open_dir(speclib_dir, fasta_path=fasta, mod_path=mod)
+        wanted = {normalize_key(p._sequence, p._modify, p._charge)
+                  for p in self._light_result.psm_info}
+        logging.info("speclib: 扫库建 PredStore（wanted=%d）...", len(wanted))
+        store = build_pred_store(lib, wanted)
+        logging.info("speclib: PredStore hit=%d miss=%d", store.n_hit, store.n_miss)
+        return store
 
     def distribute(self):
         # 处理每一个任务
@@ -240,8 +265,9 @@ class PairFlow:
             ConfigKeys.GENERAL, ConfigKeys.FEATURE_TYPE, fallback=0)
 
         # raw_title 不在配置 raw 文件中的 PSM 跳过并计数（而非裸 KeyError 中断）
+        pred_store = self._build_pred_store()   # None when speclib disabled
         tasks, n_skipped_unknown_raw = self._build_raw_tasks(
-            psm_groups, name_to_shared, feature_type)
+            psm_groups, name_to_shared, feature_type, pred_store=pred_store)
         if n_skipped_unknown_raw:
             logging.warning(
                 f"跳过 {n_skipped_unknown_raw} 个 PSM/对：raw_title 不在配置的 "

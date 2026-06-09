@@ -426,7 +426,9 @@ def multi_batch_work(
 def single_pair_work(
     psm: PSMInfo,
     dia_data: DIAData,
-    config: ConfigParser
+    config: ConfigParser,
+    pred_frags=None,
+    speclib_enabled: bool = False
 ):
     """ 处理单个肽段，对这单条信息进行处理，计算出是否可信 """
 
@@ -602,6 +604,10 @@ def single_pair_work(
     last_heavy_all = 0.0
 
     ion_data = []  # 存储每个离子的完整数据
+    speclib_frag_records = []
+    pred_top_k = (config.getint(ConfigKeys.SPECLIB, ConfigKeys.PRED_TOP_K,
+                                fallback=6)
+                  if config.has_section(ConfigKeys.SPECLIB) else 6)
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
 
@@ -635,6 +641,16 @@ def single_pair_work(
             light_mass=light_mass, heavy_mass=heavy_mass,
             light_xic=light_ions_xic, heavy_xic=heavy_ions_xic,
         )
+
+        _light_ap = (float(np.max(light_ions_xic["intensity"]))
+                     if len(light_ions_xic) else 0.0)
+        _heavy_ap = (float(np.max(heavy_ions_xic["intensity"]))
+                     if len(heavy_ions_xic) else 0.0)
+        speclib_frag_records.append({
+            "ion_type": ions_type, "ion_num": ions_num,
+            "light_mass": light_mass, "heavy_mass": heavy_mass,
+            "light_apex": _light_ap, "heavy_apex": _heavy_ap,
+        })
 
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
             # P1-2 (Silent-I1, 2026-06-03 audit): append default zeros to
@@ -809,6 +825,14 @@ def single_pair_work(
     features["precursor_centering"] = win_info["centering"]
 
     features.update(q1a_acc.compute_features())
+
+    if speclib_enabled:
+        from workflows.pred_integrate import compute_speclib_i1
+        features["has_lib_pred"] = 1 if pred_frags else 0
+        features["psm_is_split_window"] = 0 if is_same_ms2 else 1
+        features["heavy_out_of_range"] = 0 if heavy_in_raw else 1
+        features.update(compute_speclib_i1(
+            speclib_frag_records, pred_frags, pred_top_k, len(psm._sequence)))
 
     return features
 
