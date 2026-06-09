@@ -265,7 +265,8 @@ class PairFlow:
             ConfigKeys.GENERAL, ConfigKeys.FEATURE_TYPE, fallback=0)
 
         # raw_title 不在配置 raw 文件中的 PSM 跳过并计数（而非裸 KeyError 中断）
-        pred_store = self._build_pred_store()   # None when speclib disabled
+        pred_store = (self._build_pred_store()   # only feature_type=0 consumes it
+                      if feature_type == 0 else None)
         tasks, n_skipped_unknown_raw = self._build_raw_tasks(
             psm_groups, name_to_shared, feature_type, pred_store=pred_store)
         if n_skipped_unknown_raw:
