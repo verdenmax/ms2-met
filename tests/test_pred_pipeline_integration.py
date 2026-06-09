@@ -103,3 +103,8 @@ def test_single_pair_work_unchanged_when_speclib_disabled():
                              pred_frags=None, speclib_enabled=False)
     assert "has_lib_pred" not in feats
     assert "spec_pattern_SA" not in feats
+
+
+def test_pred_presence_floor_key_exists():
+    from constant.keys import ConfigKeys
+    assert ConfigKeys.PRED_PRESENCE_FLOOR == "pred_presence_floor"
