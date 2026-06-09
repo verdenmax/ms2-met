@@ -130,9 +130,9 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 
 - **构造 `pred_H`**：对 `F` 中每碎片，取其预测相对强度（即 L 的预测强度，化学等价 → 重标强度模式与轻标一致），形成向量（位置=重标碎片）。
 - **`obs_H`**：实测重标各碎片强度（XIC apex 或积分），与 `pred_H` 同序对齐、同一归一化（L2 或和归一）。提取用**重标母离子 m/z** 定位重标窗口（分窗时是另一个窗口，§4.1.5）；中心化谱图。
-- **特征**：
-  - `spec_pattern_SA_heavy` = 谱角相似度(`pred_H`, `obs_H`)。
-  - `spec_pattern_spearman_heavy` = Spearman(`pred_H`, `obs_H`)（抗模型绝对强度偏差）。
+- **特征**（均以**重标**通道 `obs_H` 为观测侧，分 ion-type 后取均值合并）：
+  - `spec_pattern_SA_b` / `spec_pattern_SA_y` = b、y 各自的谱角相似度(`pred`, `obs_H`)；`spec_pattern_SA` = 两者中有限值的均值。
+  - `spec_pattern_spearman_b` / `spec_pattern_spearman_y` = b、y 各自的 **Spearman 排序相关**(`pred`, `obs_H`)（每类需 ≥3 根碎片，n=2 退化为 ±1 → NaN）；`spec_pattern_spearman` = 两者均值。**纯排序度量,对「b2 单峰主导 / b:y 整体缩放偏差」鲁棒**(见 §11 实测:Spearman 下 y 反超 b)。
   - `spec_pattern_LH_consistency` = 预测加权的 corr(`obs_L`, `obs_H`)（轻重应同形）。
 - **攻击**：情形 B（干扰肽段的碎片强度模式由自身序列决定，复现不了 L 的预测模式）。
 - **度量定义**：见 §7。空/单元素向量 → NaN。
@@ -183,8 +183,8 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 | `has_lib_pred` | 4.1 | 该 PSM 是否命中谱库预测（0/1） |
 | `n_fragments_in_F` / `n_separable_in_predicted_topK` | 4.2 | top-K 碎片集规模/可分计数 |
 | `psm_is_split_window` / `heavy_out_of_range` | 4.1.5 | 轻重母离子是否分窗 / 重标母离子是否超出本采集范围 |
-| `spec_pattern_SA_heavy` | I1 | 预测重标谱 vs 实测重标 谱角相似度 |
-| `spec_pattern_spearman_heavy` | I1 | 同上，Spearman |
+| `spec_pattern_SA_b` / `_y` / `spec_pattern_SA` | I1 | 预测重标谱 vs 实测重标 谱角相似度（b、y 各自 + 均值） |
+| `spec_pattern_spearman_b` / `_y` / `spec_pattern_spearman` | I1 | 同上，**Spearman 排序相关**（每类 ≥3 根；抗 b2 主导/b:y 缩放偏差） |
 | `spec_pattern_LH_consistency` | I1 | 预测加权 corr(obs_L, obs_H) |
 | `hl_ratio_cv_weighted` / `hl_ratio_mad` | I2 | H/L 比离散度 |
 | `pred_coverage` / `pred_coverage_wpred` | I3 | 预测覆盖度 |
@@ -295,3 +295,22 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 8. **跨文件重标**：undecided=101 = 重标母离子落在本 550–600 采集范围外 → Phase 2 找重标证据须考虑「重标可能在另一个 50-Da 采集文件」。
 
 > 复用产物：`workspace/..._550_600_2Da_Rep1.centroid.dia.npz`（有效 v3 中心化缓存）。
+
+### 11.1 b/y × light/heavy × 谱角/Spearman 复核（2026-06-09，600 条 PSM，逐根手验）
+
+在同一批数据上把**完整预测 b/y 系列**与实测 light/heavy apex 并排，逐根核对，得到（检出碎片中位）：
+
+| ion / 通道 | 谱角 | **Spearman** |
+|---|---|---|
+| b / light | 0.804 | 0.714 |
+| b / heavy | 0.771 | 0.700 |
+| y / light | 0.657 | **0.762** |
+| y / heavy | 0.612 | **0.771** |
+
+单峰主导度（max_pred / Σpred 中位）：**b 0.563 vs y 0.266**。
+
+**关键发现（驱动接入 Spearman 到 I1）**：
+1. **b 的高 cosine/谱角大半是「b2 单峰主导」的数学虚高**——b 系列被 N 端 b2 一根占据(主导度 0.56)，两个向量「共享一根对齐的主导分量」时 cosine 机械地≈1，与小峰预测准不准无关；y 强度分散(主导度 0.27)，没有这根「免费分」，每根都要对上 → 谱角更低。
+2. **按纯排序(Spearman)，y(0.76–0.77)反超 b(0.71)**：模型对 **y 的次序**预测得更准；b 的小尾巴(b2 之后又小又近)排序噪声大，反而拉低 b 的 Spearman。**「b 比 y 准」是磁量级度量造的假象**。
+3. **Spearman 对 heavy 噪声更鲁棒**：谱角从 light→heavy 明显下滑(y 0.657→0.612)，Spearman 几乎不降(y 0.762→0.771)。I1 用的正是 heavy 通道 → 接入 Spearman 价值更大。
+4. **落地**：`compute_speclib_i1` 已增量输出 `spec_pattern_spearman_b/_y/_`（与谱角并存；每类 ≥3 根，n=2 退化 → NaN；合并=各类均值）。真实 target/trap 区分力仍待 per-feature AUC 实测确认。

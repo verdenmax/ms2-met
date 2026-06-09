@@ -85,7 +85,7 @@
 ## workflows/pred_integrate.py（谱库 I1 特征接入，Phase 2a）
 
 - `I1_KEYS` — I1 固定输出列名元组（LightGBM schema 稳定）。
-- `compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict` — 纯函数：对已可分的逐碎片记录（`ion_type`/`ion_num`/`light_apex`/`heavy_apex`）配上预测强度，取预测最强 top-K，**按 ion-type 分开**算谱角（`spec_pattern_SA_b`/`_SA_y`/`_SA`=两者均值）+ 预测加权 `spec_pattern_LH_consistency` + `n_fragments_in_F`；无覆盖/退化 → 固定列 NaN（DEBUG 日志）。
+- `compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict` — 纯函数：对已可分的逐碎片记录（`ion_type`/`ion_num`/`light_apex`/`heavy_apex`）配上预测强度，取预测最强 top-K，**按 ion-type 分开**算谱角（`spec_pattern_SA_b`/`_SA_y`/`_SA`=两者均值）+ **Spearman 排序相关**（`spec_pattern_spearman_b`/`_spearman_y`/`_spearman`=均值；每类 ≥3 根，n=2 退化 → NaN；pred vs heavy，抗 b2 主导/b:y 缩放偏差）+ 预测加权 `spec_pattern_LH_consistency` + `n_fragments_in_F`；无覆盖/退化 → 固定列 NaN（DEBUG 日志）。
 
 接入参数变更：
 - `single_pair_work(psm, dia_data, config, pred_frags=None, speclib_enabled=False)` — 循环内收集**可分**碎片记录，`return` 前合并 I1 + `has_lib_pred`/`psm_is_split_window`/`heavy_out_of_range`（仅当 `speclib_enabled`）。

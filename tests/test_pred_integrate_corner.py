@@ -30,6 +30,9 @@ def _assert_nan_schema(out):
     assert math.isnan(out["spec_pattern_SA_b"])
     assert math.isnan(out["spec_pattern_SA_y"])
     assert math.isnan(out["spec_pattern_SA"])
+    assert math.isnan(out["spec_pattern_spearman_b"])
+    assert math.isnan(out["spec_pattern_spearman_y"])
+    assert math.isnan(out["spec_pattern_spearman"])
     assert math.isnan(out["spec_pattern_LH_consistency"])
     assert out["n_fragments_in_F"] == 0
 
@@ -194,3 +197,39 @@ def test_y_reversal_required_for_match():
     out_ok = compute_speclib_i1([rec], {correct_key: 1.0},
                                 top_k=6, seq_len=seq_len)
     assert out_ok["n_fragments_in_F"] == 1
+
+
+# --- Spearman rank metric (per ion-type, >=3 points, combined = mean) --------
+
+def test_spearman_reversed_order_is_negative():
+    """Predicted strong->weak but observed-heavy weak->strong (reversed rank)
+    -> Spearman = -1 on that ion type (whereas SA only sees a magnitude
+    mismatch). Demonstrates the rank metric catches order inversion."""
+    seq_len = 10
+    recs, pred = [], {}
+    for i, pv, hv in zip((1, 2, 3, 4), (1.0, 0.8, 0.6, 0.4),
+                         (10.0, 20.0, 30.0, 40.0)):
+        recs.append(_rec("y", i, pv, hv))
+        pred[_pkey("y", i, seq_len)] = pv
+    out = compute_speclib_i1(recs, pred, top_k=6, seq_len=seq_len)
+    assert out["spec_pattern_spearman_y"] == pytest.approx(-1.0)
+    assert math.isnan(out["spec_pattern_spearman_b"])
+    # combined = mean of finite per-ion spearmans = just y here
+    assert out["spec_pattern_spearman"] == pytest.approx(-1.0)
+
+
+def test_spearman_combined_is_mean_of_per_ion_type():
+    """spec_pattern_spearman is the arithmetic mean of the finite per-ion
+    Spearmans: b perfectly ordered (+1), y reversed (-1) -> combined 0."""
+    seq_len = 12
+    recs, pred = [], {}
+    for i, pv, hv in zip((1, 2, 3), (1.0, 0.6, 0.3), (300.0, 200.0, 100.0)):
+        recs.append(_rec("b", i, pv, hv))           # ascending obs == pred order
+        pred[_pkey("b", i, seq_len)] = pv
+    for j, pv, hv in zip((1, 2, 3), (0.9, 0.6, 0.3), (100.0, 200.0, 300.0)):
+        recs.append(_rec("y", j, pv, hv))           # reversed
+        pred[_pkey("y", j, seq_len)] = pv
+    out = compute_speclib_i1(recs, pred, top_k=6, seq_len=seq_len)
+    assert out["spec_pattern_spearman_b"] == pytest.approx(1.0)
+    assert out["spec_pattern_spearman_y"] == pytest.approx(-1.0)
+    assert out["spec_pattern_spearman"] == pytest.approx(0.0)

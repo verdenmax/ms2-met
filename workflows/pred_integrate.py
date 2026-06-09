@@ -9,7 +9,7 @@ import logging
 
 import numpy as np
 
-from workflows.pred_features import spectral_angle, _weighted_pearson
+from workflows.pred_features import spectral_angle, spearman_sim, _weighted_pearson
 from workflows.pred_store import frag_key, frag_pos_for_ion
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,9 @@ I1_KEYS = (
     "spec_pattern_SA_b",
     "spec_pattern_SA_y",
     "spec_pattern_SA",
+    "spec_pattern_spearman_b",
+    "spec_pattern_spearman_y",
+    "spec_pattern_spearman",
     "spec_pattern_LH_consistency",
     "n_fragments_in_F",
 )
@@ -36,7 +39,10 @@ def compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict:
     frag_records: list of dicts (already-separable fragments) with keys
         ion_type ('b'/'y'), ion_num (1-based), light_apex, heavy_apex.
     pred_frags:   {frag_key: intensity} for this PSM, or None (no coverage).
-    Returns a fixed-key dict (I1_KEYS); NaN where undefined.
+    Returns a fixed-key dict (I1_KEYS); NaN where undefined. Emits both the
+    magnitude-based spectral angle (`spec_pattern_SA_*`) and a rank-based
+    Spearman (`spec_pattern_spearman_*`, predicted vs observed-heavy, per ion
+    type, >=3 points) which is robust to the b2-dominance / b:y scale bias.
     """
     if not pred_frags or not frag_records:
         logger.debug("compute_speclib_i1: no pred_frags or no records -> NaN")
@@ -68,6 +74,22 @@ def compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict:
     both = [s for s in (sa_b, sa_y) if np.isfinite(s)]
     sa_comb = float(np.mean(both)) if both else float("nan")
 
+    def sp_for(ion_type):
+        # Spearman needs >=3 points: n=2 is degenerate (always +-1). Computed
+        # on the same top-K F subset, predicted vs observed-heavy, per ion
+        # type (rank metric is robust to the b2-dominance / b:y scale bias
+        # that inflates the magnitude-based spectral angle).
+        sub = [r for r in F if r["ion_type"] == ion_type]
+        if len(sub) < 3:
+            return float("nan")
+        return spearman_sim([r["pred"] for r in sub],
+                            [r["heavy_apex"] for r in sub])
+
+    sp_b = sp_for("b")
+    sp_y = sp_for("y")
+    sp_both = [s for s in (sp_b, sp_y) if np.isfinite(s)]
+    sp_comb = float(np.mean(sp_both)) if sp_both else float("nan")
+
     lh = _weighted_pearson([r["light_apex"] for r in F],
                            [r["heavy_apex"] for r in F],
                            [r["pred"] for r in F])
@@ -76,6 +98,9 @@ def compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict:
         "spec_pattern_SA_b": sa_b,
         "spec_pattern_SA_y": sa_y,
         "spec_pattern_SA": sa_comb,
+        "spec_pattern_spearman_b": sp_b,
+        "spec_pattern_spearman_y": sp_y,
+        "spec_pattern_spearman": sp_comb,
         "spec_pattern_LH_consistency": lh,
         "n_fragments_in_F": len(F),
     }
