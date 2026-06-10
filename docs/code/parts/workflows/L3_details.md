@@ -97,3 +97,5 @@
 ### J5 自适应覆盖度接入（Phase 2c）
 
 `single_pair_work` 在 I1 / I2-I3-J2 之后再合并 `compute_speclib_adaptive`，复用同一批可分碎片记录，新增 `global_lh_ratio`（F 上 `heavy/light` 中位数）与 `pred_coverage_adaptive`（F 中 light>0 且 `heavy ≥ α·light·global_lh` 的占比；`α`=`pred_signal_alpha`，缺省 0.2）。这是比固定 floor 更物理的「该碎片是否如预期出现重标」判据，作**增量列**与既有固定-floor 的 I3/J2 并存。公式按 spec §4.7 更正（期望=`light·glh`，不重复乘预测相对强度）。
+
+最后合并 `compute_speclib_coelut`（spec §13，碎片层「轻↔重共洗脱」）：碎片记录里现在还存 `heavy_coelut`=重标在**轻标碎片峰顶 cycle(±1)** 处的强度（`heavy_coelut_at_light_apex`，`cycle_idx` 为全局 DIA cycle 跨窗可比、排除 `-1` 哨兵）。据此出 `pred_coverage_coelut`/`frag_offtime_fraction`/`spec_pattern_SA_coelut`——把"重标出现没"从「窗内有信号」升级为「**在轻标那个时刻共洗脱**」，专治错峰干扰假阳（现有 `pred_coverage`/SA 取窗内最大、不看时间会被骗）。

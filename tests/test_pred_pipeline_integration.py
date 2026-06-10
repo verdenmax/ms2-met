@@ -134,3 +134,13 @@ def test_single_pair_work_emits_adaptive_columns():
         pred_frags={_fk3("b", 0, 1): 1.0}, speclib_enabled=True)
     assert "global_lh_ratio" in feats
     assert "pred_coverage_adaptive" in feats
+
+
+def test_single_pair_work_emits_coelut_columns():
+    from workflows.pred_store import frag_key as _fk4
+    feats = single_pair_work(
+        _psm2(), _FakeDia(), _cfg2(),
+        pred_frags={_fk4("b", 0, 1): 1.0}, speclib_enabled=True)
+    for col in ("pred_coverage_coelut", "frag_offtime_fraction",
+                "spec_pattern_SA_coelut"):
+        assert col in feats

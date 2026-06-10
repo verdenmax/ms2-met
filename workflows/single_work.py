@@ -423,6 +423,39 @@ def multi_batch_work(
     return features
 
 
+def heavy_coelut_at_light_apex(light_xic, heavy_xic) -> float:
+    """Heavy fragment intensity AT the light fragment's apex cycle (+-1).
+
+    Encodes the "light constrains heavy" rule: a real SILAC pair co-elutes,
+    so the heavy must peak at the SAME global DIA cycle as its trusted light
+    partner. Off-peak interference (heavy peak at a different cycle) is
+    therefore excluded.
+
+    `cycle_idx` is the GLOBAL DIA cycle (comparable across isolation windows;
+    see dia_data._ms2_cycle_idx), so the light-window and heavy-window XICs
+    are alignable. Returns 0.0 when either XIC is empty, the light has no
+    positive peak, the light apex lands on the invalid (-1) sentinel, or no
+    heavy entry sits within +-1 of the light apex cycle. Invalid (-1) heavy
+    entries are excluded (mirrors _calc_cycle_offset's `cycle_idx >= 0`
+    guard) so they cannot spuriously match a light apex near cycle 0.
+    """
+    if light_xic is None or heavy_xic is None:
+        return 0.0
+    if len(light_xic) == 0 or len(heavy_xic) == 0:
+        return 0.0
+    li = light_xic["intensity"]
+    if float(np.max(li)) <= 0:
+        return 0.0
+    l_cyc = int(light_xic["cycle_idx"][int(np.argmax(li))])
+    if l_cyc < 0:
+        return 0.0
+    h_cyc = heavy_xic["cycle_idx"]
+    mask = (np.abs(h_cyc - l_cyc) <= 1) & (h_cyc >= 0)
+    if not mask.any():
+        return 0.0
+    return float(np.max(heavy_xic["intensity"][mask]))
+
+
 def single_pair_work(
     psm: PSMInfo,
     dia_data: DIAData,
@@ -646,10 +679,16 @@ def single_pair_work(
                      if len(light_ions_xic) else 0.0)
         _heavy_ap = (float(np.max(heavy_ions_xic["intensity"]))
                      if len(heavy_ions_xic) else 0.0)
+        # heavy_coelut: heavy intensity AT the light fragment's apex cycle
+        # (+-1). A real SILAC pair co-elutes; off-peak interference -> ~0.
+        # ("light constrains heavy", spec 13 / coelut features.)
+        _heavy_coelut = heavy_coelut_at_light_apex(
+            light_ions_xic, heavy_ions_xic)
         speclib_frag_records.append({
             "ion_type": ions_type, "ion_num": ions_num,
             "light_mass": light_mass, "heavy_mass": heavy_mass,
             "light_apex": _light_ap, "heavy_apex": _heavy_ap,
+            "heavy_coelut": _heavy_coelut,
         })
 
         if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
@@ -829,7 +868,8 @@ def single_pair_work(
     if speclib_enabled:
         from workflows.pred_integrate import (compute_speclib_i1,
                                               compute_speclib_i2_i3_j2,
-                                              compute_speclib_adaptive)
+                                              compute_speclib_adaptive,
+                                              compute_speclib_coelut)
         presence_floor = (config.getfloat(ConfigKeys.SPECLIB,
                                           ConfigKeys.PRED_PRESENCE_FLOOR,
                                           fallback=0.0)
@@ -848,6 +888,9 @@ def single_pair_work(
         features.update(compute_speclib_adaptive(
             speclib_frag_records, pred_frags, pred_top_k, len(psm._sequence),
             alpha))
+        features.update(compute_speclib_coelut(
+            speclib_frag_records, pred_frags, pred_top_k, len(psm._sequence),
+            presence_floor))
 
     return features
 

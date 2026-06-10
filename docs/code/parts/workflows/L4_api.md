@@ -105,3 +105,6 @@
 
 - `ADAPTIVE_KEYS` — `("global_lh_ratio", "pred_coverage_adaptive")`。
 - `compute_speclib_adaptive(frag_records, pred_frags, top_k, seq_len, alpha) -> dict` — `global_lh_ratio`=F 中 `heavy/light` 中位数（两端 apex>0）；`pred_coverage_adaptive`=F 中 light>0 且 `heavy ≥ α·light·glh` 的占比；无效 → NaN。`α` 来自 `[speclib] pred_signal_alpha`（缺省 0.2）。**更正**：期望强度 = `light·glh`（不乘预测相对强度，避免双重计量，见 spec §4.7）。
+- `COELUT_KEYS` — `("pred_coverage_coelut", "frag_offtime_fraction", "spec_pattern_SA_coelut")`。
+- `compute_speclib_coelut(frag_records, pred_frags, top_k, seq_len, presence_floor) -> dict` — 碎片层「轻↔重共洗脱」(spec §13)，用记录里的 `heavy_coelut`（重标在轻标峰顶 cycle±1 处的强度）：`pred_coverage_coelut`=F 中 `heavy_coelut>floor` 占比；`frag_offtime_fraction`=F 中有重标(`heavy_apex>floor`)但不在轻标峰位(`heavy_coelut≤floor`)的占比（无重标→NaN）；`spec_pattern_SA_coelut`=谱角(pred, heavy_coelut) 分 ion-type 取均值。无预测/无记录/无候选 → 固定列 NaN。
+- `heavy_coelut_at_light_apex(light_xic, heavy_xic) -> float`（`single_work.py`）— 取重标在轻标 apex `cycle_idx`(±1)处的最大强度；空 XIC / 轻标无正峰 / 轻标 apex 落在 `-1` 哨兵 / 无重标在容差内 → 0.0；排除 `cycle_idx<0` 的无效行（防 `-1` 哨兵误配，与 `_calc_cycle_offset` 守卫一致）。`cycle_idx` 为**全局 DIA cycle**，跨隔离窗可比。

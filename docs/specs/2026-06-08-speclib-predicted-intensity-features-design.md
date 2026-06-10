@@ -355,3 +355,22 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 **本期做类1（L0/L1）+ 类3（重标出窗）+ 类4（无 K/R 标记位点）**，用现成的 `entrapment_classifier` + `heavy_out_of_range` flag + `has_label_site`（序列查 K/R）；**类2（污染物名单）留待后续**。剔除优先级：类1（不可分）> 类4（无标记位点）> 类3（出窗）——越靠前越本质，但三者都剔。
 
 > **类4 的诚实标注**：无 K/R 肽多为蛋白 C 端肽，很少（pilot 干净 trap 里仅 1 条；target 里约 0.4%）；本期只对 trap 侧过滤（target 侧的无 K/R 肽同样无法被本工具验证，属评估范围外，留作后续说明）。
+
+---
+
+## 13. 碎片层「轻↔重共洗脱」特征（2026-06-10）
+
+**动机（从轻标约束重标）**：PSM 由**轻标**鉴定 → 轻标可信。SILAC 轻重是同一分子,**必须在同一时刻洗脱（同一全局 DIA cycle）**。现有 `pred_coverage`/`spec_pattern_SA` 取**窗内最大重标**,**不看时间** → 错峰干扰(别的肽/噪声落在该 m/z、但在错开的 cycle)被当成"重标出现"。实测:纯干扰 PSM `NPESDSSKWLSGQELADLYK`(重母离子=0)`pred_coverage`=1.0,全是错峰噪声灌的。
+
+**核心量 `heavy_coelut`**:每根碎片,取**重标在「轻标碎片峰顶 cycle」(±1)处**的强度(`single_work.heavy_coelut_at_light_apex`)。`cycle_idx` 是**全局 DIA cycle**(同一周期的所有隔离窗共用同一 MS1 survey scan,故跨窗可比,见 `dia_data._ms2_cycle_idx`)→ 轻窗与重窗 XIC 可对齐。无效 `cycle_idx=-1`(`precursorScanRef` 缺失的哨兵)被排除(`>=0` 守卫,与 `_calc_cycle_offset` 一致)。`heavy_coelut ≤ heavy_apex` 恒成立。
+
+**三个特征(`compute_speclib_coelut`,进 feature_type=0)**:
+| 列 | 定义 | 真肽 | 错峰干扰 |
+|---|---|---|---|
+| `pred_coverage_coelut` | top-K 中 `heavy_coelut > floor` 的占比(共洗脱覆盖) | 高 | **低** |
+| `frag_offtime_fraction` | top-K 中有重标信号(`heavy_apex>floor`)、但**不在轻标峰位**(`heavy_coelut≤floor`)的占比 | ~0 | **高** | 
+| `spec_pattern_SA_coelut` | 谱角(预测 vs `heavy_coelut`),分 ion-type 取均值 | 高 | **低** |
+
+`frag_offtime_fraction` 是**最直接的干扰指纹**;无重标信号时为 NaN(区别于"在场=0",由覆盖列承担)。验证:`NPESDS…` 覆盖 1.0→共洗脱覆盖 0.21;真肽 `DGFLLDGFPR` 0.94→0.83(轻重本就同峰,几乎不降)。
+
+**只治得了「共隔离/错峰干扰」那类**;「活体污染产生的真肽」「同 m/z 的人源共隔离真配对」是 SILAC 原理上限(§12),本特征治不了。

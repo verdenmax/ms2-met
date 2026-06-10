@@ -233,3 +233,73 @@ def compute_speclib_adaptive(frag_records, pred_frags, top_k, seq_len,
                    if r["heavy_apex"] >= alpha * r["light_apex"] * glh]
         out["pred_coverage_adaptive"] = len(present) / len(valid)
     return out
+
+
+COELUT_KEYS = ("pred_coverage_coelut", "frag_offtime_fraction",
+               "spec_pattern_SA_coelut")
+
+
+def _nan_coelut() -> dict:
+    return {k: float("nan") for k in COELUT_KEYS}
+
+
+def compute_speclib_coelut(frag_records, pred_frags, top_k, seq_len,
+                           presence_floor) -> dict:
+    """Fragment-level light<->heavy co-elution features (spec 13).
+
+    Records carry `heavy_coelut` = the heavy intensity AT the light fragment's
+    apex cycle (+-1), computed upstream in single_pair_work. Unlike
+    `heavy_apex` (max anywhere in the RT window), `heavy_coelut` is ~0 for
+    off-peak interference, so these features encode the "light constrains
+    heavy" rule: a real heavy fragment must co-elute with its light partner.
+
+    Returns fixed COELUT_KEYS:
+      - pred_coverage_coelut: top-K fraction whose heavy CO-ELUTES (vs the
+        max-in-window pred_coverage that interference inflates).
+      - frag_offtime_fraction: among top-K with ANY heavy signal
+        (heavy_apex > floor), the fraction whose heavy is OFF the light apex
+        (heavy_coelut <= floor) -- the interference fingerprint. NaN when no
+        fragment has heavy signal.
+      - spec_pattern_SA_coelut: per-ion-type spectral angle (pred vs
+        heavy_coelut), mean of finite; off-peak interference no longer props
+        it up.
+    Records missing `heavy_coelut` are treated as 0 (absent).
+    """
+    if not pred_frags or not frag_records:
+        logger.debug("coelut: no pred_frags or no records -> NaN")
+        return _nan_coelut()
+
+    cands = []
+    for r in frag_records:
+        fp = frag_pos_for_ion(r["ion_type"], r["ion_num"], seq_len)
+        pi = pred_frags.get(frag_key(r["ion_type"], fp, 1))
+        if pi is not None and np.isfinite(pi):
+            cands.append({**r, "pred": float(pi)})
+    if not cands:
+        logger.debug("coelut: no fragment matched a prediction -> NaN")
+        return _nan_coelut()
+
+    cands.sort(key=lambda r: r["pred"], reverse=True)
+    F = cands[:top_k]
+
+    out = _nan_coelut()
+    coelut = [r for r in F if r.get("heavy_coelut", 0.0) > presence_floor]
+    out["pred_coverage_coelut"] = len(coelut) / len(F)
+
+    with_heavy = [r for r in F if r["heavy_apex"] > presence_floor]
+    if with_heavy:
+        offtime = [r for r in with_heavy
+                   if r.get("heavy_coelut", 0.0) <= presence_floor]
+        out["frag_offtime_fraction"] = len(offtime) / len(with_heavy)
+
+    def sa_for(ion_type):
+        sub = [r for r in F if r["ion_type"] == ion_type]
+        if len(sub) < 2:
+            return float("nan")
+        return spectral_angle([r["pred"] for r in sub],
+                              [r.get("heavy_coelut", 0.0) for r in sub])
+
+    sa_b, sa_y = sa_for("b"), sa_for("y")
+    both = [s for s in (sa_b, sa_y) if np.isfinite(s)]
+    out["spec_pattern_SA_coelut"] = float(np.mean(both)) if both else float("nan")
+    return out
