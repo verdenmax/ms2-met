@@ -8,6 +8,8 @@ Two filters implemented now (contaminant list = TODO, spec §12 class 2):
   - class 3  heavy-out-of-window: heavy precursor m/z outside this raw's
     acquisition range (`heavy_out_of_range == 1`) -> SILAC channel missing
     -> drop.
+  - class 4  no-label-site: peptide has no K/R -> no heavy partner
+    (heavy == light) -> light/heavy validation undefined -> drop.
 
 Positives (targets) are never dropped. Only `label_type == "negative"`
 rows are evaluated. Usage:
@@ -38,20 +40,35 @@ logger = logging.getLogger(__name__)
 HOMOLOG_DROP_LEVELS = frozenset({"L0", "L1"})
 
 
-def beyond_tool_limit(level: str, heavy_out_of_range) -> tuple[bool, str | None]:
+def has_label_site(sequence: str) -> bool:
+    """True iff the peptide carries a SILAC label site (any K or R).
+
+    A peptide with no K/R has no heavy partner (heavy == light), so the
+    light/heavy validation is undefined for it (spec §12 class 4)."""
+    return any(aa in "KR" for aa in str(sequence).upper())
+
+
+def beyond_tool_limit(level: str, heavy_out_of_range,
+                      has_kr: bool = True) -> tuple[bool, str | None]:
     """Decide whether a trap PSM is beyond the SILAC tool's limit (spec §12).
 
     Args:
         level: entrapment level "L0"/"L1"/"L4" from entrapment_classifier.
         heavy_out_of_range: 0/1 (or bool); 1 => heavy precursor not acquired.
+        has_kr: whether the peptide carries a label site (K/R). False =>
+            no heavy partner => SILAC inapplicable (class 4).
 
     Returns:
-        (drop, reason). reason is "homolog_L0"/"homolog_L1" (class 1) or
-        "heavy_out_of_window" (class 3), else None. Class 1 takes precedence
-        when both apply (it's the more fundamental indistinguishability).
+        (drop, reason). reason is "homolog_L0"/"homolog_L1" (class 1),
+        "no_label_site" (class 4), or "heavy_out_of_window" (class 3), else
+        None. Precedence: class 1 (indistinguishable) > class 4 (no label
+        site) > class 3 (out of window) — earlier reasons are more
+        fundamental; all three drop the PSM regardless.
     """
     if level in HOMOLOG_DROP_LEVELS:
         return True, f"homolog_{level}"
+    if not has_kr:
+        return True, "no_label_site"
     if int(heavy_out_of_range) == 1:
         return True, "heavy_out_of_window"
     return False, None
@@ -68,7 +85,8 @@ def annotate_traps(df: pd.DataFrame, target_index) -> pd.DataFrame:
             continue
         lvl = classify_peptide(str(row["sequence"]), target_index)
         hor = row.get("heavy_out_of_range", 0)
-        drop, reason = beyond_tool_limit(lvl, hor)
+        has_kr = has_label_site(row["sequence"])
+        drop, reason = beyond_tool_limit(lvl, hor, has_kr)
         levels.append(lvl); drops.append(drop); reasons.append(reason)
     out["entrap_level"] = levels
     out["domain_drop"] = drops

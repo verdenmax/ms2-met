@@ -6,7 +6,8 @@ heavy out of window; class 1 takes precedence).
 """
 import pandas as pd
 
-from tools.trap_domain_filter import beyond_tool_limit, annotate_traps
+from tools.trap_domain_filter import (
+    beyond_tool_limit, annotate_traps, has_label_site)
 
 
 def test_l0_homolog_is_dropped():
@@ -23,6 +24,31 @@ def test_heavy_out_of_window_is_dropped():
 
 def test_genuine_trap_in_window_is_kept():
     assert beyond_tool_limit("L4", 0) == (False, None)
+
+
+def test_no_label_site_is_dropped():
+    # peptide with no K/R -> heavy == light -> SILAC undefined (class 4)
+    assert beyond_tool_limit("L4", 0, has_kr=False) == (True, "no_label_site")
+
+
+def test_has_kr_defaults_true_keeps_genuine_trap():
+    # default has_kr=True preserves the original 2-arg behavior
+    assert beyond_tool_limit("L4", 0) == (False, None)
+
+
+def test_homolog_takes_precedence_over_no_label_site():
+    assert beyond_tool_limit("L0", 0, has_kr=False) == (True, "homolog_L0")
+
+
+def test_no_label_site_takes_precedence_over_out_of_window():
+    assert beyond_tool_limit("L4", 1, has_kr=False) == (True, "no_label_site")
+
+
+def test_has_label_site_detects_kr():
+    assert has_label_site("PEPTIDEK") is True       # ends in K
+    assert has_label_site("PEPTIDER") is True        # ends in R
+    assert has_label_site("ACDEFGHILMNPQSTVWY") is False   # no K/R
+    assert has_label_site("LQEFLQHVS") is False       # real pilot example
 
 
 def test_homolog_takes_precedence_over_out_of_window():
