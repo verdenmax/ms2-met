@@ -33,19 +33,12 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from spectrum.entrapment_classifier import classify_peptide, load_target_fasta
+from spectrum.psm_info import has_label_site  # noqa: F401  (re-exported for tests)
 
 logger = logging.getLogger(__name__)
 
 # Entrapment levels considered mass-spec-indistinguishable from human (class 1).
 HOMOLOG_DROP_LEVELS = frozenset({"L0", "L1"})
-
-
-def has_label_site(sequence: str) -> bool:
-    """True iff the peptide carries a SILAC label site (any K or R).
-
-    A peptide with no K/R has no heavy partner (heavy == light), so the
-    light/heavy validation is undefined for it (spec §12 class 4)."""
-    return any(aa in "KR" for aa in str(sequence).upper())
 
 
 def beyond_tool_limit(level: str, heavy_out_of_range,
