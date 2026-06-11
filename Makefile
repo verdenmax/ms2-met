@@ -556,34 +556,36 @@ all-neg10: 2th-neg10 5th-neg10 normal-neg10
 .PHONY: train-exp1 train-exp2 clean-train
 .PHONY: train-legacy-all train-clean-all train-neg05-all train-neg10-all train-all
 
-# features.csv 不存在时自动跑对应特征提取
-runs/baseline_2da_clean/features.csv:
+# features.csv 规则：缺失时自动跑对应特征提取；并声明上游依赖
+# （baseline config.ini + extract ini + dataset JSON），任一比 features.csv 新
+# 时强制重跑——否则改了 [speclib] 等配置后 train-* 会静默用旧特征训练。
+runs/baseline_2da_clean/features.csv: $(DIR_2TH)/config.ini $(INI_2TH) $(JSON_2TH)
 	$(MAKE) 2th
 
-runs/baseline_5da_clean/features.csv:
+runs/baseline_5da_clean/features.csv: $(DIR_5TH)/config.ini $(INI_5TH) $(JSON_5TH)
 	$(MAKE) 5th
 
-runs/baseline_normal_clean/features.csv:
+runs/baseline_normal_clean/features.csv: $(DIR_NORMAL)/config.ini $(INI_NORMAL) $(JSON_NORMAL)
 	$(MAKE) normal
 
 # neg-FDR variants (review fix: ensure train-{neg05,neg10}-all can auto-trigger
-# the extraction chain if features.csv is missing, matching the *_clean pattern).
-runs/baseline_2da_neg05/features.csv:
+# the extraction chain if features.csv is missing OR stale, matching *_clean).
+runs/baseline_2da_neg05/features.csv: $(DIR_2TH_NEG05)/config.ini $(INI_2TH_NEG05) $(JSON_2TH_NEG05)
 	$(MAKE) 2th-neg05
 
-runs/baseline_5da_neg05/features.csv:
+runs/baseline_5da_neg05/features.csv: $(DIR_5TH_NEG05)/config.ini $(INI_5TH_NEG05) $(JSON_5TH_NEG05)
 	$(MAKE) 5th-neg05
 
-runs/baseline_normal_neg05/features.csv:
+runs/baseline_normal_neg05/features.csv: $(DIR_NORMAL_NEG05)/config.ini $(INI_NORMAL_NEG05) $(JSON_NORMAL_NEG05)
 	$(MAKE) normal-neg05
 
-runs/baseline_2da_neg10/features.csv:
+runs/baseline_2da_neg10/features.csv: $(DIR_2TH_NEG10)/config.ini $(INI_2TH_NEG10) $(JSON_2TH_NEG10)
 	$(MAKE) 2th-neg10
 
-runs/baseline_5da_neg10/features.csv:
+runs/baseline_5da_neg10/features.csv: $(DIR_5TH_NEG10)/config.ini $(INI_5TH_NEG10) $(JSON_5TH_NEG10)
 	$(MAKE) 5th-neg10
 
-runs/baseline_normal_neg10/features.csv:
+runs/baseline_normal_neg10/features.csv: $(DIR_NORMAL_NEG10)/config.ini $(INI_NORMAL_NEG10) $(JSON_NORMAL_NEG10)
 	$(MAKE) normal-neg10
 
 train-exp1: runs/baseline_2da_clean/features.csv tools/spec_trainer/config/exp1.yaml

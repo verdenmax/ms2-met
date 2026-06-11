@@ -4,3 +4,15 @@ pandas
 pyteomics
 pyarrow
 scipy
+
+# 训练/评估阶段 (tools/spec_trainer) 运行时依赖。
+# spec_trainer/src 的 main.py + models/* 会 import 以下库；缺失时训练阶段
+# 会在 import 期直接崩溃。本机 (Arch) 建议用 pacman/yay 或 conda 安装，
+# 例如：sudo pacman -S python-lightgbm python-xgboost python-scikit-learn \
+#                      python-matplotlib python-yaml python-joblib
+lightgbm
+xgboost
+scikit-learn
+matplotlib
+pyyaml
+joblib
