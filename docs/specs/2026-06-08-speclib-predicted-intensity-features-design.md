@@ -352,9 +352,9 @@ single_work 碎片循环（每 PSM，**中心化谱图**）
 
 ### 12.4 当前实现范围
 
-**本期做类1（L0/L1）+ 类3（重标出窗）+ 类4（无 K/R 标记位点）**，用现成的 `entrapment_classifier` + `heavy_out_of_range` flag + `has_label_site`（序列查 K/R）；**类2（污染物名单）留待后续**。剔除优先级：类1（不可分）> 类4（无标记位点）> 类3（出窗）——越靠前越本质，但三者都剔。
+**类1（L0/L1）+ 类3（重标出窗）+ 类4（无标记位点）已实现。** 其中**类4（无 K/R / 无标记位点）已落地 `extract_common`（JSON 生成阶段，正负例都剔），且 scheme-aware**：由 `[extract] labeling`（缺省 `silac`）驱动——SILAC 剔无 K/R；CHEAVY(¹³C)/NHEAVY(¹⁵N) 全原子标记下每条肽都被标记 → 不剔（no-op）。判据集中在 `spectrum/psm_info.has_label_site(seq, heavy_type)`，`extract_common` 与 `tools/trap_domain_filter` 共用。类1 仍由 `extract_common` 的 `filter_by_entrapment`（`drop_levels=L0,L1`）在 JSON 阶段完成；**类2（污染物名单）留待后续**。剔除优先级（trap_domain_filter 评估侧）：类1 > 类4 > 类3。
 
-> **类4 的诚实标注**：无 K/R 肽多为蛋白 C 端肽，很少（pilot 干净 trap 里仅 1 条；target 里约 0.4%）；本期只对 trap 侧过滤（target 侧的无 K/R 肽同样无法被本工具验证，属评估范围外，留作后续说明）。
+> 设计文档：`docs/specs/2026-06-11-no-label-site-filter-design.md`。
 
 ---
 
