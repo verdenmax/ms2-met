@@ -26,7 +26,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from spectrum.light_result import LightResult
-from spectrum.psm_info import PSMInfo
+from spectrum.psm_info import PSMInfo, HeavyType, has_label_site
 from spectrum.species_marker import matches_species_marker
 
 
@@ -509,6 +509,53 @@ def filter_by_entrapment(
     return kept
 
 
+_LABELING_ALIASES = {
+    "silac": HeavyType.SILAC,
+    "c13": HeavyType.CHEAVY, "13c": HeavyType.CHEAVY, "cheavy": HeavyType.CHEAVY,
+    "n15": HeavyType.NHEAVY, "15n": HeavyType.NHEAVY, "nheavy": HeavyType.NHEAVY,
+}
+
+
+def _parse_labeling(config: configparser.ConfigParser) -> HeavyType:
+    """Read [extract] labeling (default 'silac'); map to HeavyType.
+
+    Accepts case-insensitive aliases: silac; c13/13c/cheavy; n15/15n/nheavy.
+    Raises ValueError on an unknown value.
+    """
+    raw = "silac"
+    if config.has_section("extract"):
+        raw = config["extract"].get("labeling", "silac")
+    key = str(raw).strip().lower()
+    if key not in _LABELING_ALIASES:
+        raise ValueError(
+            f"非法 [extract] labeling={raw!r}（合法: {sorted(_LABELING_ALIASES)}）")
+    return _LABELING_ALIASES[key]
+
+
+def filter_by_label_site(psms: list, heavy_type: HeavyType) -> list:
+    """Drop PSMs (both target and trap) with no metabolic-label site under
+    heavy_type — they cannot be light/heavy validated (spec §12 class 4).
+
+    Under SILAC this drops no-K/R peptides; under CHEAVY/NHEAVY every peptide
+    is labeled so nothing is dropped.
+    """
+    kept = []
+    dropped_pos = 0
+    dropped_neg = 0
+    for psm in psms:
+        if has_label_site(psm._sequence, heavy_type):
+            kept.append(psm)
+            continue
+        if psm._label_type == "negative":
+            dropped_neg += 1
+        else:
+            dropped_pos += 1
+    logging.info(
+        f"label-site 过滤({heavy_type.name}): 剔除 positive={dropped_pos}, "
+        f"negative={dropped_neg}, 输出={len(kept)}")
+    return kept
+
+
 def extract_n_engines(config: configparser.ConfigParser) -> list:
     """根据 config 加载各引擎并构造正负例（含可选 entrapment 过滤）。"""
     engines_str = config["extract"]["engines"]
@@ -537,6 +584,10 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
 
     psms = extract_n_engines_from_psms_dual(
         engine_psms, engine_order, positive_marker)
+
+    # Domain-of-applicability filter: drop peptides with no metabolic-label
+    # site (spec §12 class 4). Runs unconditionally, both classes.
+    psms = filter_by_label_site(psms, _parse_labeling(config))
 
     if "entrapment" in config:
         classified_tsv = os.path.expanduser(

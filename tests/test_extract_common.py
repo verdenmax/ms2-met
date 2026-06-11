@@ -588,11 +588,11 @@ def test_extract_n_engines_with_entrapment_section_e2e(tmp_path, monkeypatch):
     from tools import extract_common
 
     # 准备：3 个 negative，其中 L0/L1 应被剔除
-    psm_l0_neg = _make_psm("L0X", 2, "TRAP", raw="r1")
+    psm_l0_neg = _make_psm("L0XK", 2, "TRAP", raw="r1")
     psm_l0_neg._label_type = "negative"
-    psm_l4_neg = _make_psm("L4X", 2, "TRAP", raw="r1")
+    psm_l4_neg = _make_psm("L4XK", 2, "TRAP", raw="r1")
     psm_l4_neg._label_type = "negative"
-    psm_pos = _make_psm("HUM", 2, "X_HUMAN", raw="r1")
+    psm_pos = _make_psm("HUMK", 2, "X_HUMAN", raw="r1")
     psm_pos._label_type = "positive"
 
     # monkey-patch extract_n_engines_from_psms 不执行真引擎加载
@@ -609,8 +609,8 @@ def test_extract_n_engines_with_entrapment_section_e2e(tmp_path, monkeypatch):
     # 构造 classified.tsv
     tsv = tmp_path / "classified.tsv"
     _write_classified_tsv_with_group(tsv, [
-        {"peptide": "L0X", "charge": "2", "spectrum_file": "r1", "level": "L0"},
-        {"peptide": "L4X", "charge": "2", "spectrum_file": "r1", "level": "L4"},
+        {"peptide": "L0XK", "charge": "2", "spectrum_file": "r1", "level": "L0"},
+        {"peptide": "L4XK", "charge": "2", "spectrum_file": "r1", "level": "L4"},
     ])
 
     cfg = configparser.ConfigParser()
@@ -626,9 +626,9 @@ def test_extract_n_engines_with_entrapment_section_e2e(tmp_path, monkeypatch):
 
     result = extract_common.extract_n_engines(cfg)
     seqs = {p._sequence for p in result}
-    assert "L0X" not in seqs
-    assert "L4X" in seqs
-    assert "HUM" in seqs
+    assert "L0XK" not in seqs
+    assert "L4XK" in seqs
+    assert "HUMK" in seqs
 
 
 def test_extract_n_engines_no_entrapment_section_skips(tmp_path, monkeypatch):
@@ -636,7 +636,7 @@ def test_extract_n_engines_no_entrapment_section_skips(tmp_path, monkeypatch):
     import configparser
     from tools import extract_common
 
-    psm_neg = _make_psm("L0X", 2, "TRAP", raw="r1")
+    psm_neg = _make_psm("L0XR", 2, "TRAP", raw="r1")
     psm_neg._label_type = "negative"
 
     monkeypatch.setattr(extract_common, "load_engine_psms_dual",
@@ -658,7 +658,7 @@ def test_extract_n_engines_empty_classified_tsv_path(tmp_path, monkeypatch):
     import configparser
     from tools import extract_common
 
-    psm_neg = _make_psm("X", 2, "TRAP", raw="r1")
+    psm_neg = _make_psm("XK", 2, "TRAP", raw="r1")
     psm_neg._label_type = "negative"
 
     monkeypatch.setattr(extract_common, "load_engine_psms_dual",
@@ -686,11 +686,11 @@ def test_extract_with_target_fasta_runs_classifier_inline(tmp_path, monkeypatch)
     import configparser
     from tools import extract_common
 
-    psm_l0_neg = _make_psm("HUMANSEQ", 2, "TRAP", raw="r1")
+    psm_l0_neg = _make_psm("HUMANSEQAAAR", 2, "TRAP", raw="r1")
     psm_l0_neg._label_type = "negative"
-    psm_l4_neg = _make_psm("WWWWWW", 2, "TRAP", raw="r1")
+    psm_l4_neg = _make_psm("WWWWWWK", 2, "TRAP", raw="r1")
     psm_l4_neg._label_type = "negative"
-    psm_pos = _make_psm("HUM", 2, "X_HUMAN", raw="r1")
+    psm_pos = _make_psm("HUMK", 2, "X_HUMAN", raw="r1")
     psm_pos._label_type = "positive"
 
     monkeypatch.setattr(extract_common, "load_engine_psms_dual",
@@ -711,9 +711,9 @@ def test_extract_with_target_fasta_runs_classifier_inline(tmp_path, monkeypatch)
 
     result = extract_common.extract_n_engines(cfg)
     seqs = {p._sequence for p in result}
-    assert "HUMANSEQ" not in seqs
-    assert "WWWWWW" in seqs
-    assert "HUM" in seqs
+    assert "HUMANSEQAAAR" not in seqs
+    assert "WWWWWWK" in seqs
+    assert "HUMK" in seqs
 
 
 def test_extract_with_both_classified_tsv_and_fasta_prefers_tsv(tmp_path, monkeypatch):
@@ -722,9 +722,9 @@ def test_extract_with_both_classified_tsv_and_fasta_prefers_tsv(tmp_path, monkey
     import configparser
     from tools import extract_common
 
-    psm_neg = _make_psm("SEQONE", 2, "TRAP", raw="r1")
+    psm_neg = _make_psm("SEQONER", 2, "TRAP", raw="r1")
     psm_neg._label_type = "negative"
-    psm_l4 = _make_psm("L4PEP", 2, "TRAP", raw="r1")
+    psm_l4 = _make_psm("L4PEPK", 2, "TRAP", raw="r1")
     psm_l4._label_type = "negative"
 
     monkeypatch.setattr(extract_common, "load_engine_psms_dual",
@@ -732,13 +732,13 @@ def test_extract_with_both_classified_tsv_and_fasta_prefers_tsv(tmp_path, monkey
     monkeypatch.setattr(extract_common, "extract_n_engines_from_psms_dual",
                         lambda ep, eo, m: [psm_neg, psm_l4])
 
-    # FASTA says SEQONE is L0; TSV says it's L4 — TSV wins
+    # FASTA says SEQONER is L0; TSV says it's L4 — TSV wins
     fasta = tmp_path / "tiny.fasta"
-    fasta.write_text(">p1\nMKSEQONEAAAR\n")
+    fasta.write_text(">p1\nMKSEQONERAAAR\n")
     tsv = tmp_path / "classified.tsv"
     tsv.write_text("peptide\tcharge\tprecursor_mz\tretention_time\tscan_number\t"
                    "spectrum_file\tprotein_ids\tq_value\tgroup\tlevel\n"
-                   "SEQONE\t2\t500\t0\t\tr1\tp\t0\ttrap\tL4\n")
+                   "SEQONER\t2\t500\t0\t\tr1\tp\t0\ttrap\tL4\n")
 
     cfg = configparser.ConfigParser()
     cfg["extract"] = {"engines": "pfind", "positive_species_marker": "HUMAN"}
@@ -751,8 +751,8 @@ def test_extract_with_both_classified_tsv_and_fasta_prefers_tsv(tmp_path, monkey
 
     result = extract_common.extract_n_engines(cfg)
     seqs = {p._sequence for p in result}
-    # TSV says SEQONE is L4 → should be KEPT (not dropped)
-    assert "SEQONE" in seqs
+    # TSV says SEQONER is L4 → should be KEPT (not dropped)
+    assert "SEQONER" in seqs
 
 
 def test_extract_with_neither_classified_tsv_nor_fasta_skips_filter(monkeypatch):
@@ -760,7 +760,7 @@ def test_extract_with_neither_classified_tsv_nor_fasta_skips_filter(monkeypatch)
     import configparser
     from tools import extract_common
 
-    psm = _make_psm("ANY", 2, "X", raw="r1")
+    psm = _make_psm("ANYR", 2, "X", raw="r1")
     psm._label_type = "negative"
     monkeypatch.setattr(extract_common, "load_engine_psms_dual",
                         lambda n, c: {"tight": [], "loose": []})
