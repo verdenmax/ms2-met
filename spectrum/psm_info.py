@@ -263,6 +263,26 @@ def get_heavy_increase_mass(
     return increase_mass
 
 
+def has_label_site(sequence: str,
+                   heavy_type: HeavyType = HeavyType.SILAC) -> bool:
+    """Whether the peptide carries a metabolic-label site under heavy_type
+    (i.e. whether light/heavy SILAC-style validation is even defined for it).
+
+    SILAC labels only K/R, so a peptide with no K/R has no heavy partner
+    (heavy == light) and is unvalidatable. CHEAVY (¹³C) / NHEAVY (¹⁵N) are
+    whole-atom metabolic labeling — every peptide contains carbon and
+    nitrogen (the N-Cα-C backbone), so every peptide is labeled. Empty
+    sequence has no label site.
+    """
+    seq = str(sequence).upper()
+    if not seq:
+        return False
+    if heavy_type == HeavyType.SILAC:
+        return any(aa in "KR" for aa in seq)
+    # CHEAVY / NHEAVY: every peptide has C and N -> always labeled.
+    return True
+
+
 def get_theoretical_isotope_ratios(sequence: str) -> list:
     """计算肽段的理论同位素分布比例 [M0, M1, M2]（Poisson 近似）。
     基于各元素的重同位素天然丰度，用 Poisson 模型估算 M+1/M+2 相对于 M0 的比值。
