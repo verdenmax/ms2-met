@@ -29,3 +29,9 @@ def test_empty_sequence_has_no_label_site():
 def test_lowercase_is_normalized():
     assert has_label_site("peptidek", HeavyType.SILAC) is True
     assert has_label_site("acdef", HeavyType.SILAC) is False
+
+
+def test_single_residue_silac():
+    assert has_label_site("K", HeavyType.SILAC) is True
+    assert has_label_site("R", HeavyType.SILAC) is True
+    assert has_label_site("A", HeavyType.SILAC) is False

@@ -13,6 +13,14 @@ engines = pfind, diann
 # 留空时仅取所有引擎的交集，不分正负例
 positive_species_marker = HUMAN
 
+# 标记方案（可选，缺省 silac）。决定"无标记位点"过滤如何剔除肽段：
+#   silac            → 只标记 K/R，无 K/R 的肽段重版==轻版，无法轻重标验证 → 剔除（正负例都剔）
+#   c13/13c/cheavy   → ¹³C 全原子标记，每条肽都被标记 → 不剔（no-op）
+#   n15/15n/nheavy   → ¹⁵N 全原子标记，同上 → 不剔（no-op）
+# 见 docs/specs/2026-06-11-no-label-site-filter-design.md。缺省 silac：现有所有数据集都会
+# 在 JSON 生成阶段静默剔除无 K/R 肽段（剔除条数见运行日志的 "label-site 过滤" INFO 行）。
+# labeling = silac
+
 # 输出 JSON 路径（ms2-met 单引擎模式 search_engine_type=0 可直接读取）
 result_file = ./datasets/hela-2da-pfind-diann.json
 

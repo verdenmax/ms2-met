@@ -37,6 +37,12 @@ def test_parse_labeling_missing_section_defaults_silac():
     assert _parse_labeling(configparser.ConfigParser()) == HeavyType.SILAC
 
 
+def test_parse_labeling_ignores_labeling_in_wrong_section():
+    c = configparser.ConfigParser()
+    c["other"] = {"labeling": "c13"}  # only [extract] labeling is honored
+    assert _parse_labeling(c) == HeavyType.SILAC
+
+
 def test_parse_labeling_invalid_raises():
     with pytest.raises(ValueError, match="labeling"):
         _parse_labeling(_cfg("itraq"))

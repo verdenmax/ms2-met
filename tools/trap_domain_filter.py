@@ -33,7 +33,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from spectrum.entrapment_classifier import classify_peptide, load_target_fasta
-from spectrum.psm_info import has_label_site  # noqa: F401  (re-exported for tests)
+from spectrum.psm_info import has_label_site  # noqa: F401  used by annotate_traps; re-exported for tests
 
 logger = logging.getLogger(__name__)
 
