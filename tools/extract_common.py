@@ -539,8 +539,10 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
         engine_psms, engine_order, positive_marker)
 
     if "entrapment" in config:
-        classified_tsv = config["entrapment"].get("classified_tsv", "").strip()
-        target_fasta = config["entrapment"].get("target_fasta", "").strip()
+        classified_tsv = os.path.expanduser(
+            config["entrapment"].get("classified_tsv", "").strip())
+        target_fasta = os.path.expanduser(
+            config["entrapment"].get("target_fasta", "").strip())
         drop_levels_str = config["entrapment"].get(
             "drop_levels", "L0,L1").strip()
         drop_levels = {
