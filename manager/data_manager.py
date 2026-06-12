@@ -1,6 +1,7 @@
 
 import configparser
 import logging
+import os
 
 import manager.base_manager as base_manager
 from spectrum.dia_data import DIAData
@@ -57,5 +58,9 @@ class DataManager(base_manager.BaseManager):
         # P0-3 (2026-06-03 audit): single source of truth via get_centroid_params.
         dia_data._centroid_enabled, dia_data._centroid_rel_threshold = \
             self.get_centroid_params()
-        dia_data._load_from_mzml(tot_raw_path)
+        ext = os.path.splitext(tot_raw_path or "")[1].lower()
+        if ext == ".pfb":
+            dia_data._load_from_pfb(tot_raw_path)
+        else:
+            dia_data._load_from_mzml(tot_raw_path)
         return dia_data

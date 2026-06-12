@@ -61,3 +61,26 @@ def test_load_from_pfb_empty_file(tmp_path):
     assert len(d._mz_values) == 0
     assert len(d.ms1_indexs) == 0
     assert len(d.ms2_indexs) == 0
+
+
+def test_get_dia_data_object_dispatches_by_extension(monkeypatch):
+    from manager.data_manager import DataManager
+
+    called = {}
+
+    def fake_pfb(self, path):
+        called["pfb"] = path
+
+    def fake_mzml(self, path):
+        called["mzml"] = path
+
+    monkeypatch.setattr(DIAData, "_load_from_pfb", fake_pfb)
+    monkeypatch.setattr(DIAData, "_load_from_mzml", fake_mzml)
+
+    dm = DataManager(config=None, path=None)
+    dm.get_dia_data_object("/tmp/sample.pfb")
+    assert called == {"pfb": "/tmp/sample.pfb"}
+
+    called.clear()
+    dm.get_dia_data_object("/tmp/sample.mzML")
+    assert called == {"mzml": "/tmp/sample.mzML"}
