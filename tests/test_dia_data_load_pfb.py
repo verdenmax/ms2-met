@@ -1,4 +1,6 @@
 """Tests for DIAData._load_from_pfb."""
+import os
+
 import numpy as np
 import pytest
 
@@ -84,3 +86,50 @@ def test_get_dia_data_object_dispatches_by_extension(monkeypatch):
     called.clear()
     dm.get_dia_data_object("/tmp/sample.mzML")
     assert called == {"mzml": "/tmp/sample.mzML"}
+
+
+_REAL_PFB = os.path.expanduser(
+    "~/share/2026_04_27_kongweisa_diann_ZHOUHUdataset/2th/"
+    "20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1.pfb")
+
+
+@pytest.mark.skipif(not os.path.exists(_REAL_PFB),
+                    reason="real .pfb sample not available")
+def test_real_pfb_header_and_first_spectra():
+    from spectrum import pfb_reader
+    with open(_REAL_PFB, "rb") as fh:
+        addr_list_addr, scan_num = pfb_reader.read_header(fh)
+        assert scan_num == 80096
+        specs = []
+        for s in pfb_reader.iter_spectra(fh, scan_num):
+            specs.append(s)
+            if len(specs) >= 2:
+                break
+        footer = pfb_reader.read_footer(fh, addr_list_addr, scan_num)
+    s1, s2 = specs
+    assert s1.ms_level == 1
+    assert s1.rt == pytest.approx(0.1972939, rel=1e-4)
+    assert s2.ms_level == 2
+    assert s2.activation_center == pytest.approx(501.0)
+    assert s2.activation_window == pytest.approx(2.0)
+    assert footer[0] == pfb_reader.HEADER_SIZE
+
+
+def test_get_dia_data_object_dispatch_uppercase_and_none(monkeypatch):
+    from manager.data_manager import DataManager
+
+    called = {}
+    monkeypatch.setattr(DIAData, "_load_from_pfb",
+                        lambda self, path: called.__setitem__("pfb", path))
+    monkeypatch.setattr(DIAData, "_load_from_mzml",
+                        lambda self, path: called.__setitem__("mzml", path))
+    dm = DataManager(config=None, path=None)
+
+    # uppercase extension routes to PFB (case-insensitive)
+    dm.get_dia_data_object("/tmp/SAMPLE.PFB")
+    assert called == {"pfb": "/tmp/SAMPLE.PFB"}
+
+    # None path is safe and falls through to mzML (no crash)
+    called.clear()
+    dm.get_dia_data_object(None)
+    assert called == {"mzml": None}
