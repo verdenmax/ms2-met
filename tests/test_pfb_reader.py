@@ -131,3 +131,22 @@ def test_iter_spectra_negative_length_raises(tmp_path):
         _addr, scan_num = pfb_reader.read_header(fh)
         with pytest.raises(ValueError):
             list(pfb_reader.iter_spectra(fh, scan_num))
+
+
+def test_iter_scan_ids_skips_peaks(tmp_path):
+    p = tmp_path / "x.pfb"
+    write_pfb(str(p), [_MS1, _MS2])
+    with open(p, "rb") as fh:
+        _addr, scan_num = pfb_reader.read_header(fh)
+        scans = list(pfb_reader.iter_scan_ids(fh, scan_num))
+    assert scans == [1, 2]
+
+
+def test_read_footer_matches_offsets(tmp_path):
+    p = tmp_path / "x.pfb"
+    addr_list = write_pfb(str(p), [_MS1, _MS2])
+    with open(p, "rb") as fh:
+        addr_list_addr, scan_num = pfb_reader.read_header(fh)
+        footer = pfb_reader.read_footer(fh, addr_list_addr, scan_num)
+    assert footer == addr_list
+    assert footer[0] == 24

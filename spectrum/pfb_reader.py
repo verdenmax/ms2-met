@@ -137,3 +137,29 @@ def iter_spectra(fh: BinaryIO, scan_num: int) -> Iterator[PFBSpectrum]:
             mz = np.empty(0, dtype=np.float64)
             intensity = np.empty(0, dtype=np.float64)
         yield PFBSpectrum(mz=mz, intensity=intensity, **fields)
+
+
+def iter_scan_ids(fh: BinaryIO, scan_num: int) -> Iterator[int]:
+    """Pass-1: yield each spectrum's scan number, seeking past peak arrays.
+
+    `fh` must be positioned at the first spectrum (call read_header first).
+    Does NOT decode peak arrays (cheap two-pass like the mzML loader).
+    """
+    for i in range(scan_num):
+        (slen,) = struct.unpack("<i", _read_exact(fh, 4, i, "property_str_len"))
+        prop = _read_exact(fh, slen, i, "property_str").decode(
+            "utf-8").rstrip("\x00")
+        scan = int(prop.split("\t", 1)[0])
+        (pnum,) = struct.unpack("<i", _read_exact(fh, 4, i, "peak_num"))
+        fh.seek(pnum * 16, 1)  # skip mz(8) + intensity(8) per peak
+        yield scan
+
+
+def read_footer(fh: BinaryIO, addr_list_addr: int, scan_num: int) -> list[int]:
+    """Read the footer addr_list (per-spectrum file offsets). For validation."""
+    fh.seek(addr_list_addr)
+    raw = fh.read(scan_num * 8)
+    if len(raw) < scan_num * 8:
+        raise ValueError(
+            f"PFB footer truncated: want {scan_num * 8} bytes, got {len(raw)}")
+    return list(struct.unpack(f"<{scan_num}q", raw))
