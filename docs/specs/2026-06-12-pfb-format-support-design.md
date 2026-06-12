@@ -78,7 +78,8 @@ MS1 四项 + `[4]Charge(int) [5]MH+(float) [6]IonInjectionTime(float) [7]Activat
 `Scan_Idx_Addr: long long[Scan_Num]` —— 每张谱图在文件中的起始偏移。实测 `文件大小 - Addr_List_Addr == Scan_Num*8`（640768 = 80096×8）。本版加载**不依赖** footer（顺序读即可）；仅可选做一次自检（`addr_list[0]==24`）。
 
 ### 3.5 RT 单位
-实测首/末谱 RT = 0.197 → 7200.175，跨度恰为 120 分钟的秒数 → **PFB 的 RT 已是秒**，与 `DIAData.rt_values`（`_get_retention_time` 转换为秒）一致，**无需换算**。
+实测首/末谱 RT = 0.197 → 7200.175，跨度恰为 120 分钟的秒数 → **PFB 的 RT 是秒**。但管线规范单位是**分钟**（`_get_retention_time` 把 mzML 的秒 `/60` 转成分钟，`rt_values` 即分钟），故 `_load_from_pfb` 必须把 PFB 的秒 `/60` 转成分钟，否则 XIC 的 `searchsorted(rt)` 会因 60× 偏差全部落空。
+（订正：本节早期草稿误称"DIAData 也是秒、无需换算"——经核对 `_get_retention_time` 文档串「Return retention time in MINUTES」及 L3/L4 文档，规范单位是分钟。）
 
 ---
 
@@ -130,7 +131,7 @@ def read_footer(fh, addr_list_addr, scan_num) -> list[int]  # 可选，自检用
 | DIAData 统一字段 | PFB 来源 |
 |---|---|
 | `scan_id` | `scan` |
-| `rt`（秒） | `rt`（已是秒，不换算） |
+| `rt`（分钟） | `rt`（PFB 为秒 → `/60` 转分钟） |
 | `precursor_scan_id` | MS1 → **-1**；MS2 → `precursor_scan` |
 | `isolation_lower` | MS2：`activation_center - activation_window/2`；MS1：NaN/None |
 | `isolation_upper` | MS2：`activation_center + activation_window/2`；MS1：NaN/None |
@@ -193,4 +194,4 @@ PFB（pXtract 导出）已是 peak-picked 峰列表，**跳过** on-load 质心�
 
 - **改动文件**：新增 `spectrum/pfb_reader.py`、`tests/test_pfb_reader.py`、`tests/test_dia_data_load_pfb.py`；修改 `spectrum/dia_data.py`（抽取 2 个共享方法 + 新增 `_load_from_pfb`）、`manager/data_manager.py`（分派）。
 - **主要风险**：抽取共享方法触碰已审计的 mzML 路径 → 由 28+ 现有测试 + 真实文件等价性兜底。
-- **假设**：目标 PFB 为 Thermo FTMS DIA，属性齐全、RT 为秒、小端、intensity 为 double——均已实测确认。
+- **假设**：目标 PFB 为 Thermo FTMS DIA，属性齐全、小端、intensity 为 double——均已实测确认。PFB 的 RT 为**秒**，加载时 `/60` 转成管线规范的分钟。

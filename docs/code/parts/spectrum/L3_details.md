@@ -23,6 +23,16 @@
 - `_centroid_enabled`（默认 True）+ `_centroid_rel_threshold`（默认 1e-3）。若谱图已带 CV term `centroid spectrum`（`_is_already_centroid`）则跳过。
 - 质心化后空返回（<3 峰或全零）计入 `_n_centroid_empty`，加载末尾汇总 log。
 
+### PFB 两遍加载（`_load_from_pfb` + `pfb_reader.py`）
+
+- **格式分派**：`DataManager.get_dia_data_object` 按扩展名选择 `.pfb` → `_load_from_pfb`，否则 `_load_from_mzml`；二者经共享的 `_record_spectrum`（逐谱写定长数组）与 `_finalize_arrays`（concat + 派生 ms1/ms2 索引、mz 范围、DIA 窗口左界）产出**等价** DIAData。
+- **二进制布局**（小端，实测验证）：24 字节头（3 空 int + int64 addr_list_addr + int32 scan_num）；loop body 每谱 `int32 len + UTF-8 property_str + int32 peak_num + double[] mz + double[] intensity`；尾部 `int64[scan_num]` 偏移。**intensity 是 double**（非 float）。
+- **两遍**：pass-1 `iter_scan_ids` 只取 scan 号、`seek` 跳过峰，得 `scan_num` 与 `max_scan_id` 给 `_preallocate_arrays`；pass-2 `iter_spectra` 解码峰并填充。
+- **RT 单位**：PFB 的 RT 是**秒**，管线规范是**分钟**（与 `_get_retention_time` 一致），故 `_load_from_pfb` 逐谱 `/60` 转换——否则 XIC 的 `searchsorted(rt)` 会因 60× 偏差全部落空。
+- **字段映射**：MS1 → `precursor_scan_id=-1`、隔离窗口 `None`（存为 NaN）；MS2 → `precursor_scan_id=precursor_scan`、隔离窗口 `activation_center ± activation_window/2`。MS1/MS2 划分仍由 `precursor_scan_ids == -1` 派生，与 mzML 同源。
+- **不质心化**：PFB（pXtract 导出）已是 peak-picked，`_load_from_pfb` 不调用 `centroid_spectrum`（config 的 centroid 设置对该路径无效，加载时 debug 提示一次）。
+- **错误处理**：截断 / 负长度 / property token 数不符 MsType / MS2 缺 ActivationWindow / 未知 MsType 均抛 `ValueError`（带谱序号、偏移、scan 等上下文）；空文件（scan_num=0）产出空 DIAData。
+
 ### npz 缓存与版本
 
 - `_format_version=3`：相对 v2 新增「内嵌 centroid 参数」。加载/校验时若版本≠3 或 centroid 参数与配置不符则抛 `ValueError`，强制重建缓存（避免用旧 profile 缓存）。

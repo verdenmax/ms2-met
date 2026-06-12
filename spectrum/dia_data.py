@@ -461,7 +461,7 @@ class DIAData:
     ) -> tuple[np.ndarray, np.ndarray]:
         """ 处理单个的谱图，将其中信息记录起来 """
 
-        # 获取保留时间 (转换为秒)
+        # 获取保留时间 (转换为分钟，管线规范单位；见 _get_retention_time)
         rt = self._get_retention_time(spectrum)
 
         # 获取质谱的scan id，不需要使用 spectrum_idx
@@ -626,10 +626,21 @@ class DIAData:
 
     def _load_from_pfb(self, pfb_file_path: str) -> None:
         """从 PFB（pFind/pXtract 二进制）文件加载数据，产出与
-        _load_from_mzml 等价的 DIAData。PFB 已是 peak-picked，跳过质心化。"""
+        _load_from_mzml 等价的 DIAData。
+
+        - PFB 已是 peak-picked，跳过 on-load 质心化（_centroid_* 配置对该
+          路径无效）。
+        - PFB 的 RT 是**秒**，而管线规范单位是**分钟**（见
+          _get_retention_time / rt_values），故逐谱 /60 转换。
+        """
         from spectrum import pfb_reader
 
         logging.info(f"Loading DIA data from {pfb_file_path} (PFB) ...")
+        # PFB 已质心化：on-load centroiding 不适用；提示一次避免用户误以为
+        # config 的 centroid 设置在 PFB 上生效。
+        logging.debug(
+            "PFB path skips on-load centroiding (data already peak-picked); "
+            "_centroid_enabled=%s is ignored.", self._centroid_enabled)
 
         # Pass 1: total_spectra + max scan number（跳过峰，不解码）
         with open(pfb_file_path, "rb") as fh:
@@ -673,7 +684,8 @@ class DIAData:
 
                 mz_chunk, int_chunk = self._record_spectrum(
                     current_spectrum_idx, current_peak_idx,
-                    scan_id=spec.scan, rt=spec.rt,
+                    scan_id=spec.scan,
+                    rt=spec.rt / 60.0,  # PFB RT 秒 → 管线规范分钟
                     precursor_scan_id=precursor_scan_id,
                     isolation_lower=isolation_lower,
                     isolation_upper=isolation_upper,
@@ -685,6 +697,10 @@ class DIAData:
                 current_spectrum_idx += 1
 
         self._finalize_arrays(mz_chunks, int_chunks)
+        logging.info(
+            "%s loaded (PFB): %d MS1 / %d MS2, %d total peaks",
+            pfb_file_path, len(self.ms1_indexs), len(self.ms2_indexs),
+            len(self._mz_values))
 
     def _finalize_arrays(
         self, mz_chunks: list[np.ndarray], int_chunks: list[np.ndarray]

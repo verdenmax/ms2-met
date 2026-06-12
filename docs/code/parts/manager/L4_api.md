@@ -34,7 +34,7 @@ pickle 文件路径。
 返回 `(enabled, threshold)`。`_config` 为 `None` 或无 `[General]` 段时返回模块默认 `(DEFAULT_CENTROID_ENABLED, DEFAULT_CENTROID_REL_THRESHOLD)`；否则从 `General.centroid_enabled` / `General.centroid_rel_threshold` 读取（各自 fallback 到默认）。centroid 参数单一真相源。
 
 #### `get_dia_data_object(self, tot_raw_path: None | str = None) -> DIAData`
-新建 `DIAData`，将 `get_centroid_params()` 注入其 `_centroid_enabled` / `_centroid_rel_threshold`，再 `_load_from_mzml(tot_raw_path)`，返回该对象。
+新建 `DIAData`，将 `get_centroid_params()` 注入其 `_centroid_enabled` / `_centroid_rel_threshold`，再**按扩展名分派**加载：`.pfb`（大小写不敏感）→ `_load_from_pfb`，否则 → `_load_from_mzml`（`tot_raw_path` 为 None 也走 mzML 分支）。返回该对象。PFB 路径忽略 centroid 参数（已 peak-picked）。
 
 ## manager/light_result_manager.py
 

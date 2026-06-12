@@ -2,7 +2,7 @@
 
 ## 一句话职责
 
-承载 **DIA 原始谱图（mzML/npz）的加载与 XIC 提取**、**PSM 信息与 SILAC/重标质量计算**、以及各搜索引擎（pFind / DIA-NN / Alphadia）结果解析与物种/entrapment 标注，为上层 `workflows` 的轻重标配对验证提供数据底座。
+承载 **DIA 原始谱图（mzML/PFB/npz）的加载与 XIC 提取**、**PSM 信息与 SILAC/重标质量计算**、以及各搜索引擎（pFind / DIA-NN / Alphadia）结果解析与物种/entrapment 标注，为上层 `workflows` 的轻重标配对验证提供数据底座。
 
 > 本文档不含已单独成册的 `speclib` 子包。
 
@@ -17,9 +17,23 @@
 | `DIAData.save_to_file` | `(filepath)` | 存为 `.npz`（`savez_compressed`）|
 | `DIAData.validate_cache_params` | `(filepath, enabled, rel_threshold)` | 仅读 3 个标量做轻量缓存校验 |
 | `DIAData.xic_ms2_peaks_extract` | `(rt, xic_cycle_window, precursor_mz, ions_mass, mass_tol_ppm) → (结构化ndarray, total_intensity)` | MS2 层 XIC：按 DIA 窗口逐 cycle 提取碎片离子色谱 |
+| `DIAData._load_from_mzml` / `_load_from_pfb` | `(path)` | 从 mzML / PFB 加载（两遍）；`DataManager.get_dia_data_object` 按扩展名分派，二者产出等价 DIAData |
 | `DIAData.xic_peaks_extreact` | `(rt, xic_cycle_window, precursor_mz, mass_tol_ppm) → ndarray` | MS1 层 XIC：前体离子色谱 |
 | `DIAData.get_window_info` / `check_in_raw` / `check_in_same_ms2` | — | DIA 隔离窗口查询 / 范围判断 |
 | `deduplicate_with_tolerance` | `(arr, tolerance=0.1) → ndarray` | float32 容差去重并排序（构造 DIA 窗口左边界）|
+
+### `pfb_reader.py` — PFB 二进制谱图解析（纯解析，无 DIAData 知识）
+
+| 符号 | 签名 | 简述 |
+|---|---|---|
+| `PFBSpectrum` | dataclass | 一张谱图：scan / ms_level / rt(秒) / instrument_type / mz / intensity（+ MS2 专有字段）|
+| `read_header` | `(fh) → (addr_list_addr, scan_num)` | 读 24 字节头，定位到首谱 |
+| `parse_property_str` | `(s) → dict` | `\t` 分隔属性串 → 类型化字段（按 MsType：MS1=4 / MS2=13）|
+| `iter_spectra` | `(fh, scan_num) → Iterator[PFBSpectrum]` | 顺序读 loop body（intensity 为 double）|
+| `iter_scan_ids` | `(fh, scan_num) → Iterator[int]` | pass-1 仅取 scan 号、跳过峰（用于定长数组 sizing）|
+| `read_footer` | `(fh, addr_list_addr, scan_num) → list[int]` | 读尾部逐谱偏移（校验用，加载路径不依赖）|
+
+> 详见 `docs/specs/2026-06-12-pfb-format-support-design.md`。
 
 ### `psm_info.py` — PSM 与重标质量
 

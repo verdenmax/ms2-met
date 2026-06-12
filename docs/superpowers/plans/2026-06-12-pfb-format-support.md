@@ -763,7 +763,7 @@ Expected: FAIL（`AttributeError: 'DIAData' object has no attribute '_load_from_
 
                 mz_chunk, int_chunk = self._record_spectrum(
                     current_spectrum_idx, current_peak_idx,
-                    scan_id=spec.scan, rt=spec.rt,
+                    scan_id=spec.scan, rt=spec.rt / 60.0,  # PFB 秒→规范分钟
                     precursor_scan_id=precursor_scan_id,
                     isolation_lower=isolation_lower,
                     isolation_upper=isolation_upper,

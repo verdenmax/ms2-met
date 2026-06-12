@@ -7,15 +7,15 @@ import pytest
 from spectrum.dia_data import DIAData
 from tests.pfb_test_helpers import write_pfb
 
-_MS1 = {"scan": 1, "ms_level": 1, "rt": 1.0, "instrument_type": "FTMS",
+_MS1 = {"scan": 1, "ms_level": 1, "rt": 60.0, "instrument_type": "FTMS",
         "mz": [350.0, 351.0], "intensity": [10.0, 20.0]}
-_MS2A = {"scan": 2, "ms_level": 2, "rt": 1.1, "instrument_type": "FTMS",
+_MS2A = {"scan": 2, "ms_level": 2, "rt": 66.0, "instrument_type": "FTMS",
          "charge": 2, "mh_plus": 1000.5, "ion_injection_time": 63.0,
          "activation_center": 501.0, "activation_type": "HCD",
          "precursor_scan": 1, "activation_window": 2.0, "nce": 27.0,
          "monoisotopic_mz": 501.0, "mz": [100.0, 101.0, 102.0],
          "intensity": [5.0, 6.0, 7.0]}
-_MS2B = {"scan": 3, "ms_level": 2, "rt": 1.2, "instrument_type": "FTMS",
+_MS2B = {"scan": 3, "ms_level": 2, "rt": 72.0, "instrument_type": "FTMS",
          "charge": 3, "mh_plus": 1500.0, "ion_injection_time": 50.0,
          "activation_center": 503.0, "activation_type": "HCD",
          "precursor_scan": 1, "activation_window": 2.0, "nce": 27.0,
@@ -41,6 +41,7 @@ def test_load_from_pfb_builds_equivalent_arrays(tmp_path):
     np.testing.assert_array_equal(d.ms1_indexs, [0])
     np.testing.assert_array_equal(d.ms2_indexs, [1, 2])
 
+    # PFB RT 是秒；DIAData 规范单位是分钟 → 60/66/72s 应转成 1.0/1.1/1.2min
     np.testing.assert_allclose(d.rt_values, [1.0, 1.1, 1.2], rtol=1e-6)
 
     assert np.isnan(d._precursor_lower_mz[0])
@@ -63,6 +64,27 @@ def test_load_from_pfb_empty_file(tmp_path):
     assert len(d._mz_values) == 0
     assert len(d.ms1_indexs) == 0
     assert len(d.ms2_indexs) == 0
+
+
+def test_load_from_pfb_converts_rt_seconds_to_minutes(tmp_path):
+    """PFB RT is in seconds; DIAData canonical unit is minutes (matches the
+    mzML path via _get_retention_time). The loader must divide by 60 so RT-
+    based XIC searchsorted lookups stay consistent across raw formats."""
+    ms1 = {"scan": 1, "ms_level": 1, "rt": 7200.0, "instrument_type": "FTMS",
+           "mz": [400.0], "intensity": [1.0]}
+    ms2 = {"scan": 2, "ms_level": 2, "rt": 90.0, "instrument_type": "FTMS",
+           "charge": 2, "mh_plus": 800.0, "ion_injection_time": 50.0,
+           "activation_center": 500.0, "activation_type": "HCD",
+           "precursor_scan": 1, "activation_window": 4.0, "nce": 27.0,
+           "monoisotopic_mz": 500.0, "mz": [123.0], "intensity": [2.0]}
+    p = tmp_path / "rt.pfb"
+    write_pfb(str(p), [ms1, ms2])
+    d = DIAData()
+    d._load_from_pfb(str(p))
+    # 7200s → 120.0 min, 90s → 1.5 min
+    np.testing.assert_allclose(d.rt_values, [120.0, 1.5], rtol=1e-6)
+    np.testing.assert_allclose(d.ms1_indexs_rt, [120.0], rtol=1e-6)
+    np.testing.assert_allclose(d.ms2_indexs_rt, [1.5], rtol=1e-6)
 
 
 def test_get_dia_data_object_dispatches_by_extension(monkeypatch):

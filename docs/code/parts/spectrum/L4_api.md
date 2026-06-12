@@ -20,6 +20,9 @@ float32 数组排序后容差去重；`None`/空 → `None`。用于构造 DIA �
 - `classmethod load_from_file(filepath, use_mmap=True, expected_centroid_enabled=None, expected_centroid_rel_threshold=None) -> DIAData` — 从 npz 加载；**Raises** `ValueError`（版本≠3 或 centroid 参数不符）。
 - `staticmethod validate_cache_params(filepath, expected_centroid_enabled, expected_centroid_rel_threshold) -> None` — 只读 3 个标量做轻量校验；**Raises** `ValueError`。
 - `_load_from_mzml(mzml_file_path=None)` — 两遍加载 mzML（统计→填充+质心化+concat）。
+- `_load_from_pfb(pfb_file_path)` — 两遍加载 PFB（统计→填充+concat）。**不质心化**（PFB 已 peak-picked）；RT 秒→分钟 `/60`；MS2 隔离窗口 = `activation_center ± activation_window/2`；MS1 `precursor_scan_id=-1`。复用 `_record_spectrum` / `_finalize_arrays`。
+- `_record_spectrum(spectrum_idx, current_peak_index, *, scan_id, rt, precursor_scan_id, isolation_lower, isolation_upper, mz_array, intensity_array) -> (mz, intensity)` — 格式无关：把单谱归一化字段写入按谱图定长的数组（isolation 为 None 时存 NaN）。mzML 与 PFB 共用。
+- `_finalize_arrays(mz_chunks, int_chunks) -> None` — 格式无关收尾：concat→float32、mz 范围、`ms1_indexs`/`ms2_indexs`(+`_rt`)、`frame_max_index`、`_cycle_left_precursor`。mzML 与 PFB 共用。
 - `get_spectrum_by_index(index) -> (mz, intensity)` — 按谱图下标切片；越界 **Raises** `IndexError`。
 - `get_spectrum(scan_id) -> (mz, intensity)` — 经 `_scan_id_to_index` 反查。
 - `get_ms1_spectrum_by_ms1_index(index) -> (mz, intensity)` — 由 MS2 下标取其前体 MS1。
@@ -44,6 +47,32 @@ arr, total = dia.xic_ms2_peaks_extract(rt=33.5, xic_cycle_window=5,
                                        precursor_mz=650.3, ions_mass=820.4,
                                        mass_tol_ppm=20)
 ```
+
+## spectrum/pfb_reader.py
+
+PFB（pFind/pXtract 二进制谱图）格式的纯解析模块（无 numpy 数组构建 / DIAData 知识）。被 `DIAData._load_from_pfb` 使用。
+
+### 模块常量
+- `HEADER_SIZE = 24`（`struct "<iiiqi"`：3 空 int32 + int64 addr_list_addr + int32 scan_num）
+- `_MS1_FIELD_COUNT = 4`、`_MS2_FIELD_COUNT = 13`
+
+### `@dataclass PFBSpectrum`
+单谱记录：`scan: int`、`ms_level: int`、`rt: float`（**秒**）、`instrument_type: str`、`mz: np.ndarray`、`intensity: np.ndarray`；MS2 专有（MS1 为 None）：`charge, mh_plus, ion_injection_time, activation_center, activation_type, precursor_scan, activation_window, nce, monoisotopic_mz`。
+
+### `read_header(fh) -> tuple[int, int]`
+读 24 字节头，返回 `(addr_list_addr, scan_num)`，文件停在首谱（偏移 24）。截断 **Raises** `ValueError`。
+
+### `parse_property_str(s) -> dict`
+`\t` 分隔属性串 → 类型化字段；按 `token[1]`（MsType）分派 MS1=4 / MS2=13 字段；字段数不符或未知 MsType **Raises** `ValueError`。
+
+### `iter_spectra(fh, scan_num) -> Iterator[PFBSpectrum]`
+顺序读 loop body（`fh` 需先 `read_header`）。每谱：`int32 len` + property_str（`rstrip('\x00')`）+ `int32 peak_num` + `peak_num` 个 double mz + `peak_num` 个 double intensity。负 peak_num / 截断 **Raises** `ValueError`。
+
+### `iter_scan_ids(fh, scan_num) -> Iterator[int]`
+pass-1：仅取每谱 scan 号、`seek(peak_num*16)` 跳过峰（不解码），供定长数组 sizing。负 peak_num / 截断 **Raises** `ValueError`。
+
+### `read_footer(fh, addr_list_addr, scan_num) -> list[int]`
+读尾部 `scan_num` 个 int64 逐谱偏移（校验用；加载路径不依赖）。截断 **Raises** `ValueError`。
 
 ## spectrum/psm_info.py
 

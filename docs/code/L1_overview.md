@@ -14,7 +14,7 @@
 ```
 config.ini → main.py → PairFlow(workflows)
    ├─ LightResultManager → LightResult（PSM 列表；DIA-NN/AlphaDIA/pFind/自定义JSON）
-   └─ DataManager        → DIAData（mzML → npz，内存映射共享）
+   └─ DataManager        → DIAData（mzML / PFB → npz，内存映射共享）
         ↓ 按 (sequence, charge, mods) 分组；生成正样本(label=1) + 负样本(label=0, RT+10min)
         ↓ 多进程特征提取（≤25 workers，single_work）
             对每个 PSM/PSM对：前体 MS1 XIC → 预测重标 m/z → 重标 MS1 XIC →
