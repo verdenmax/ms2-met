@@ -100,3 +100,36 @@ def parse_property_str(s: str) -> dict:
         })
         return base
     raise ValueError(f"Unknown MsType={ms_level} in property_str: {toks!r}")
+
+
+def _read_exact(fh: BinaryIO, n: int, spec_idx: int, what: str) -> bytes:
+    raw = fh.read(n)
+    if len(raw) < n:
+        raise ValueError(
+            f"PFB truncated reading spectrum {spec_idx} {what}: "
+            f"want {n} bytes, got {len(raw)} at offset {fh.tell()}")
+    return raw
+
+
+def iter_spectra(fh: BinaryIO, scan_num: int) -> Iterator[PFBSpectrum]:
+    """Sequentially read `scan_num` spectra from the loop body.
+
+    `fh` must be positioned at the first spectrum (call read_header first).
+    """
+    for i in range(scan_num):
+        (slen,) = struct.unpack("<i", _read_exact(fh, 4, i, "property_str_len"))
+        prop = _read_exact(fh, slen, i, "property_str").decode(
+            "utf-8").rstrip("\x00")
+        fields = parse_property_str(prop)
+        (pnum,) = struct.unpack("<i", _read_exact(fh, 4, i, "peak_num"))
+        if pnum > 0:
+            mz = np.frombuffer(
+                _read_exact(fh, pnum * 8, i, "mz"), dtype="<f8").astype(
+                np.float64)
+            intensity = np.frombuffer(
+                _read_exact(fh, pnum * 8, i, "intensity"), dtype="<f8").astype(
+                np.float64)
+        else:
+            mz = np.empty(0, dtype=np.float64)
+            intensity = np.empty(0, dtype=np.float64)
+        yield PFBSpectrum(mz=mz, intensity=intensity, **fields)
