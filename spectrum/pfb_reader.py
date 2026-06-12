@@ -126,6 +126,9 @@ def iter_spectra(fh: BinaryIO, scan_num: int) -> Iterator[PFBSpectrum]:
             "utf-8").rstrip("\x00")
         fields = parse_property_str(prop)
         (pnum,) = struct.unpack("<i", _read_exact(fh, 4, i, "peak_num"))
+        if pnum < 0:
+            raise ValueError(
+                f"PFB corrupt: negative peak_num {pnum} for spectrum {i}")
         if pnum > 0:
             mz = np.frombuffer(
                 _read_exact(fh, pnum * 8, i, "mz"), dtype="<f8").astype(
@@ -151,6 +154,9 @@ def iter_scan_ids(fh: BinaryIO, scan_num: int) -> Iterator[int]:
             "utf-8").rstrip("\x00")
         scan = int(prop.split("\t", 1)[0])
         (pnum,) = struct.unpack("<i", _read_exact(fh, 4, i, "peak_num"))
+        if pnum < 0:
+            raise ValueError(
+                f"PFB corrupt: negative peak_num {pnum} for spectrum {i}")
         fh.seek(pnum * 16, 1)  # skip mz(8) + intensity(8) per peak
         yield scan
 

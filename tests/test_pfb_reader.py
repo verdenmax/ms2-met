@@ -150,3 +150,29 @@ def test_read_footer_matches_offsets(tmp_path):
         footer = pfb_reader.read_footer(fh, addr_list_addr, scan_num)
     assert footer == addr_list
     assert footer[0] == 24
+
+
+def test_iter_scan_ids_negative_peak_num_raises(tmp_path):
+    import struct as _struct
+    p = tmp_path / "negpeak.pfb"
+    write_pfb(str(p), [_MS1, _MS2])
+    raw = bytearray(p.read_bytes())
+    # peak_num int32 sits right after the first spectrum's property_str
+    slen = _struct.unpack_from("<i", raw, 24)[0]
+    pnum_off = 24 + 4 + slen
+    _struct.pack_into("<i", raw, pnum_off, -3)
+    p.write_bytes(raw)
+    with open(p, "rb") as fh:
+        _addr, scan_num = pfb_reader.read_header(fh)
+        with pytest.raises(ValueError, match="negative peak_num"):
+            list(pfb_reader.iter_scan_ids(fh, scan_num))
+
+
+def test_read_footer_truncated_raises(tmp_path):
+    p = tmp_path / "x.pfb"
+    write_pfb(str(p), [_MS1, _MS2])
+    with open(p, "rb") as fh:
+        addr_list_addr, scan_num = pfb_reader.read_header(fh)
+        # ask for more offsets than exist -> footer too short
+        with pytest.raises(ValueError, match="footer truncated"):
+            pfb_reader.read_footer(fh, addr_list_addr, scan_num + 100)
