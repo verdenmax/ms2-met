@@ -103,6 +103,10 @@ def parse_property_str(s: str) -> dict:
 
 
 def _read_exact(fh: BinaryIO, n: int, spec_idx: int, what: str) -> bytes:
+    if n < 0:
+        raise ValueError(
+            f"PFB corrupt: negative byte count {n} for spectrum {spec_idx} "
+            f"{what}")
     raw = fh.read(n)
     if len(raw) < n:
         raise ValueError(

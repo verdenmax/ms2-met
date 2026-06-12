@@ -73,6 +73,7 @@ def test_iter_spectra_yields_ms1_and_ms2(tmp_path):
     np.testing.assert_allclose(s2.mz, [100.0, 101.0, 102.0])
     np.testing.assert_allclose(s2.intensity, [5.0, 6.0, 7.0])
     assert s2.mz.dtype == np.float64
+    assert s2.intensity.dtype == np.float64
 
 
 def test_iter_spectra_empty_file(tmp_path):
@@ -93,4 +94,40 @@ def test_iter_spectra_truncated_raises(tmp_path):
     with open(p, "rb") as fh:
         _addr, scan_num = pfb_reader.read_header(fh)
         with pytest.raises(ValueError, match="truncated"):
+            list(pfb_reader.iter_spectra(fh, scan_num))
+
+
+def test_iter_spectra_empty_peak_spectrum_stays_aligned(tmp_path):
+    """A spectrum with zero peaks parses as empty float64 arrays and does not
+    desync the reader for the following spectrum."""
+    empty_ms2 = {"scan": 5, "ms_level": 2, "rt": 3.0, "instrument_type": "FTMS",
+                 "charge": 2, "mh_plus": 800.0, "ion_injection_time": 50.0,
+                 "activation_center": 600.0, "activation_type": "HCD",
+                 "precursor_scan": 1, "activation_window": 2.0, "nce": 27.0,
+                 "monoisotopic_mz": 600.0, "mz": [], "intensity": []}
+    p = tmp_path / "empty_peaks.pfb"
+    write_pfb(str(p), [empty_ms2, _MS1])
+    with open(p, "rb") as fh:
+        _addr, scan_num = pfb_reader.read_header(fh)
+        specs = list(pfb_reader.iter_spectra(fh, scan_num))
+    assert len(specs) == 2
+    s0, s1 = specs
+    assert s0.scan == 5 and len(s0.mz) == 0 and len(s0.intensity) == 0
+    assert s0.mz.dtype == np.float64 and s0.intensity.dtype == np.float64
+    # reader stayed byte-aligned: next spectrum parsed correctly
+    assert s1.scan == 1 and s1.ms_level == 1
+    np.testing.assert_allclose(s1.mz, [350.0, 351.0])
+
+
+def test_iter_spectra_negative_length_raises(tmp_path):
+    """A corrupt negative property_str_len must raise (not silently read rest)."""
+    p = tmp_path / "neg.pfb"
+    write_pfb(str(p), [_MS1, _MS2])
+    raw = bytearray(p.read_bytes())
+    # property_str_len of the first spectrum is the int32 at offset 24 (HEADER_SIZE)
+    struct.pack_into("<i", raw, 24, -1)
+    p.write_bytes(raw)
+    with open(p, "rb") as fh:
+        _addr, scan_num = pfb_reader.read_header(fh)
+        with pytest.raises(ValueError):
             list(pfb_reader.iter_spectra(fh, scan_num))
