@@ -434,6 +434,27 @@ class DIAData:
         scan_id_table_size = max(max_scan_id + 1, 1)
         self._scan_id_to_index = np.zeros(scan_id_table_size, dtype=np.int64)
 
+    def _record_spectrum(
+        self, spectrum_idx: int, current_peak_index: int, *,
+        scan_id: int, rt: float, precursor_scan_id: int,
+        isolation_lower, isolation_upper,
+        mz_array: np.ndarray, intensity_array: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """把一张谱图的归一化字段写入按谱图定长的数组（格式无关）。
+
+        isolation_lower/upper 为 None 时（MS1）numpy 自动存为 NaN。
+        返回 (mz_array, intensity_array) 供调用方累积 chunk。
+        """
+        peak_stop_idx = current_peak_index + len(mz_array)
+        self.precursor_scan_ids[spectrum_idx] = precursor_scan_id
+        self.rt_values[spectrum_idx] = rt
+        self._scan_id_to_index[scan_id] = spectrum_idx
+        self._peak_start_idx_list[spectrum_idx] = current_peak_index
+        self._peak_stop_idx_list[spectrum_idx] = peak_stop_idx
+        self._precursor_lower_mz[spectrum_idx] = isolation_lower
+        self._precursor_upper_mz[spectrum_idx] = isolation_upper
+        return mz_array, intensity_array
+
     def _process_single_spectrum(
         self, spectrum,
         spectrum_idx: int, current_peak_index: int,
@@ -535,30 +556,14 @@ class DIAData:
         改造（spec 2026-06-01）：mz/intensity 不再写入预分配数组，而是
         作为 chunk 返回给 _load_from_mzml 累积后 concat。
         """
-        peak_stop_idx = current_peak_index + len(mz_array)
-        self.precursor_scan_ids[spectrum_idx] = precursor_scan_id
-
-        # 提取 RT 值
-        self.rt_values[spectrum_idx] = rt
-
-        # TODO: 应该还有个 mobility
-
-        """ DIA 循环相关属性 """
-        # TODO: 确定 DIA 循环 ，暂时没用没有写
-        # self._determine_dia_cycle()
-
-        """ 索引和边界信息 """
-        # 创建从 scan_id 到 spec_idx 的映射
-        self._scan_id_to_index[scan_id] = spectrum_idx
-        # 提取峰索引
-        self._peak_start_idx_list[spectrum_idx] = current_peak_index
-        self._peak_stop_idx_list[spectrum_idx] = peak_stop_idx
-
-        # 提取这个谱图 mz 范围
-        self._precursor_lower_mz[spectrum_idx] = isolation_lower
-        self._precursor_upper_mz[spectrum_idx] = isolation_upper
-
-        return mz_array, intensity_array
+        return self._record_spectrum(
+            spectrum_idx, current_peak_index,
+            scan_id=scan_id, rt=rt,
+            precursor_scan_id=precursor_scan_id,
+            isolation_lower=isolation_lower,
+            isolation_upper=isolation_upper,
+            mz_array=mz_array, intensity_array=intensity_array,
+        )
 
     def _load_from_mzml(
         self,
@@ -617,6 +622,13 @@ class DIAData:
                 current_spectrum_idx += 1
 
         # Concat peak arrays (一次性, 然后立即释放 chunk list 节省内存)
+        self._finalize_arrays(mz_chunks, int_chunks)
+
+    def _finalize_arrays(
+        self, mz_chunks: list[np.ndarray], int_chunks: list[np.ndarray]
+    ) -> None:
+        """加载循环结束后的收尾（格式无关）：concat 峰数组、算 mz 范围、
+        ms1/ms2 索引、frame_max_index、DIA 循环左界。"""
         if mz_chunks:
             self._mz_values = np.concatenate(mz_chunks).astype(
                 np.float32, copy=False)
@@ -627,8 +639,6 @@ class DIAData:
             self._intensity_values = np.empty(0, dtype=np.float32)
         del mz_chunks, int_chunks
 
-        """ mz 范围信息 """
-        # 计算 m/z 范围
         if np.all(np.isnan(self._precursor_upper_mz)):
             self._max_mz_value = np.float32(np.nan)
         else:
@@ -645,21 +655,18 @@ class DIAData:
             self.precursor_scan_ids == -1)[0].astype(np.int32)
         self.ms1_indexs_rt = self.rt_values[self.ms1_indexs].copy()
 
-        # 设置帧索引
         self.frame_max_index = len(self.rt_values) - 1
 
         self.ms2_indexs = np.where(
             self.precursor_scan_ids != -1)[0].astype(np.int32)
         self.ms2_indexs_rt = self.rt_values[self.ms2_indexs].copy()
 
-        # 更新窗口信息
         if self._precursor_lower_mz is not None:
             self._cycle_left_precursor = deduplicate_with_tolerance(
                 self._precursor_lower_mz,
                 tolerance=0.1
             )
 
-        # P1-7 (Silent-I8, 2026-06-03 audit): centroid-to-empty summary.
         if self._n_centroid_empty > 0:
             logging.info(
                 "[centroid] %d spectra returned empty (likely <3 peaks "
