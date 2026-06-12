@@ -40,6 +40,14 @@ INI_5TH_NEG10    ?= extract_5da_neg10.ini
 INI_NORMAL_NEG05 ?= extract_normal_neg05.ini
 INI_NORMAL_NEG10 ?= extract_normal_neg10.ini
 
+# Neg-FDR 15%/20% 变体 ini
+INI_2TH_NEG15    ?= extract_2da_neg15.ini
+INI_2TH_NEG20    ?= extract_2da_neg20.ini
+INI_5TH_NEG15    ?= extract_5da_neg15.ini
+INI_5TH_NEG20    ?= extract_5da_neg20.ini
+INI_NORMAL_NEG15 ?= extract_normal_neg15.ini
+INI_NORMAL_NEG20 ?= extract_normal_neg20.ini
+
 # Neg-FDR 变体 baseline 目录
 DIR_2TH_NEG05    ?= runs/baseline_2da_neg05
 DIR_2TH_NEG10    ?= runs/baseline_2da_neg10
@@ -47,6 +55,14 @@ DIR_5TH_NEG05    ?= runs/baseline_5da_neg05
 DIR_5TH_NEG10    ?= runs/baseline_5da_neg10
 DIR_NORMAL_NEG05 ?= runs/baseline_normal_neg05
 DIR_NORMAL_NEG10 ?= runs/baseline_normal_neg10
+
+# Neg-FDR 15%/20% 变体 baseline 目录
+DIR_2TH_NEG15    ?= runs/baseline_2da_neg15
+DIR_2TH_NEG20    ?= runs/baseline_2da_neg20
+DIR_5TH_NEG15    ?= runs/baseline_5da_neg15
+DIR_5TH_NEG20    ?= runs/baseline_5da_neg20
+DIR_NORMAL_NEG15 ?= runs/baseline_normal_neg15
+DIR_NORMAL_NEG20 ?= runs/baseline_normal_neg20
 
 # 从 extract_*.ini 中动态抽取 result_file 路径。
 # 行格式：result_file = ./path/to/output.json    # optional comment
@@ -74,6 +90,14 @@ JSON_5TH_NEG10    := $(call EXTRACT_RESULT_FILE,$(INI_5TH_NEG10))
 JSON_NORMAL_NEG05 := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL_NEG05))
 JSON_NORMAL_NEG10 := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL_NEG10))
 
+# Neg-FDR 15%/20% 变体 JSON 路径
+JSON_2TH_NEG15    := $(call EXTRACT_RESULT_FILE,$(INI_2TH_NEG15))
+JSON_2TH_NEG20    := $(call EXTRACT_RESULT_FILE,$(INI_2TH_NEG20))
+JSON_5TH_NEG15    := $(call EXTRACT_RESULT_FILE,$(INI_5TH_NEG15))
+JSON_5TH_NEG20    := $(call EXTRACT_RESULT_FILE,$(INI_5TH_NEG20))
+JSON_NORMAL_NEG15 := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL_NEG15))
+JSON_NORMAL_NEG20 := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL_NEG20))
+
 # --------------------------- 工具 / banner ---------------------------
 
 # 优先用 toilet | lolcat（漂亮），缺失则退回 echo
@@ -93,6 +117,11 @@ endef
 .PHONY: extract-2th-neg05 extract-2th-neg10 extract-5th-neg05 extract-5th-neg10 extract-normal-neg05 extract-normal-neg10
 .PHONY: clean-2th-neg05 clean-2th-neg10 clean-5th-neg05 clean-5th-neg10 clean-normal-neg05 clean-normal-neg10
 .PHONY: all-clean all-neg05 all-neg10
+
+.PHONY: 2th-neg15 2th-neg20 5th-neg15 5th-neg20 normal-neg15 normal-neg20
+.PHONY: extract-2th-neg15 extract-2th-neg20 extract-5th-neg15 extract-5th-neg20 extract-normal-neg15 extract-normal-neg20
+.PHONY: clean-2th-neg15 clean-2th-neg20 clean-5th-neg15 clean-5th-neg20 clean-normal-neg15 clean-normal-neg20
+.PHONY: all-neg15 all-neg20
 
 help:
 	@echo "ms2-met Makefile — 三种数据集的特征提取流水线"
@@ -120,6 +149,8 @@ help:
 	@echo "  make all-clean       别名：make all（FDR 1%）"
 	@echo "  make all-neg05       三个数据集 × negative FDR 5%"
 	@echo "  make all-neg10       三个数据集 × negative FDR 10%"
+	@echo "  make all-neg15       三个数据集 × negative FDR 15%"
+	@echo "  make all-neg20       三个数据集 × negative FDR 20%"
 	@echo ""
 	@echo "  make extract-2th-neg05  仅生成 2da neg05 JSON（其他类同）"
 	@echo "  make clean-2th-neg05    删除 2da neg05 features.csv（其他类同）"
@@ -137,7 +168,9 @@ help:
 	@echo "  make train-clean-all    6 个 clean（1% FDR）实验"
 	@echo "  make train-neg05-all    6 个 neg05 实验"
 	@echo "  make train-neg10-all    6 个 neg10 实验"
-	@echo "  make train-all          所有 18 个实验（顺序：clean → neg05 → neg10）"
+	@echo "  make train-neg15-all    6 个 neg15 实验"
+	@echo "  make train-neg20-all    6 个 neg20 实验"
+	@echo "  make train-all          所有 30 个实验（clean → neg05 → neg10 → neg15 → neg20）"
 	@echo ""
 	@echo "  make clean-train        清理 runs/spec_trainer/ 训练产出"
 	@echo "  make clean           旧式清理（checkpoint.pkl 等）"
@@ -154,6 +187,12 @@ help:
 	@echo "  5th-neg10   -> $(JSON_5TH_NEG10)"
 	@echo "  normal-neg05-> $(JSON_NORMAL_NEG05)"
 	@echo "  normal-neg10-> $(JSON_NORMAL_NEG10)"
+	@echo "  2th-neg15  -> $(JSON_2TH_NEG15)"
+	@echo "  2th-neg20  -> $(JSON_2TH_NEG20)"
+	@echo "  5th-neg15  -> $(JSON_5TH_NEG15)"
+	@echo "  5th-neg20  -> $(JSON_5TH_NEG20)"
+	@echo "  normal-neg15-> $(JSON_NORMAL_NEG15)"
+	@echo "  normal-neg20-> $(JSON_NORMAL_NEG20)"
 
 # ---------- 2th ----------
 #
@@ -453,6 +492,192 @@ normal-neg10: $(DIR_NORMAL_NEG10)/config.ini
 
 endif
 
+# ---------- 2th-neg15 ----------
+ifneq ($(wildcard $(INI_2TH_NEG15)),)
+
+$(JSON_2TH_NEG15): $(INI_2TH_NEG15)
+	$(call BANNER,extract 2th-neg15)
+	$(PY) tools/extract_common.py --configpath $(INI_2TH_NEG15)
+
+extract-2th-neg15: $(JSON_2TH_NEG15)
+
+2th-neg15: $(INI_2TH_NEG15) $(JSON_2TH_NEG15) $(DIR_2TH_NEG15)/config.ini
+	$(call BANNER,2th-neg15)
+	$(PY) main.py --configpath $(DIR_2TH_NEG15)/config.ini --logpath $(DIR_2TH_NEG15)/extract.log
+	@echo "[done] features written under $(DIR_2TH_NEG15)/"
+
+else  # $(INI_2TH_NEG15) absent — features.csv must be externally provided
+
+extract-2th-neg15:
+	@echo "[error] $(INI_2TH_NEG15) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+2th-neg15: $(DIR_2TH_NEG15)/config.ini
+	$(call BANNER,2th-neg15)
+	@if [ ! -f "$(DIR_2TH_NEG15)/features.csv" ]; then \
+		echo "[note] $(INI_2TH_NEG15) absent — $(DIR_2TH_NEG15)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_2TH_NEG15)/config.ini --logpath $(DIR_2TH_NEG15)/extract.log
+	@echo "[done] features written under $(DIR_2TH_NEG15)/"
+
+endif
+
+# ---------- 2th-neg20 ----------
+ifneq ($(wildcard $(INI_2TH_NEG20)),)
+
+$(JSON_2TH_NEG20): $(INI_2TH_NEG20)
+	$(call BANNER,extract 2th-neg20)
+	$(PY) tools/extract_common.py --configpath $(INI_2TH_NEG20)
+
+extract-2th-neg20: $(JSON_2TH_NEG20)
+
+2th-neg20: $(INI_2TH_NEG20) $(JSON_2TH_NEG20) $(DIR_2TH_NEG20)/config.ini
+	$(call BANNER,2th-neg20)
+	$(PY) main.py --configpath $(DIR_2TH_NEG20)/config.ini --logpath $(DIR_2TH_NEG20)/extract.log
+	@echo "[done] features written under $(DIR_2TH_NEG20)/"
+
+else  # $(INI_2TH_NEG20) absent — features.csv must be externally provided
+
+extract-2th-neg20:
+	@echo "[error] $(INI_2TH_NEG20) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+2th-neg20: $(DIR_2TH_NEG20)/config.ini
+	$(call BANNER,2th-neg20)
+	@if [ ! -f "$(DIR_2TH_NEG20)/features.csv" ]; then \
+		echo "[note] $(INI_2TH_NEG20) absent — $(DIR_2TH_NEG20)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_2TH_NEG20)/config.ini --logpath $(DIR_2TH_NEG20)/extract.log
+	@echo "[done] features written under $(DIR_2TH_NEG20)/"
+
+endif
+
+# ---------- 5th-neg15 ----------
+ifneq ($(wildcard $(INI_5TH_NEG15)),)
+
+$(JSON_5TH_NEG15): $(INI_5TH_NEG15)
+	$(call BANNER,extract 5th-neg15)
+	$(PY) tools/extract_common.py --configpath $(INI_5TH_NEG15)
+
+extract-5th-neg15: $(JSON_5TH_NEG15)
+
+5th-neg15: $(INI_5TH_NEG15) $(JSON_5TH_NEG15) $(DIR_5TH_NEG15)/config.ini
+	$(call BANNER,5th-neg15)
+	$(PY) main.py --configpath $(DIR_5TH_NEG15)/config.ini --logpath $(DIR_5TH_NEG15)/extract.log
+	@echo "[done] features written under $(DIR_5TH_NEG15)/"
+
+else  # $(INI_5TH_NEG15) absent — features.csv must be externally provided
+
+extract-5th-neg15:
+	@echo "[error] $(INI_5TH_NEG15) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+5th-neg15: $(DIR_5TH_NEG15)/config.ini
+	$(call BANNER,5th-neg15)
+	@if [ ! -f "$(DIR_5TH_NEG15)/features.csv" ]; then \
+		echo "[note] $(INI_5TH_NEG15) absent — $(DIR_5TH_NEG15)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_5TH_NEG15)/config.ini --logpath $(DIR_5TH_NEG15)/extract.log
+	@echo "[done] features written under $(DIR_5TH_NEG15)/"
+
+endif
+
+# ---------- 5th-neg20 ----------
+ifneq ($(wildcard $(INI_5TH_NEG20)),)
+
+$(JSON_5TH_NEG20): $(INI_5TH_NEG20)
+	$(call BANNER,extract 5th-neg20)
+	$(PY) tools/extract_common.py --configpath $(INI_5TH_NEG20)
+
+extract-5th-neg20: $(JSON_5TH_NEG20)
+
+5th-neg20: $(INI_5TH_NEG20) $(JSON_5TH_NEG20) $(DIR_5TH_NEG20)/config.ini
+	$(call BANNER,5th-neg20)
+	$(PY) main.py --configpath $(DIR_5TH_NEG20)/config.ini --logpath $(DIR_5TH_NEG20)/extract.log
+	@echo "[done] features written under $(DIR_5TH_NEG20)/"
+
+else  # $(INI_5TH_NEG20) absent — features.csv must be externally provided
+
+extract-5th-neg20:
+	@echo "[error] $(INI_5TH_NEG20) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+5th-neg20: $(DIR_5TH_NEG20)/config.ini
+	$(call BANNER,5th-neg20)
+	@if [ ! -f "$(DIR_5TH_NEG20)/features.csv" ]; then \
+		echo "[note] $(INI_5TH_NEG20) absent — $(DIR_5TH_NEG20)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_5TH_NEG20)/config.ini --logpath $(DIR_5TH_NEG20)/extract.log
+	@echo "[done] features written under $(DIR_5TH_NEG20)/"
+
+endif
+
+# ---------- normal-neg15 ----------
+ifneq ($(wildcard $(INI_NORMAL_NEG15)),)
+
+$(JSON_NORMAL_NEG15): $(INI_NORMAL_NEG15)
+	$(call BANNER,extract normal-neg15)
+	$(PY) tools/extract_common.py --configpath $(INI_NORMAL_NEG15)
+
+extract-normal-neg15: $(JSON_NORMAL_NEG15)
+
+normal-neg15: $(INI_NORMAL_NEG15) $(JSON_NORMAL_NEG15) $(DIR_NORMAL_NEG15)/config.ini
+	$(call BANNER,normal-neg15)
+	$(PY) main.py --configpath $(DIR_NORMAL_NEG15)/config.ini --logpath $(DIR_NORMAL_NEG15)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL_NEG15)/"
+
+else  # $(INI_NORMAL_NEG15) absent — features.csv must be externally provided
+
+extract-normal-neg15:
+	@echo "[error] $(INI_NORMAL_NEG15) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+normal-neg15: $(DIR_NORMAL_NEG15)/config.ini
+	$(call BANNER,normal-neg15)
+	@if [ ! -f "$(DIR_NORMAL_NEG15)/features.csv" ]; then \
+		echo "[note] $(INI_NORMAL_NEG15) absent — $(DIR_NORMAL_NEG15)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_NORMAL_NEG15)/config.ini --logpath $(DIR_NORMAL_NEG15)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL_NEG15)/"
+
+endif
+
+# ---------- normal-neg20 ----------
+ifneq ($(wildcard $(INI_NORMAL_NEG20)),)
+
+$(JSON_NORMAL_NEG20): $(INI_NORMAL_NEG20)
+	$(call BANNER,extract normal-neg20)
+	$(PY) tools/extract_common.py --configpath $(INI_NORMAL_NEG20)
+
+extract-normal-neg20: $(JSON_NORMAL_NEG20)
+
+normal-neg20: $(INI_NORMAL_NEG20) $(JSON_NORMAL_NEG20) $(DIR_NORMAL_NEG20)/config.ini
+	$(call BANNER,normal-neg20)
+	$(PY) main.py --configpath $(DIR_NORMAL_NEG20)/config.ini --logpath $(DIR_NORMAL_NEG20)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL_NEG20)/"
+
+else  # $(INI_NORMAL_NEG20) absent — features.csv must be externally provided
+
+extract-normal-neg20:
+	@echo "[error] $(INI_NORMAL_NEG20) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+normal-neg20: $(DIR_NORMAL_NEG20)/config.ini
+	$(call BANNER,normal-neg20)
+	@if [ ! -f "$(DIR_NORMAL_NEG20)/features.csv" ]; then \
+		echo "[note] $(INI_NORMAL_NEG20) absent — $(DIR_NORMAL_NEG20)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_NORMAL_NEG20)/config.ini --logpath $(DIR_NORMAL_NEG20)/extract.log
+	@echo "[done] features written under $(DIR_NORMAL_NEG20)/"
+
+endif
+
 # ---------- 组合 ----------
 
 all: 2th 5th normal
@@ -539,10 +764,60 @@ clean-normal-neg10:
 		echo "[skip] $(DIR_NORMAL_NEG10)/ does not exist"; \
 	fi
 
+clean-2th-neg15:
+	@if [ -d $(DIR_2TH_NEG15) ]; then \
+		rm -f $(DIR_2TH_NEG15)/features.csv $(DIR_2TH_NEG15)/features.csv.PARTIAL_INCOMPLETE $(DIR_2TH_NEG15)/*.log; \
+		echo "[cleaned] $(DIR_2TH_NEG15)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_2TH_NEG15)/ does not exist"; \
+	fi
+
+clean-2th-neg20:
+	@if [ -d $(DIR_2TH_NEG20) ]; then \
+		rm -f $(DIR_2TH_NEG20)/features.csv $(DIR_2TH_NEG20)/features.csv.PARTIAL_INCOMPLETE $(DIR_2TH_NEG20)/*.log; \
+		echo "[cleaned] $(DIR_2TH_NEG20)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_2TH_NEG20)/ does not exist"; \
+	fi
+
+clean-5th-neg15:
+	@if [ -d $(DIR_5TH_NEG15) ]; then \
+		rm -f $(DIR_5TH_NEG15)/features.csv $(DIR_5TH_NEG15)/features.csv.PARTIAL_INCOMPLETE $(DIR_5TH_NEG15)/*.log; \
+		echo "[cleaned] $(DIR_5TH_NEG15)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_5TH_NEG15)/ does not exist"; \
+	fi
+
+clean-5th-neg20:
+	@if [ -d $(DIR_5TH_NEG20) ]; then \
+		rm -f $(DIR_5TH_NEG20)/features.csv $(DIR_5TH_NEG20)/features.csv.PARTIAL_INCOMPLETE $(DIR_5TH_NEG20)/*.log; \
+		echo "[cleaned] $(DIR_5TH_NEG20)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_5TH_NEG20)/ does not exist"; \
+	fi
+
+clean-normal-neg15:
+	@if [ -d $(DIR_NORMAL_NEG15) ]; then \
+		rm -f $(DIR_NORMAL_NEG15)/features.csv $(DIR_NORMAL_NEG15)/features.csv.PARTIAL_INCOMPLETE $(DIR_NORMAL_NEG15)/*.log; \
+		echo "[cleaned] $(DIR_NORMAL_NEG15)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_NORMAL_NEG15)/ does not exist"; \
+	fi
+
+clean-normal-neg20:
+	@if [ -d $(DIR_NORMAL_NEG20) ]; then \
+		rm -f $(DIR_NORMAL_NEG20)/features.csv $(DIR_NORMAL_NEG20)/features.csv.PARTIAL_INCOMPLETE $(DIR_NORMAL_NEG20)/*.log; \
+		echo "[cleaned] $(DIR_NORMAL_NEG20)/features.csv + *.log (kept config.ini, eval/, workspace/)"; \
+	else \
+		echo "[skip] $(DIR_NORMAL_NEG20)/ does not exist"; \
+	fi
+
 # Group targets
 all-clean: all
 all-neg05: 2th-neg05 5th-neg05 normal-neg05
 all-neg10: 2th-neg10 5th-neg10 normal-neg10
+all-neg15: 2th-neg15 5th-neg15 normal-neg15
+all-neg20: 2th-neg20 5th-neg20 normal-neg20
 
 # ---------- spec_trainer 训练 target ----------
 #
@@ -554,7 +829,7 @@ all-neg10: 2th-neg10 5th-neg10 normal-neg10
 # exp2: combined (2da + 5da)
 
 .PHONY: train-exp1 train-exp2 clean-train
-.PHONY: train-legacy-all train-clean-all train-neg05-all train-neg10-all train-all
+.PHONY: train-legacy-all train-clean-all train-neg05-all train-neg10-all train-neg15-all train-neg20-all train-all
 
 # features.csv 规则：缺失时自动跑对应特征提取；并声明上游依赖
 # （baseline config.ini + extract ini + dataset JSON），任一比 features.csv 新
@@ -587,6 +862,24 @@ runs/baseline_5da_neg10/features.csv: $(DIR_5TH_NEG10)/config.ini $(INI_5TH_NEG1
 
 runs/baseline_normal_neg10/features.csv: $(DIR_NORMAL_NEG10)/config.ini $(INI_NORMAL_NEG10) $(JSON_NORMAL_NEG10)
 	$(MAKE) normal-neg10
+
+runs/baseline_2da_neg15/features.csv: $(DIR_2TH_NEG15)/config.ini $(INI_2TH_NEG15) $(JSON_2TH_NEG15)
+	$(MAKE) 2th-neg15
+
+runs/baseline_2da_neg20/features.csv: $(DIR_2TH_NEG20)/config.ini $(INI_2TH_NEG20) $(JSON_2TH_NEG20)
+	$(MAKE) 2th-neg20
+
+runs/baseline_5da_neg15/features.csv: $(DIR_5TH_NEG15)/config.ini $(INI_5TH_NEG15) $(JSON_5TH_NEG15)
+	$(MAKE) 5th-neg15
+
+runs/baseline_5da_neg20/features.csv: $(DIR_5TH_NEG20)/config.ini $(INI_5TH_NEG20) $(JSON_5TH_NEG20)
+	$(MAKE) 5th-neg20
+
+runs/baseline_normal_neg15/features.csv: $(DIR_NORMAL_NEG15)/config.ini $(INI_NORMAL_NEG15) $(JSON_NORMAL_NEG15)
+	$(MAKE) normal-neg15
+
+runs/baseline_normal_neg20/features.csv: $(DIR_NORMAL_NEG20)/config.ini $(INI_NORMAL_NEG20) $(JSON_NORMAL_NEG20)
+	$(MAKE) normal-neg20
 
 train-exp1: runs/baseline_2da_clean/features.csv tools/spec_trainer/config/exp1.yaml
 	$(call BANNER,train-exp1)
@@ -627,6 +920,14 @@ NEG10_FEATURES := runs/baseline_2da_neg10/features.csv \
                   runs/baseline_5da_neg10/features.csv \
                   runs/baseline_normal_neg10/features.csv
 
+NEG15_FEATURES := runs/baseline_2da_neg15/features.csv \
+                  runs/baseline_5da_neg15/features.csv \
+                  runs/baseline_normal_neg15/features.csv
+
+NEG20_FEATURES := runs/baseline_2da_neg20/features.csv \
+                  runs/baseline_5da_neg20/features.csv \
+                  runs/baseline_normal_neg20/features.csv
+
 CLEAN_YAMLS := $(SPEC_CFG)/in_2da_clean.yaml \
                $(SPEC_CFG)/in_5da_clean.yaml \
                $(SPEC_CFG)/in_normal_clean.yaml \
@@ -647,6 +948,20 @@ NEG10_YAMLS := $(SPEC_CFG)/in_2da_neg10.yaml \
                $(SPEC_CFG)/cross_test_2da_neg10.yaml \
                $(SPEC_CFG)/cross_test_5da_neg10.yaml \
                $(SPEC_CFG)/cross_test_normal_neg10.yaml
+
+NEG15_YAMLS := $(SPEC_CFG)/in_2da_neg15.yaml \
+               $(SPEC_CFG)/in_5da_neg15.yaml \
+               $(SPEC_CFG)/in_normal_neg15.yaml \
+               $(SPEC_CFG)/cross_test_2da_neg15.yaml \
+               $(SPEC_CFG)/cross_test_5da_neg15.yaml \
+               $(SPEC_CFG)/cross_test_normal_neg15.yaml
+
+NEG20_YAMLS := $(SPEC_CFG)/in_2da_neg20.yaml \
+               $(SPEC_CFG)/in_5da_neg20.yaml \
+               $(SPEC_CFG)/in_normal_neg20.yaml \
+               $(SPEC_CFG)/cross_test_2da_neg20.yaml \
+               $(SPEC_CFG)/cross_test_5da_neg20.yaml \
+               $(SPEC_CFG)/cross_test_normal_neg20.yaml
 
 train-clean-all: $(CLEAN_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
@@ -675,6 +990,24 @@ train-neg10-all: $(NEG10_FEATURES)
 	done
 	@echo "[done] train-neg10-all finished (6 experiments)"
 
+train-neg15-all: $(NEG15_FEATURES)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
+	@for yaml in $(NEG15_YAMLS); do \
+		name=$$(basename $$yaml .yaml); \
+		echo "==================== train $$name ===================="; \
+		$(PY) tools/spec_trainer/src/main.py --config $$yaml --name $$name || exit 1; \
+	done
+	@echo "[done] train-neg15-all finished (6 experiments)"
+
+train-neg20-all: $(NEG20_FEATURES)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
+	@for yaml in $(NEG20_YAMLS); do \
+		name=$$(basename $$yaml .yaml); \
+		echo "==================== train $$name ===================="; \
+		$(PY) tools/spec_trainer/src/main.py --config $$yaml --name $$name || exit 1; \
+	done
+	@echo "[done] train-neg20-all finished (6 experiments)"
+
 # Recursive $(MAKE) invocations force strictly sequential execution even
 # under 'make -j N' — phony-prereq chaining would otherwise let make
 # parallelize the 3 groups, interleaving the per-experiment banners and
@@ -683,7 +1016,9 @@ train-all:
 	$(MAKE) train-clean-all
 	$(MAKE) train-neg05-all
 	$(MAKE) train-neg10-all
-	@echo "[done] train-all finished (18 experiments)"
+	$(MAKE) train-neg15-all
+	$(MAKE) train-neg20-all
+	@echo "[done] train-all finished (30 experiments)"
 
 clean-train:
 	@if [ -d runs/spec_trainer ]; then \

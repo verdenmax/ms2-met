@@ -81,6 +81,8 @@ ms2*.log
 # the team keeps neg-FDR experiments reproducible).
 !/extract_*_neg05.ini
 !/extract_*_neg10.ini
+!/extract_*_neg15.ini
+!/extract_*_neg20.ini
 
 # ---------------- AI / scratch / planning files ----------------
 PLAN.md
