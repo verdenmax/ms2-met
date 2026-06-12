@@ -624,6 +624,68 @@ class DIAData:
         # Concat peak arrays (一次性, 然后立即释放 chunk list 节省内存)
         self._finalize_arrays(mz_chunks, int_chunks)
 
+    def _load_from_pfb(self, pfb_file_path: str) -> None:
+        """从 PFB（pFind/pXtract 二进制）文件加载数据，产出与
+        _load_from_mzml 等价的 DIAData。PFB 已是 peak-picked，跳过质心化。"""
+        from spectrum import pfb_reader
+
+        logging.info(f"Loading DIA data from {pfb_file_path} (PFB) ...")
+
+        # Pass 1: total_spectra + max scan number（跳过峰，不解码）
+        with open(pfb_file_path, "rb") as fh:
+            _addr_list_addr, scan_num = pfb_reader.read_header(fh)
+            max_scan_id = -1
+            for scan in pfb_reader.iter_scan_ids(fh, scan_num):
+                if scan > max_scan_id:
+                    max_scan_id = scan
+
+        logging.info(
+            f"{pfb_file_path} Total spectra: {scan_num}, "
+            f"max scan_id: {max_scan_id}")
+
+        self._preallocate_arrays(total_spectra=scan_num,
+                                 max_scan_id=max_scan_id)
+
+        # Pass 2: 填充
+        mz_chunks: list[np.ndarray] = []
+        int_chunks: list[np.ndarray] = []
+        current_spectrum_idx = 0
+        current_peak_idx = 0
+
+        with open(pfb_file_path, "rb") as fh:
+            pfb_reader.read_header(fh)
+            for spec in pfb_reader.iter_spectra(fh, scan_num):
+                if spec.ms_level == 1:
+                    self.has_ms1 = True
+                    precursor_scan_id = -1
+                    isolation_lower = None
+                    isolation_upper = None
+                else:
+                    precursor_scan_id = spec.precursor_scan
+                    if spec.activation_window is None:
+                        raise ValueError(
+                            f"PFB MS2 scan {spec.scan} missing "
+                            f"ActivationWindow; cannot derive DIA isolation "
+                            f"window")
+                    half = spec.activation_window / 2.0
+                    isolation_lower = spec.activation_center - half
+                    isolation_upper = spec.activation_center + half
+
+                mz_chunk, int_chunk = self._record_spectrum(
+                    current_spectrum_idx, current_peak_idx,
+                    scan_id=spec.scan, rt=spec.rt,
+                    precursor_scan_id=precursor_scan_id,
+                    isolation_lower=isolation_lower,
+                    isolation_upper=isolation_upper,
+                    mz_array=spec.mz, intensity_array=spec.intensity,
+                )
+                mz_chunks.append(mz_chunk)
+                int_chunks.append(int_chunk)
+                current_peak_idx += len(mz_chunk)
+                current_spectrum_idx += 1
+
+        self._finalize_arrays(mz_chunks, int_chunks)
+
     def _finalize_arrays(
         self, mz_chunks: list[np.ndarray], int_chunks: list[np.ndarray]
     ) -> None:
