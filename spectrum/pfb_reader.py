@@ -59,3 +59,44 @@ def read_header(fh: BinaryIO) -> tuple[int, int]:
             f"got {len(raw)}")
     _e1, _e2, _e3, addr_list_addr, scan_num = _HEADER_STRUCT.unpack(raw)
     return addr_list_addr, scan_num
+
+
+def parse_property_str(s: str) -> dict:
+    """Parse a tab-separated property string into typed fields.
+
+    Layout decided by token[1] (MsType): MS1 -> 4 tokens, MS2 -> 13 tokens.
+    """
+    toks = s.split("\t")
+    if len(toks) < _MS1_FIELD_COUNT:
+        raise ValueError(f"PFB property_str has too few fields: {toks!r}")
+    ms_level = int(toks[1])
+    base = {
+        "scan": int(toks[0]),
+        "ms_level": ms_level,
+        "rt": float(toks[2]),
+        "instrument_type": toks[3],
+    }
+    if ms_level == 1:
+        if len(toks) != _MS1_FIELD_COUNT:
+            raise ValueError(
+                f"MS1 property_str expects {_MS1_FIELD_COUNT} fields, "
+                f"got {len(toks)}: {toks!r}")
+        return base
+    if ms_level == 2:
+        if len(toks) != _MS2_FIELD_COUNT:
+            raise ValueError(
+                f"MS2 property_str expects {_MS2_FIELD_COUNT} fields, "
+                f"got {len(toks)}: {toks!r}")
+        base.update({
+            "charge": int(toks[4]),
+            "mh_plus": float(toks[5]),
+            "ion_injection_time": float(toks[6]),
+            "activation_center": float(toks[7]),
+            "activation_type": toks[8],
+            "precursor_scan": int(toks[9]),
+            "activation_window": float(toks[10]),
+            "nce": float(toks[11]),
+            "monoisotopic_mz": float(toks[12]),
+        })
+        return base
+    raise ValueError(f"Unknown MsType={ms_level} in property_str: {toks!r}")

@@ -28,3 +28,29 @@ def test_read_header_returns_addr_and_scan_num(tmp_path):
         assert pfb_reader.HEADER_SIZE == 24
         assert fh.tell() == 24
         assert addr_list[0] == 24
+
+
+def test_parse_property_str_ms1():
+    out = pfb_reader.parse_property_str("1\t1\t0.197\tFTMS")
+    assert out == {"scan": 1, "ms_level": 1, "rt": 0.197,
+                   "instrument_type": "FTMS"}
+
+
+def test_parse_property_str_ms2():
+    s = "2\t2\t0.4538569\tFTMS\t2\t1000.993\t63\t501\tHCD\t1\t2\t27.00\t501"
+    out = pfb_reader.parse_property_str(s)
+    assert out["scan"] == 2 and out["ms_level"] == 2
+    assert out["instrument_type"] == "FTMS"
+    assert out["charge"] == 2
+    assert out["activation_center"] == 501.0
+    assert out["precursor_scan"] == 1
+    assert out["activation_window"] == 2.0
+    assert out["nce"] == 27.0
+    assert out["monoisotopic_mz"] == 501.0
+
+
+def test_parse_property_str_ms2_wrong_field_count_raises():
+    # MS2 with only 11 fields (missing pXtract-3 fields) -> clear error
+    s = "2\t2\t0.45\tFTMS\t2\t1000.9\t63\t501\tHCD\t1\t2"
+    with pytest.raises(ValueError, match="MS2"):
+        pfb_reader.parse_property_str(s)
