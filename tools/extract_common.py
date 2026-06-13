@@ -638,6 +638,8 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
         else:
             logging.info(
                 "[contaminant] 段已配置但 fasta 为空，跳过污染库过滤")
+    else:
+        logging.info("未配置 [contaminant] 段，跳过污染库过滤")
 
     if "entrapment" in config:
         classified_tsv = os.path.expanduser(
