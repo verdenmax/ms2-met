@@ -150,7 +150,7 @@ class PairFlow:
             # iterations; mutating b._rt += 10 in place caused offsets to
             # accumulate (10, 20, 30...) across pairs. Shift a copy instead.
             b_shifted = copy.copy(b)
-            b_shifted._rt = b._rt + 10
+            b_shifted._rt = b._rt + 10  # +10 分钟（RT 规范单位是分钟）
             res = self.multi_handle(a, b_shifted, 0)
             ans.append(res)
 

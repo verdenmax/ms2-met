@@ -85,7 +85,7 @@ def process_psm_pair_shared(
         # 现行流程改用陷阱库(entrapment)直接作为负例并提取特征
         # （feature_type 0 单流程，label 来自 psm._label_type）。
         # 该 RT+10 路径仅为兼容旧配置保留，不应用于新实验。
-        psm2._rt += 10
+        psm2._rt += 10  # +10 分钟（RT 规范单位是分钟）：把重标 XIC 移离真实洗脱
 
     # TODO: 计算出信息
     tot_features = multi_batch_work(
@@ -221,7 +221,7 @@ def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
                 # DEPRECATED: 同 process_psm_pair_shared，in-silico 负样本
                 # （heavy RT +10）已弃用，改用陷阱库(entrapment)负例
                 # （feature_type 0）。此路径仅为兼容旧配置保留。
-                psm2._rt += 10
+                psm2._rt += 10  # +10 分钟（RT 规范单位是分钟）
 
             tot_features = multi_batch_work(
                 psm1=psm1,

@@ -109,6 +109,7 @@ class LightResult:
                 modifications = parse_alphadia_peptide_modify(
                     row.Mods, row.ModSites)
                 charge = int(row.Charge)
+                # AlphaDIA report 的 RtObserved 是秒 → 转管线规范的分钟
                 rt_val = rt_sec_to_min(float(row.RtObserved))
                 if not np.isfinite(rt_val):
                     n_parse_err += 1
@@ -224,6 +225,7 @@ class LightResult:
                     sequence = str(row.StrippedSequence)
                 else:
                     sequence = re.sub(r"\(.*?\)", "", mod_str)
+                # DIA-NN report 的 RT 已是分钟（管线规范单位），直读不换算
                 rt_val = float(row.RT)
                 if not np.isfinite(rt_val):
                     n_parse_err += 1
@@ -368,4 +370,5 @@ def parse_alphadia_peptide_modify(modify_str: str, site_str: str):
 
 
 def rt_sec_to_min(rt: float):
+    """秒 → 分钟。管线 RT 规范单位是分钟（见 DIAData._get_retention_time）。"""
     return rt / 60
