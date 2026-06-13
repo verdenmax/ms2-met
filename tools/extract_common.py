@@ -631,11 +631,13 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
             from spectrum.entrapment_classifier import load_target_fasta
             match_li = config["contaminant"].getboolean(
                 "match_li", fallback=True)
-            cont_index = load_target_fasta(cont_fasta)
-            logging.info(
-                f"[contaminant] 加载污染库: {cont_fasta}, "
-                f"n_proteins={cont_index.n_proteins}")
+            # 子串+L↔I 是"宁可多删"的保守方向，对清洗 negative 是安全的；这里
+            # 也作用于 positive（用户选择 B），即与污染蛋白质谱不可分的肽段一律剔。
+            cont_index = load_target_fasta(cont_fasta, log_label="污染库")
             psms = filter_by_contaminant(psms, cont_index, match_li=match_li)
+        else:
+            logging.info(
+                "[contaminant] 段已配置但 fasta 为空，跳过污染库过滤")
 
     if "entrapment" in config:
         classified_tsv = os.path.expanduser(

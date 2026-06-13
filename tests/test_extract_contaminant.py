@@ -49,3 +49,20 @@ def test_contaminant_li_isomer_dropped_only_when_match_li(tmp_path):
 def test_contaminant_empty_psms_noop(tmp_path):
     idx = _contaminant_index(tmp_path)
     assert filter_by_contaminant([], idx, match_li=True) == []
+
+
+def test_load_target_fasta_log_label(tmp_path, caplog):
+    """污染库加载日志应用 '污染库' 而非误导性的 'target FASTA'。"""
+    import logging
+    fa = tmp_path / "c.fasta"
+    fa.write_text(">CON\nPEPTIDEK\n")
+    with caplog.at_level(logging.INFO):
+        load_target_fasta(str(fa), log_label="污染库")
+    msgs = "\n".join(r.message for r in caplog.records)
+    assert "加载 污染库" in msgs and "target FASTA" not in msgs
+
+
+def test_load_target_fasta_missing_uses_label():
+    import pytest
+    with pytest.raises(FileNotFoundError, match="污染库 文件不存在"):
+        load_target_fasta("/no/such/file.fasta", log_label="污染库")

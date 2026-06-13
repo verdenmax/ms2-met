@@ -56,13 +56,18 @@ class TargetIndex:
     n_proteins: int
 
 
-def load_target_fasta(fasta_path: str) -> TargetIndex:
+def load_target_fasta(fasta_path: str,
+                      log_label: str = "target FASTA") -> TargetIndex:
     """Load a FASTA file into a TargetIndex.
 
     Args:
         fasta_path: Path to a FASTA file with one or more protein
             records.  Multi-line sequences are concatenated. Lowercase
             residues are uppercased.
+        log_label: Human label for log/error messages (e.g. "target FASTA"
+            for entrapment, "污染库" for the contaminant DB). Lets callers
+            avoid the misleading "target FASTA" wording when the file isn't
+            the entrapment target proteome.
 
     Returns:
         TargetIndex with raw_text, li_normalized_text, n_proteins.
@@ -72,7 +77,7 @@ def load_target_fasta(fasta_path: str) -> TargetIndex:
     """
     if not os.path.exists(fasta_path):
         raise FileNotFoundError(
-            f"target FASTA 文件不存在: '{fasta_path}'")
+            f"{log_label} 文件不存在: '{fasta_path}'")
 
     proteins: list[str] = []
     current: list[str] = []
@@ -97,7 +102,7 @@ def load_target_fasta(fasta_path: str) -> TargetIndex:
     li_normalized_text = raw_text.replace("I", "L")
 
     logging.info(
-        f"加载 target FASTA: {fasta_path} "
+        f"加载 {log_label}: {fasta_path} "
         f"({n_records} 条记录, 拼接后长度 {len(raw_text)} aa)"
     )
     return TargetIndex(
