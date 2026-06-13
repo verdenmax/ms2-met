@@ -51,7 +51,7 @@
 | `combined_<fdr>` | 三集合并 | `test_size: 0.2` |
 | `exp1/exp2` | 早期示例 | — |
 
-`fdr` ∈ `clean / neg05 / neg10`；`ds` ∈ `2da / 5da / normal`。`feature_cols: []` 一律自动检测。
+`fdr` ∈ `clean / neg05 / neg10 / neg15 / neg20`（`combined_*` 仅有 `clean / neg05 / neg10` 三档）；`ds` ∈ `2da / 5da / normal`。`feature_cols: []` 一律自动检测。当前 `config/` 共 33 个实验配置（`in_*` 15 + `cross_test_*` 15 + `combined_*` 3）外加 `exp1`/`exp2` 两个早期示例。
 
 ## rescore 多阈值评估（`rescore.py`）
 

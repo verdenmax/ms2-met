@@ -20,6 +20,14 @@
 - 权威 PSM 在 **loose** 池查找，保证 tight 交集 key 也一定能找到 PSM。
 - `load_engine_psms`（单阈值）保留为向后兼容薄封装。
 
+### no-label-site 过滤（标记位点感知，`_parse_labeling` / `filter_by_label_site`）
+
+- 目的：SILAC 轻重标验证只能作用在**有重标位点**的肽上。无标记位点的肽其"重标版"≡轻标，本工具原理上无法验证，落在能力边界外（speclib spec §12 类4）。
+- **正负例都剔**（标记位点与标签无关）；**默认开、无条件运行**，不依赖 `[entrapment]` 段。
+- 判据来自 `spectrum.psm_info.has_label_site(seq, heavy_type)`：SILAC → 序列含 **K 或 R**；CHEAVY(¹³C)/NHEAVY(¹⁵N) → 全原子代谢标记，任何肽必含 C 和 N → 恒 True → **no-op（一条不剔）**；空序列 → False（剔）。
+- 标记方案由 `[extract] labeling` 决定（缺省 `silac`，向后兼容），大小写不敏感，别名：`silac`；`c13/13c/cheavy`；`n15/15n/nheavy`。非法值 → `ValueError`（fail-fast）。
+- 调用点：`extract_n_engines` 中、`label_type` 已设置之后、**先于** entrapment L0/L1 过滤（均为删行）。日志打印剔除的 positive / negative 数。
+
 ### entrapment 过滤
 
 - 目的：剔除质谱不可分的"伪负例"，避免污染 SILAC 配对验证负样本。
@@ -123,3 +131,33 @@
 - `group` 固定写 `"trap"`（extract_common loader 的过滤要求）；`scan_number` 留空（loader 不用）。
 - 用途：去掉 proteinCopilot 依赖，ms2-met 单条命令即可自建干净负例集；产出可直接填进 extract_common `[entrapment] classified_tsv` + `drop_levels = L0, L1`。
 - 错误处理：negatives 不存在 → `FileNotFoundError` → `exit(1)`；其它异常 `logging.exception` + `exit(1)`。
+
+---
+
+## tools/trap_domain_filter.py — 超出工具适用域的 trap 过滤（spec §12）
+
+对**提取后**的 `features.csv` 做"删行"清洗：只评估 `label_type == "negative"`（trap）行，positive（target）永不删。
+
+`beyond_tool_limit(level, heavy_out_of_range, has_kr=True) -> (drop, reason)` 三类丢弃：类1 同源 `level ∈ {L0,L1}`（`HOMOLOG_DROP_LEVELS`，L↔I 异构体在 human proteome，质谱不可分）→ `homolog_L0/L1`；类4 无标记位点 `has_kr == False`（无 K/R，heavy≡light）→ `no_label_site`；类3 heavy 出窗 `int(heavy_out_of_range)==1` → `heavy_out_of_window`。优先级 类1 > 类4 > 类3（三者都丢）。类2（污染物）尚未实现（TODO）。
+
+`annotate_traps(df, target_index) -> df`：给每行加 `entrap_level` / `domain_drop` / `domain_reason`；positive 行记 `target`、不丢；trap 行 `classify_peptide` 得 level、`has_kr = has_label_site(seq)`（SILAC），再调 `beyond_tool_limit`。
+
+CLI：`--features`（labeled features.csv）/ `--human-fasta`（target，L0/L1 用）/ `--output`（cleaned features.csv = targets + 保留 trap）。日志打印 dropped/kept、drop reason 与 entrap level 分布。
+
+---
+
+## tools/speclib_inspect.py — 谱库流式检视
+
+流式加载 pFind 谱库，打印摘要（肽段数 / chg_max / RT 范围 / 前 N 条肽段的 mods+mass+RT+top3 MS2），可选做质量交叉校验。
+
+`summarize(*, library_dir, fasta_path, mod_path, element_path=None, aa_path=None, n_samples=5, tol=0.01, mass_limit=None) -> str`：`SpecLib.open_dir(...)` + `iter_peptides()` 流式取前 `n_samples` 条（不全载）。给了 `--element` 与 `--aa` 才跑 `validate_masses(..., tol, limit=mass_limit)`，打印 `pass/total`、`max_abs_err` 与前 5 条失败；否则 "mass validation skipped"。依赖 `spectrum.speclib.SpecLib`。
+
+---
+
+## tools/speclib_sanity.py — 预测/观测相似度 sanity gate（spec §4.0）
+
+构建任何"预测强度"特征**之前**的 go/no-go：confident light PSM 上，谱库预测碎片强度与观测 light 谱是否一致。
+
+纯核心（单测覆盖）：`similarity_distribution(pairs, metric=spectral_angle) -> {n,median,p25,p75}`；`gate_pass(stats, min_sim) -> bool`（`n>0` 且 median 有限且 `>min_sim`）；`build_pairs_from_maps(pred_map, obs_map) -> (pred_vec,obs_vec)`（共同碎片稳定排序对齐）；`filter_psms_by_raw(psms, raw_title)`（`None` 不过滤）。
+
+main：`SpecLib.open_dir` + `LightResultManager` 载 PSM；DIA 走 `--dia-npz`（mmap，优先）或 `--raw`；`build_pred_store` 算覆盖率；每 PSM 取 pred/obs 共同碎片（≥2）算相似度 + gate。**退出码 0=PASS / 2=FAIL**。依赖 `spectrum.speclib`、`spectrum.dia_data`、`manager.*`、`workflows.pred_*`。

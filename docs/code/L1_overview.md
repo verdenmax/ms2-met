@@ -15,7 +15,9 @@
 config.ini → main.py → PairFlow(workflows)
    ├─ LightResultManager → LightResult（PSM 列表；DIA-NN/AlphaDIA/pFind/自定义JSON）
    └─ DataManager        → DIAData（mzML / PFB → npz，内存映射共享）
-        ↓ 按 (sequence, charge, mods) 分组；生成正样本(label=1) + 负样本(label=0, RT+10min)
+        ↓ 按 (sequence, charge, mods) 分组；正样本(label=1)=重复 PSM 配对；
+          负样本(label=0)默认取自陷阱库(entrapment, feature_type=0 单流程)；
+          旧的 heavy RT +10 分钟人为错位负例已弃用，仅为兼容旧配置保留
         ↓ 多进程特征提取（≤25 workers，single_work）
             对每个 PSM/PSM对：前体 MS1 XIC → 预测重标 m/z → 重标 MS1 XIC →
             前体 Pearson；逐 b/y 碎片：轻标 MS2 XIC vs 重标 MS2 XIC 的 Pearson；分位数统计
@@ -41,7 +43,7 @@ config.ini → main.py → PairFlow(workflows)
 - **Pickle 持久化**：`manager/base_manager.py` 基类缓存解析结果（原始数据/搜索结果），避免重复解析。
 - **SILAC 重标质量**：K +8.014204、R +10.008275（13C/15N）；亦支持 C-only/N-only 重标（`HeavyType`）。
 - **质量容差** `mass_tol_ppm`、**XIC 窗口** `xic_cycle_window` 等由 config.ini 控制。
-- **负样本**：同一肽段 RT 偏移（+10min）构造 label=0，模拟"找错位置"。
+- **负样本**：默认来自**陷阱库(entrapment)**（`feature_type=0` 单流程）。旧方案"同一肽段 heavy RT +10 分钟错位构造 label=0"已弃用，仅兼容旧配置保留。
 - 工作目录 `work_directory`（缺省 `./workspace`）可每个 baseline 独立，避免并行写冲突。
 
 ## 入口 / 快速上手

@@ -53,6 +53,13 @@ config 访问用字符串常量。
 | `RANDOM_SEED` | `"random_seed"` | 随机种子 |
 | `CENTROID_ENABLED` | `"centroid_enabled"` | mzML centroiding 开关（`manager/data_manager.py` 读取）|
 | `CENTROID_REL_THRESHOLD` | `"centroid_rel_threshold"` | centroid 相对强度阈值（同上）|
+| `SPECLIB` | `"speclib"` | speclib 预测强度特征 section（Phase 2）|
+| `SPECLIB_DIR` | `"speclib_dir"` | 谱库目录 |
+| `SPECLIB_FASTA` | `"speclib_fasta"` | 谱库 FASTA |
+| `SPECLIB_MOD` | `"speclib_mod"` | 谱库修饰定义 |
+| `PRED_TOP_K` | `"pred_top_k"` | 预测强度取 top-K 碎片 |
+| `PRED_PRESENCE_FLOOR` | `"pred_presence_floor"` | 预测存在性下限 |
+| `PRED_SIGNAL_ALPHA` | `"pred_signal_alpha"` | 预测信号权重 α |
 
 ---
 

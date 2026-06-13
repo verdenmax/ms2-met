@@ -52,6 +52,6 @@ pickle 文件路径。
 | `1` | `_load_from_dia_nn_input(path, qvalue_threshold=...)` | `Input.pfind_qvalue_threshold`（fallback=0.01） |
 | `2` | `_load_from_alphadia_input(path, qvalue_threshold=...)` | 同上 |
 | `3` | `_load_from_pfind_input(path, qvalue_threshold=...)` | 同上 |
-| 其它 | 记 `logging.error`（支持 0/1/2/3） | — |
+| 其它 | **抛 `ValueError`**（仅支持 0/1/2/3） | — |
 
 返回 `LightResult` 对象。

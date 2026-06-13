@@ -14,8 +14,8 @@
 |---|---|---|
 | `DIAData` | class | 一个 raw 的全部谱图（mz/intensity/rt + DIA 窗口 + 索引），扁平数组存储 |
 | `DIAData.load_from_file` | `(filepath, use_mmap=True, expected_centroid_*) → DIAData` | 从 `.npz` 缓存加载（mmap 零拷贝），校验 `_format_version=3` 与 centroid 参数 |
-| `DIAData.save_to_file` | `(filepath)` | 存为 `.npz`（`savez_compressed`）|
-| `DIAData.validate_cache_params` | `(filepath, enabled, rel_threshold)` | 仅读 3 个标量做轻量缓存校验 |
+| `DIAData.save_to_file` | `(filepath, source_path=None)` | 存为 `.npz`（`savez_compressed`，原子写）；`source_path` 写入源 mtime/size 供缓存失效检测 |
+| `DIAData.validate_cache_params` | `(filepath, enabled, rel_threshold, expected_source_path=None)` | mmap 只读元数据标量做轻量缓存校验（含源文件身份）|
 | `DIAData.xic_ms2_peaks_extract` | `(rt, xic_cycle_window, precursor_mz, ions_mass, mass_tol_ppm) → (结构化ndarray, total_intensity)` | MS2 层 XIC：按 DIA 窗口逐 cycle 提取碎片离子色谱 |
 | `DIAData._load_from_mzml` / `_load_from_pfb` | `(path)` | 从 mzML / PFB 加载（两遍）；`DataManager.get_dia_data_object` 按扩展名分派，二者产出等价 DIAData |
 | `DIAData.xic_peaks_extreact` | `(rt, xic_cycle_window, precursor_mz, mass_tol_ppm) → ndarray` | MS1 层 XIC：前体离子色谱 |
@@ -47,7 +47,8 @@
 | `get_SILAC_increase_mass` | `(sequence) → float` | K +8.014204、R +10.008275 |
 | `get_heavy_increase_mass` | `(sequence, heavy_type) → float` | 按重标类型计算质量增量 |
 | `get_theoretical_isotope_ratios` | `(sequence) → [M0,M1,M2]` | Poisson 近似同位素比例 |
-| `sequence_controlled_shuffle` | `(peptide, anchor_len=2, shuffle_ratio=0.5, seed=None) → str` | 锚定 C 端的可控乱序（生成 entrapment）|
+| `has_label_site` | `(sequence, heavy_type=SILAC) → bool` | 该肽段在此重标下是否有标记位点（SILAC 看 K/R；C/N 重标恒 True；空序列 False）|
+| `sequence_controlled_shuffle` | `(peptide, anchor_len=2, shuffle_ratio=0.5, seed=None, max_tries=10) → str` | 锚定 C 端的可控乱序（生成 entrapment）|
 
 ### `pfind_parser.py` — pFind 结果解析
 

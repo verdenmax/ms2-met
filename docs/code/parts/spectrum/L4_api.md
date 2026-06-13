@@ -16,9 +16,9 @@ float32 数组排序后容差去重；`None`/空 → `None`。用于构造 DIA �
 
 主要属性：`_mz_values`/`_intensity_values`（全局峰）、`rt_values`（分钟）、`precursor_scan_ids`（MS1=-1）、`_peak_start_idx_list`/`_peak_stop_idx_list`、`_precursor_lower_mz`/`_precursor_upper_mz`、`_scan_id_to_index`、`ms1_indexs`/`ms2_indexs`(+`_rt`)、`_cycle_left_precursor`、`_centroid_enabled`/`_centroid_rel_threshold`。
 
-- `save_to_file(filepath: str)` — 存为 `.npz`（`savez_compressed`，`_format_version=3`，过滤 None）。
+- `save_to_file(filepath: str, source_path: str | None = None)` — 存为 `.npz`（`savez_compressed`，`_format_version=3`，过滤 None，原子写 `mkstemp`+`os.replace`）。给定 `source_path` 时把源文件 `mtime`/`size` 写入缓存（`_source_mtime`/`_source_size`），供 `validate_cache_params` 检测源文件是否被替换/重建。
 - `classmethod load_from_file(filepath, use_mmap=True, expected_centroid_enabled=None, expected_centroid_rel_threshold=None) -> DIAData` — 从 npz 加载；**Raises** `ValueError`（版本≠3 或 centroid 参数不符）。
-- `staticmethod validate_cache_params(filepath, expected_centroid_enabled, expected_centroid_rel_threshold) -> None` — 只读 3 个标量做轻量校验；**Raises** `ValueError`。
+- `staticmethod validate_cache_params(filepath, expected_centroid_enabled, expected_centroid_rel_threshold, expected_source_path=None) -> None` — 用 mmap 只读元数据标量做轻量校验：版本、centroid 参数，以及（给定 `expected_source_path` 且缓存含 `_source_size` 时）源文件 size/mtime；不符 **Raises** `ValueError`。
 - `_load_from_mzml(mzml_file_path=None)` — 两遍加载 mzML（统计→填充+质心化+concat）。
 - `_load_from_pfb(pfb_file_path)` — 两遍加载 PFB（统计→填充+concat）。**不质心化**（PFB 已 peak-picked）；RT 秒→分钟 `/60`；MS2 隔离窗口 = `activation_center ± activation_window/2`；MS1 `precursor_scan_id=-1`。复用 `_record_spectrum` / `_finalize_arrays`。
 - `_record_spectrum(spectrum_idx, current_peak_index, *, scan_id, rt, precursor_scan_id, isolation_lower, isolation_upper, mz_array, intensity_array) -> (mz, intensity)` — 格式无关：把单谱归一化字段写入按谱图定长的数组（isolation 为 None 时存 NaN）。mzML 与 PFB 共用。
@@ -104,7 +104,10 @@ SILAC 委托上者；CHEAVY=`C数×1.003355`；NHEAVY=`N数×0.997035`。**仅�
 ### `get_theoretical_isotope_ratios(sequence) -> list`
 返回 `[1.0, λ, λ²/2]`（Poisson 近似 M0/M1/M2）。
 
-### `sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5, seed=None) -> str`
+### `has_label_site(sequence, heavy_type=HeavyType.SILAC) -> bool`
+该肽段在 `heavy_type` 下是否存在代谢标记位点（即轻/重 SILAC 式校验是否有意义）。SILAC 只标记 K/R——无 K/R 的肽段没有重标搭档（重=轻），返回 False；CHEAVY(¹³C)/NHEAVY(¹⁵N) 为全原子代谢标记，任何肽段都含 C 和 N，故恒为 True。空序列返回 False。大小写不敏感（内部 `upper()`）。
+
+### `sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5, seed=None, max_tries=10) -> str`
 保留 C 端 `anchor_len` 残基，核心区按比例打乱；`seed` 给定则可复现。
 
 ## spectrum/pfind_parser.py

@@ -40,7 +40,7 @@
 ## `constant/keys.py` 常量用途
 
 - `ConstantsClass`（metaclass）：禁止改写属性（`__setattr__` 抛 `TypeError`），并提供 `get_values()` 返回类内全部用户定义的字符串值。
-- `ConfigKeys`：集中所有访问 config 的字符串键，避免散落的魔法字符串。涵盖输入键（`INPUT`/`RAW_NUM`/`RAW_PATH`/`LIGHT_RESULT_PATH`/`SEARCH_ENGINE_TYPE`/`PFIND_QVALUE_THRESHOLD`）、通用键（`GENERAL`/`WORK_DIRECTORY`/`MASS_TOL_PPM`/`XIC_CYCLE_WINDOW`/`RESULT_FILE`/`FEATURE_TYPE`/`RANDOM_SEED`）与 mzML centroiding 键（`CENTROID_ENABLED`/`CENTROID_REL_THRESHOLD`，由 `manager/data_manager.py` 读取）。
+- `ConfigKeys`：集中所有访问 config 的字符串键，避免散落的魔法字符串。涵盖输入键（`INPUT`/`RAW_NUM`/`RAW_PATH`/`LIGHT_RESULT_PATH`/`SEARCH_ENGINE_TYPE`/`PFIND_QVALUE_THRESHOLD`）、通用键（`GENERAL`/`WORK_DIRECTORY`/`MASS_TOL_PPM`/`XIC_CYCLE_WINDOW`/`RESULT_FILE`/`FEATURE_TYPE`/`RANDOM_SEED`）与 mzML centroiding 键（`CENTROID_ENABLED`/`CENTROID_REL_THRESHOLD`，由 `manager/data_manager.py` 读取）。 此外还有 speclib 预测强度特征键（Phase 2）：`SPECLIB`/`SPECLIB_DIR`/`SPECLIB_FASTA`/`SPECLIB_MOD`/`PRED_TOP_K`/`PRED_PRESENCE_FLOOR`/`PRED_SIGNAL_ALPHA`。
 
 ## 边界 / 坑
 

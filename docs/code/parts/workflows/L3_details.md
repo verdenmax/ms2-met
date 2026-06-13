@@ -65,9 +65,9 @@
 - 进程池 `BrokenProcessPool`（常见 OOM）时提前 break，仍写出已完成部分并落 `*.PARTIAL_INCOMPLETE` 标记，供下游识别 CSV 不完整。
 - 进程池 `max_tasks_per_child=4` 限制单 worker 任务数以控内存；out-of-window XIC 请求按 worker 汇总记日志（不再逐次告警）。
 
-## 谱库预测强度特征（Phase 1 基础，未接入主流程）
+## 谱库预测强度特征（Phase 1 基础层 → Phase 2 已接入）
 
-把 pFind 谱库的**预测碎片强度**路由进轻重关系特征（设计见 `docs/specs/2026-06-08-speclib-predicted-intensity-features-design.md`）。Phase 1 只落地可复用基础 + 前置 gate，**不**改 `result.csv`：
+把 pFind 谱库的**预测碎片强度**路由进轻重关系特征（设计见 `docs/specs/2026-06-08-speclib-predicted-intensity-features-design.md`）。本节先列 Phase 1 可复用基础 + 前置 gate（其本身**不**改 `result.csv`）；接入主流程的 Phase 2a–2c 见下文：
 
 - **度量**（`pred_features`）：谱角（对稀疏强度向量比 Pearson 稳）、Spearman（抗模型绝对强度偏差）、预测加权 Pearson。所有度量对退化/**非有限**输入返回 NaN（与各兄弟函数一致），避免把“未定义”混成“真实低相似”。
 - **top-K**（`select_topk_separable`）：在**可分**碎片里取预测最强 K 个，驱动后续碎片级特征；丢弃非有限预测强度。

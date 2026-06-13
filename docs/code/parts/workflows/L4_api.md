@@ -32,7 +32,7 @@
 ## workflows/single_work.py
 
 - `multi_batch_work(psm1: PSMInfo, dia_data1: DIAData, psm2: PSMInfo, dia_data2: DIAData, config: ConfigParser) -> dict` — 双文件/双 PSM 特征提取，返回完整特征 dict。
-- `single_pair_work(psm: PSMInfo, dia_data: DIAData, config: ConfigParser) -> dict` — 单文件特征提取（内部经 `get_heavy_info(HeavyType.SILAC)` 推 heavy），schema 与 `multi_batch_work` 对齐。
+- `single_pair_work(psm: PSMInfo, dia_data: DIAData, config: ConfigParser, pred_frags: dict | None = None, speclib_enabled: bool = False) -> dict` — 单文件特征提取（内部经 `get_heavy_info(HeavyType.SILAC)` 推 heavy），schema 与 `multi_batch_work` 对齐。`speclib_enabled` 时循环内收集可分碎片记录并在 `return` 前合并谱库预测强度特征（I1/I2/I3/J2/J5/coelut，详见 pred_integrate 节）。
 - `calc_xic_score(light_xic, heavy_xic, center_rt: float|None=None, heavy_center_rt: float|None=None, intensity_threshold: float=1e-10) -> dict` — 一对 XIC 的 19 字段打分（pearson/cosine/apex_delta(±)/mz_avg_err/强度比/snr/峰形/cycle_offset…）；空对返回 `_default_xic_score()`。
 - `extract_ion_pearson_features(ions_pearsons: list) -> dict` — count/p25/p50/p75/mean/std/min/high_ratio；`count==1` 时 std=NaN。
 - `extract_ion_numeric_features(values: list, prefix: str) -> dict` — `{prefix}_mean/p50/std/max`，清洗 NaN/Inf。
@@ -71,6 +71,7 @@
 - `normalize_mods(mods) -> tuple` — 把 `(pos,mod_id)` 元组或 `ModSite` 对象规范成位置排序的 `((pos,mod_id),...)`。
 - `normalize_key(sequence, mods, charge) -> tuple` — 规范肽段变体键 `(sequence, sorted-mods, int charge)`，可哈希。
 - `frag_key(ion_type, frag_pos, frag_charge) -> tuple` — 预测/实测共用的碎片键 `(str, int, int)`。
+- `frag_pos_for_ion(ion_type, ion_num, seq_len) -> int` — 把流水线 1-based b/y 离子序号（`PSMInfo.get_fragment_ions` 产出）映射到库的 0-indexed 裂解位点（`FragIon.frag_pos`，范围 `0..seq_len-2`）：b 为 `ion_num-1`，**y 反向**为 `seq_len-ion_num-1`（同裂解位点的 `b_i` 与 `y_{L-i}` 对齐到同键）。被 `pred_integrate` 与 `tools/speclib_sanity` 复用；对齐错误会静默比较到不同碎片（spec §4.1）。
 - `class PredStore` — `.get(key)` → `{'frags':{frag_key:intensity},'pred_rt':float}|None`、`.n_hit`、`.n_miss`、`.wanted`。
 - `build_pred_store(lib, wanted_keys, decode_ms2="objects") -> PredStore` — **一遍流式**扫 `SpecLib`，只留命中（被鉴定）肽段，内存 O(命中数)；末尾 `logger.info` 记 `hit/miss` 覆盖率。
 

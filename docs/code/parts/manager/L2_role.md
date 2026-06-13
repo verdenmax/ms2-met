@@ -15,7 +15,7 @@
 | `BaseManager.load()` | `-> None` | 从 pickle 加载并校验版本，回填 `__dict__` |
 | `DataManager` | `__init__(config=None, path=None, load_from_file=False, figure_path=None)` | 原始谱图管理器 |
 | `DataManager.get_centroid_params()` | `-> tuple[bool, float]` | 从 config 解析 centroid 参数（单一真相源） |
-| `DataManager.get_dia_data_object(tot_raw_path=None)` | `-> DIAData` | 注入 centroid 参数后从 mzML 读取 DIA 数据 |
+| `DataManager.get_dia_data_object(tot_raw_path=None)` | `-> DIAData` | 注入 centroid 参数后**按扩展名分派**加载：`.pfb`（大小写不敏感）→ `_load_from_pfb`，否则 → `_load_from_mzml`（`None` 安全） |
 | `LightResultManager` | `__init__(config=None, path=None, load_from_file=False, figure_path=None)` | 搜索结果（light）管理器 |
 | `LightResultManager.get_light_result_object(light_result_path=None)` | `-> LightResult` | 按搜索引擎类型加载搜索结果 |
 

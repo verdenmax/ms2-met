@@ -36,14 +36,15 @@
 ### npz 缓存与版本
 
 - `_format_version=3`：相对 v2 新增「内嵌 centroid 参数」。加载/校验时若版本≠3 或 centroid 参数与配置不符则抛 `ValueError`，强制重建缓存（避免用旧 profile 缓存）。
-- `validate_cache_params` 用 `with np.load(..., mmap_mode='r')` 只读 3 个标量再关闭句柄——避免为校验元数据而 mmap 数 GB 数组，并防止 Windows 删除文件时的句柄竞争。
-- `save_to_file` 过滤掉 None 值（`np.savez` 不支持 None）；加载用 `_load_attrs` 填充，`_format_version` 故意不回填到对象。
+- `validate_cache_params` 用 `with np.load(..., mmap_mode='r')` 只读少量元数据标量（`_format_version`、`_centroid_enabled`、`_centroid_rel_threshold`，以及给定 `expected_source_path` 时的 `_source_size`/`_source_mtime`）再关闭句柄——避免为校验元数据而 mmap 数 GB 数组，并防止 Windows 删除文件时的句柄竞争。
+- **源文件身份失效**：`save_to_file(source_path=...)` 把源 mzML/PFB 的 `mtime`/`size` 写入缓存；`validate_cache_params(expected_source_path=...)` 比对，size/mtime 不符则抛 `ValueError` 触发重建（旧缓存无 `_source_size` 字段时跳过该校验，保持向后兼容命中）。`workflows/flow_utils.py` 命中前即用它校验。
+- `save_to_file` 过滤掉 None 值（`np.savez` 不支持 None）、原子写（同目录 `mkstemp` + `os.replace`）；加载用 `_load_attrs` 填充，`_format_version` 故意不回填到对象。
 
 ### XIC 提取逻辑
 
 **MS2 层 `xic_ms2_peaks_extract`**（核心验证算法）：
-1. `searchsorted(ms2_indexs_rt, rt)` 定位，在前后各 5 个候选中，**筛选 precursor_mz 落在隔离窗口 [lower-0.1, upper+0.1] 内**且 RT 最接近的作为 center；无匹配则记 `_n_out_of_window_xic` 并返回空。
-2. 从 center 向左/右各收集 `xic_cycle_window` 个「有效」（窗口含 precursor_mz）MS2 谱图，跳过 NaN 窗口。
+1. `searchsorted(ms2_indexs_rt, rt)` 定位 `pos`，再从 `pos` **向左（含 pos）无界扫描**、从 `pos+1` **向右无界扫描**，各取第一个「`precursor_mz` 落在隔离窗口 `[lower-0.1, upper+0.1]` 内」的 MS2 谱图，两侧命中里取 RT 更接近者作为 center；全程无匹配则记 `_n_out_of_window_xic` 并返回空。（DIA 每 cycle 轮询 N 个窗口，含该前体的窗口每 N 个 MS2 才出现一次，N 常 20–70，故不能用固定 ±k 候选。）
+2. 从 center 向左/右各收集 `xic_cycle_window` 个「有效」MS2 谱图，跳过 NaN 窗口。注意：收集阶段用严格判定 `lower <= precursor_mz <= upper`（无 ±0.1 容差），与 center 选择阶段的 `[lower-0.1, upper+0.1]` 略有不同。
 3. 对每个选中谱图，对 charge=1,2 算理论 m/z `(ions_mass + z·proton)/z`，`match_peak_ppm` 在 ppm 容差内累加强度、累加 ppm 误差。
 4. 返回结构化 ndarray `[(rt, ppm_error, intensity, cycle_idx)]` + 全窗口 total_intensity。`cycle_idx` 由 `_ms2_cycle_idx` 经 precursor_scan_id → MS1 全局下标 → 在 `ms1_indexs` 中的位置得到。
 
@@ -68,6 +69,7 @@
 - CHEAVY：`Composition(seq)['C'] × (¹³C−¹²C=1.003355)`；NHEAVY：`['N'] × (¹⁵N−¹⁴N=0.997035)`。
 - 重标前体 m/z = (轻前体质量 + 质量增量)/charge。
 - **⚠️ 修饰原子的重标未实现**：CHEAVY/NHEAVY 全代谢标记下，修饰基团里的 C/N 原子同样应被 ¹³C/¹⁵N 替换，但 `get_heavy_increase_mass` 只统计序列骨架/侧链原子。为避免静默返回错误质量，`get_C_N_HEAVY_precursor_mz` / `get_fragment_ions` 在 `heavy_type∈{CHEAVY,NHEAVY}` 且肽段带修饰（`_modify` 非空）时经 `_assert_heavy_supported` 抛 `NotImplementedError`（代码内 TODO）。SILAC 只标记 K/R、不涉及修饰，**不受影响**；无修饰的 CHEAVY/NHEAVY 仍正确。
+- `has_label_site(sequence, heavy_type)`：判断肽段是否存在标记位点。SILAC 仅当含 K/R 才有重标搭档（否则重=轻、不可校验）；CHEAVY/NHEAVY 为全原子标记，任何非空肽段都含 C/N 故恒 True；空序列 False。上游 `tools/extract_common`、`tools/trap_domain_filter` 用它筛掉无法做轻重校验的肽段。
 
 ### 同位素比例与乱序
 

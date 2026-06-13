@@ -9,6 +9,7 @@
 - `SUPPORTED_ENGINES = {"pfind", "diann", "alphadia"}`
 - `DEFAULT_DROP_LEVELS = {"L0", "L1"}`、`VALID_ENTRAPMENT_LEVELS = {"L0".."L4"}`
 - `_LEVEL_SEVERITY`：L0=0 … L4=4（数字越小越严重）。
+- `_LABELING_ALIASES`：`silac`→SILAC；`c13`/`13c`/`cheavy`→CHEAVY；`n15`/`15n`/`nheavy`→NHEAVY。
 
 ### 主要函数
 
@@ -18,7 +19,9 @@
 - `extract_n_engines_from_psms_dual(engine_psms_dual, engine_order, positive_marker=None) -> list[PSMInfo]`：正例用 tight 交集、负例用 loose 并集。
 - `load_entrapment_classifications(tsv_path) -> dict[(seq,charge,raw)->level]`：加载 classified.tsv（含校验/跳过/冲突合并），路径不存在抛 `FileNotFoundError`，缺列抛 `ValueError`。
 - `filter_by_entrapment(psms, classifications, drop_levels=DEFAULT_DROP_LEVELS) -> list[PSMInfo]`：剔除命中 drop_levels 的 negative。
-- `extract_n_engines(config) -> list[PSMInfo]`：顶层装配（加载引擎 + 构造 + 可选 entrapment 过滤）。
+- `_parse_labeling(config) -> HeavyType`：读 `[extract] labeling`（缺省 `silac`），大小写不敏感别名映射；非法值抛 `ValueError`。
+- `filter_by_label_site(psms, heavy_type) -> list[PSMInfo]`：剔除在 `heavy_type` 下无标记位点的 PSM（正负例都剔）。SILAC 剔无 K/R；CHEAVY/NHEAVY 为 no-op。委托 `spectrum.psm_info.has_label_site`。
+- `extract_n_engines(config) -> list[PSMInfo]`：顶层装配（加载引擎 + 构造 + **无条件 no-label-site 过滤** + 可选 entrapment 过滤）。
 - `write_psms_to_json(psms, output_path)`：序列化 `PSMInfo.to_dict()`，自动建目录。
 
 ### 配置（INI）
@@ -27,6 +30,7 @@
 [extract]
 engines = pfind, diann
 positive_species_marker = HUMAN
+labeling = silac                     ; 可选，缺省 silac，选择标记方案（silac/c13/n15）
 result_file = ./datasets/hela_2da.json
 
 [engine.pfind]
@@ -130,4 +134,43 @@ python -m tools.entrapment_classify \
   --negatives datasets/hela_2da_pfind_diann.json \
   --target-fasta /path/to/human_swissprot.fasta \
   --output datasets/entrapment_classified.tsv
+```
+
+---
+
+## tools/trap_domain_filter.py
+
+- 常量 `HOMOLOG_DROP_LEVELS = {"L0", "L1"}`（类1 质谱不可分）。
+- `beyond_tool_limit(level, heavy_out_of_range, has_kr=True) -> (bool, str|None)`：判定 trap 是否超出 SILAC 工具适用域。优先级 类1(`homolog_L0/L1`) > 类4(`no_label_site`) > 类3(`heavy_out_of_window`)。
+- `annotate_traps(df, target_index) -> pd.DataFrame`：为 negative 行加 `entrap_level/domain_drop/domain_reason`；positive 标 `target`、不丢。
+- `has_label_site`：从 `spectrum.psm_info` 重导出。
+- CLI：`--features`（labeled features.csv，必填）/ `--human-fasta`（human proteome FASTA，必填）/ `--output`（cleaned features.csv = targets + 保留 trap，必填）。
+
+```bash
+python -m tools.trap_domain_filter --features runs/X/features.csv \
+  --human-fasta human_swissprot.fasta --output runs/X/features.clean.csv
+```
+
+---
+
+## tools/speclib_inspect.py
+
+- `summarize(*, library_dir, fasta_path, mod_path, element_path=None, aa_path=None, n_samples=5, tol=0.01, mass_limit=None) -> str`：返回摘要文本；给了 `--element`+`--aa` 才做质量校验。
+- CLI：`--library-dir --fasta --mod`（必填）；`--element --aa`（启用质量校验）；`--n-samples`(5) `--tol`(0.01) `--mass-limit`(None)。
+
+```bash
+python -m tools.speclib_inspect --library-dir DIR --fasta merge.fasta \
+  --mod modification.ini --element element.ini --aa aa.ini --n-samples 5 --tol 0.01
+```
+
+---
+
+## tools/speclib_sanity.py
+
+- `similarity_distribution(pairs, metric=spectral_angle) -> dict`（`{n,median,p25,p75}`）；`gate_pass(stats, min_sim) -> bool`；`build_pairs_from_maps(pred_map, obs_map) -> (pred_vec,obs_vec)`；`filter_psms_by_raw(psms, raw_title) -> list`。
+- CLI：`--library-dir --fasta --mod --psm-file`（必填）；`--raw` / `--dia-npz`（二选一，npz mmap 优先）；`--search-engine-type`(3) `--raw-title`(None) `--metric`(spectral_angle|spearman) `--min-sim`(0.7) `--mass-tol-ppm`(10.0) `--xic-cycle-window`(6) `--limit`(2000)。退出码 0=PASS / 2=FAIL。
+
+```bash
+python -m tools.speclib_sanity --library-dir DIR --fasta f.fasta \
+  --mod modification.ini --psm-file psms.json --dia-npz raw.dia.npz --min-sim 0.7
 ```

@@ -27,7 +27,7 @@ SILAC 轻重标 MS2 校验工具的**编排与特征提取层**：从配置/搜�
 - 依赖：`spectrum`（`DIAData`、`PSMInfo`、SILAC 质量/同位素工具）、`manager`（`DataManager`、`LightResultManager`）、`constant.keys.ConfigKeys`；数值栈 `numpy`/`scipy`，进度条 `rich`。
 - 被依赖：`main.py` 直接构造并运行 `PairFlow`。
 
-> **谱库预测强度特征（Phase 1 基础，未接入主流程）**：`pred_features.py`（度量/top-K/I1 纯函数）、`pred_store.py`（肽段→预测一遍流式 lookup）与 `tools/speclib_sanity.py`（前置 go/no-go gate）已就绪，仅供 CLI 与单测；接入 `result.csv` 见 `docs/specs/2026-06-08-speclib-predicted-intensity-features-design.md` 的 Phase 2。
+> **谱库预测强度特征（已接入 feature_type=0 主流程，Phase 2a–2c）**：`pred_features.py`（度量/top-K/I1 纯函数）与 `pred_store.py`（肽段→预测一遍流式 lookup）经 `pred_integrate.py` 接入 `single_pair_work` / `PairFlow.distribute`（`_build_pred_store` + `_build_raw_tasks` 附 `pred_frags`）。仅当 `[speclib] speclib_dir` 配置时产出 `spec_pattern_*`/`pred_coverage*`/`pred_hl_ratio_*`/`unexpected_heavy_*`/`global_lh_ratio`/`has_lib_pred` 等增量列（未配置则 schema 与现状一致）。`tools/speclib_sanity.py`（前置 go/no-go gate）仍为独立 CLI。设计见 `docs/specs/2026-06-08-speclib-predicted-intensity-features-design.md`。
 
 ## 输入 / 输出
 
