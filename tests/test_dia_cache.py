@@ -88,3 +88,29 @@ def test_data_to_npz_rebuilds_on_corrupt_cache(tmp_path):
     assert name == "raw"
     # 重建后应可正常加载
     DIAData.load_from_file(shared, use_mmap=False)
+
+
+def test_cache_backcompat_no_source_fields_warns(tmp_path, caplog):
+    """旧缓存无源身份字段：跳过源校验但必须发出明确 WARNING（仍不报错）。"""
+    import logging
+    npz = tmp_path / "raw.dia.npz"
+    _minimal_dia().save_to_file(str(npz))    # 无 source_path → 无身份字段
+    with caplog.at_level(logging.WARNING):
+        _validate(npz, str(tmp_path / "raw.mzML"))   # 不抛
+    assert any("源文件" in r.message and "校验" in r.message
+               for r in caplog.records), \
+        f"expected a source-skip WARNING, got {[r.message for r in caplog.records]}"
+
+
+def test_cache_source_missing_warns(tmp_path, caplog):
+    """缓存有身份字段但源文件不存在：跳过新鲜度校验并发出 WARNING（不报错）。"""
+    import logging
+    src = tmp_path / "raw.mzML"
+    src.write_bytes(b"abc")
+    npz = tmp_path / "raw.dia.npz"
+    _minimal_dia().save_to_file(str(npz), source_path=str(src))
+    src.unlink()                                  # 源文件消失
+    with caplog.at_level(logging.WARNING):
+        _validate(npz, str(src))                  # 不抛
+    assert any("不存在" in r.message for r in caplog.records), \
+        f"expected a source-missing WARNING, got {[r.message for r in caplog.records]}"

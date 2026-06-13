@@ -351,20 +351,32 @@ class DIAData:
                     f"npz 缓存 {filepath} 的 _centroid_rel_threshold={stored_threshold}, "
                     f"配置要求 {expected_centroid_rel_threshold}。请删除该文件后重新运行。"
                 )
-        # 源文件身份校验：仅当调用方给出期望源路径、缓存内含身份字段、且源文件存在
-        # （旧缓存无 _source_size 字段时跳过，保持向后兼容命中）
-        if (expected_source_path is not None and '_source_size' in data
-                and os.path.exists(expected_source_path)):
-            st = os.stat(expected_source_path)
-            stored_size = int(data['_source_size'])
-            stored_mtime = (float(data['_source_mtime'])
-                            if '_source_mtime' in data else None)
-            if stored_size != st.st_size or (
-                    stored_mtime is not None
-                    and abs(stored_mtime - st.st_mtime) > 1e-6):
-                raise ValueError(
-                    f"npz 缓存 {filepath} 的源文件 {expected_source_path} 已变化"
-                    f"（size/mtime 不符），需重建。")
+        # 源文件身份校验：仅当调用方给出期望源路径、缓存内含身份字段、且源文件
+        # 存在时才真正比对 size/mtime。其余情形**明确告警**（之前是静默跳过，
+        # 会让人误以为缓存与当前输入一致——例如切换 mzML→pfb、源路径写错、或
+        # 复用 2026-06-08 之前生成的无身份字段旧缓存）。
+        if expected_source_path is not None:
+            if '_source_size' not in data:
+                logging.warning(
+                    "npz 缓存 %s 无源文件身份字段（旧缓存，2026-06-08 之前生成），"
+                    "跳过源文件新鲜度校验——可能复用与当前输入不一致的缓存；"
+                    "建议删除该缓存重建。", filepath)
+            elif not os.path.exists(expected_source_path):
+                logging.warning(
+                    "npz 缓存 %s 的源文件 %s 不存在，跳过源文件新鲜度校验——"
+                    "可能复用与当前输入不一致的缓存；请确认 raw_path 配置正确。",
+                    filepath, expected_source_path)
+            else:
+                st = os.stat(expected_source_path)
+                stored_size = int(data['_source_size'])
+                stored_mtime = (float(data['_source_mtime'])
+                                if '_source_mtime' in data else None)
+                if stored_size != st.st_size or (
+                        stored_mtime is not None
+                        and abs(stored_mtime - st.st_mtime) > 1e-6):
+                    raise ValueError(
+                        f"npz 缓存 {filepath} 的源文件 {expected_source_path} 已变化"
+                        f"（size/mtime 不符），需重建。")
 
     def _get_retention_time(self, spectrum) -> float:
         """Return retention time in MINUTES (canonical pipeline unit).

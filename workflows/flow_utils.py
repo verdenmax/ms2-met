@@ -46,7 +46,7 @@ def data_to_npz(
                 expected_centroid_rel_threshold=expected_thresh,
                 expected_source_path=filepath,
             )
-            logging.info(f"DIA cache {shared_path} 命中（params + 源文件匹配）")
+            logging.info(f"DIA cache {shared_path} 命中（params 校验通过）")
         except Exception as e:
             # ValueError(params/源文件不符) 或损坏(BadZipFile/OSError 等) → 重建
             logging.warning(
