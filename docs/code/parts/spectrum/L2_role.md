@@ -91,7 +91,7 @@
 
 | 符号 | 签名 | 简述 |
 |---|---|---|
-| `match_peak_ppm` | `(mz_arr, intensity_arr, target_mz, mass_tol_ppm) → (ppm_error, total_intensity)` | ppm 容差内峰匹配 |
+| `match_peak_ppm` | `(mz_arr, intensity_arr, precursor_mz, mass_tol_ppm) → (ppm_error, total_intensity)` | ppm 容差内峰匹配 |
 | `centroid_spectrum` | `(mz, intensity, rel_threshold=1e-3) → (mz_out, int_out)` | profile 谱图质心化（抛物线插值）|
 
 ## 依赖

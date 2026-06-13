@@ -2,7 +2,7 @@
 
 ## 一句话职责
 
-顶层 CLI/工具脚本集合：从多搜索引擎结果构造 SILAC 正负例数据集（`extract_common`，含标记位点 + entrapment 过滤），对负例做 entrapment 分级（`entrapment_classify`），对提取后特征做适用域清洗（`trap_domain_filter`），跑模型评估与特征分组对照实验（`eval_baseline` / `eval_feature_ablation`），并提供谱库检视与预测/观测 sanity gate（`speclib_inspect` / `speclib_sanity`）。
+顶层 CLI/工具脚本集合：从多搜索引擎结果构造 SILAC 正负例数据集（`extract_common`，含标记位点 + 污染库 + entrapment 过滤），对负例做 entrapment 分级（`entrapment_classify`），对提取后特征做适用域清洗（`trap_domain_filter`），跑模型评估与特征分组对照实验（`eval_baseline` / `eval_feature_ablation`），并提供谱库检视与预测/观测 sanity gate（`speclib_inspect` / `speclib_sanity`）。
 
 ## 对外接口
 
