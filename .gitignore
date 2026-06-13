@@ -67,6 +67,8 @@ runs/baseline_*/*
 !runs/baseline_*/config.ini
 # 锚定 /：只匹配项目根的 baseline_*/，不影响 runs/baseline_*/
 /baseline_*/
+# runs_new/ 是一次性运行输出快照，整体忽略（不再跟踪历史 config.ini）
+runs_new/
 result_*.csv
 result.csv
 ms2*.log
