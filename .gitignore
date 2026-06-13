@@ -83,6 +83,8 @@ ms2*.log
 !/extract_*_neg10.ini
 !/extract_*_neg15.ini
 !/extract_*_neg20.ini
+# clean (1% FDR) 模板也纳入跟踪，便于团队共享含 [contaminant] 等公共配置。
+!/extract_*_pfind_diann.ini
 
 # ---------------- AI / scratch / planning files ----------------
 PLAN.md
