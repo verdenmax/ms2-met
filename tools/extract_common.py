@@ -501,8 +501,11 @@ def filter_by_entrapment(
 
     by_level_str = ", ".join(
         f"{lvl}={n}" for lvl, n in sorted(neg_dropped_by_level.items()))
+    # 这些被剔的 L0/L1 negative，其序列本质上**同源于 target(人)蛋白组**
+    # （L0=精确子串、L1=L↔I 异构后子串），质谱不可分——很可能是搜索引擎把
+    # 物种分错了（实为 target 肽而非陷阱）。故日志命名为「同源肽段过滤」。
     logging.info(
-        f"entrapment 过滤: negative 输入={neg_total}, 剔除={neg_dropped} "
+        f"同源肽段过滤: negative 输入={neg_total}, 剔除={neg_dropped} "
         f"({by_level_str if by_level_str else 'none'}), "
         f"unknown(保留)={neg_unknown}, negative 输出={neg_total - neg_dropped}"
     )

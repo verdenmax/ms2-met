@@ -30,7 +30,7 @@
 
 ### entrapment 过滤
 
-- 目的：剔除质谱不可分的"伪负例"，避免污染 SILAC 配对验证负样本。
+- 目的：剔除质谱不可分的"伪负例"，避免污染 SILAC 配对验证负样本。被剔的 L0/L1 negative 其序列**同源于 target(人)蛋白组**（L0=精确子串、L1=L↔I 异构后子串），很可能是搜索引擎把物种分错了（实为 target 肽而非陷阱）——故运行日志标记为 **「同源肽段过滤」**（`filter_by_entrapment`）。
 - 两条来源（`[entrapment]` 段，**显式 TSV > 派生**）：
   1. `classified_tsv`：加载 proteinCopilot/`entrapment_classify` 产出的 classified.tsv。
   2. 否则 `target_fasta`：对刚构造出的 negative 内联调 `classify_peptide`，省去落盘往返。
