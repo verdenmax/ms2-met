@@ -559,8 +559,38 @@ def filter_by_label_site(psms: list, heavy_type: HeavyType) -> list:
     return kept
 
 
+def filter_by_contaminant(psms: list, contaminant_index,
+                          match_li: bool = True) -> list:
+    """Drop PSMs (both target and trap) whose stripped sequence maps to a
+    contaminant protein (cRAP-style 污染库).
+
+    复用 entrapment_classifier 的子串索引：肽段序列若是污染蛋白的精确子串
+    （L0），或（当 match_li=True）L↔I 归一化后子串（L1），即判为污染并剔除。
+    正负例都过滤。
+    """
+    from spectrum.entrapment_classifier import classify_peptide
+
+    drop_levels = {"L0", "L1"} if match_li else {"L0"}
+    kept = []
+    dropped_pos = 0
+    dropped_neg = 0
+    for psm in psms:
+        level = classify_peptide(psm._sequence, contaminant_index)
+        if level in drop_levels:
+            if psm._label_type == "negative":
+                dropped_neg += 1
+            else:
+                dropped_pos += 1
+            continue
+        kept.append(psm)
+    logging.info(
+        f"污染库过滤(contaminant, match_li={match_li}): 剔除 "
+        f"positive={dropped_pos}, negative={dropped_neg}, 输出={len(kept)}")
+    return kept
+
+
 def extract_n_engines(config: configparser.ConfigParser) -> list:
-    """根据 config 加载各引擎并构造正负例（含可选 entrapment 过滤）。"""
+    """根据 config 加载各引擎并构造正负例（含无标记位点过滤 + 可选污染库 + entrapment 过滤）。"""
     engines_str = config["extract"]["engines"]
     engine_order = [e.strip() for e in engines_str.split(",") if e.strip()]
 
@@ -591,6 +621,21 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
     # Domain-of-applicability filter: drop peptides with no metabolic-label
     # site (spec §12 class 4). Runs unconditionally, both classes.
     psms = filter_by_label_site(psms, _parse_labeling(config))
+
+    # Contaminant-library filter (污染库过滤): drop peptides (both classes)
+    # mapping to a contaminant protein. Optional [contaminant] section.
+    if "contaminant" in config:
+        cont_fasta = os.path.expanduser(
+            config["contaminant"].get("fasta", "").strip())
+        if cont_fasta:
+            from spectrum.entrapment_classifier import load_target_fasta
+            match_li = config["contaminant"].getboolean(
+                "match_li", fallback=True)
+            cont_index = load_target_fasta(cont_fasta)
+            logging.info(
+                f"[contaminant] 加载污染库: {cont_fasta}, "
+                f"n_proteins={cont_index.n_proteins}")
+            psms = filter_by_contaminant(psms, cont_index, match_li=match_li)
 
     if "entrapment" in config:
         classified_tsv = os.path.expanduser(

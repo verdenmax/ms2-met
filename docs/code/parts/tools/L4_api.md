@@ -21,7 +21,8 @@
 - `filter_by_entrapment(psms, classifications, drop_levels=DEFAULT_DROP_LEVELS) -> list[PSMInfo]`：剔除命中 drop_levels 的 negative。
 - `_parse_labeling(config) -> HeavyType`：读 `[extract] labeling`（缺省 `silac`），大小写不敏感别名映射；非法值抛 `ValueError`。
 - `filter_by_label_site(psms, heavy_type) -> list[PSMInfo]`：剔除在 `heavy_type` 下无标记位点的 PSM（正负例都剔）。SILAC 剔无 K/R；CHEAVY/NHEAVY 为 no-op。委托 `spectrum.psm_info.has_label_site`。
-- `extract_n_engines(config) -> list[PSMInfo]`：顶层装配（加载引擎 + 构造 + **无条件 no-label-site 过滤** + 可选 entrapment 过滤）。
+- `filter_by_contaminant(psms, contaminant_index, match_li=True) -> list[PSMInfo]`：剔除映射到污染蛋白(cRAP)的 PSM（正负例都剔）。复用 `spectrum.entrapment_classifier.load_target_fasta`+`classify_peptide`：精确子串(L0)，或 `match_li` 时 L↔I 子串(L1)，即判为污染。
+- `extract_n_engines(config) -> list[PSMInfo]`：顶层装配（加载引擎 + 构造 + **无条件 no-label-site 过滤** + 可选污染库过滤 + 可选 entrapment 过滤）。
 - `write_psms_to_json(psms, output_path)`：序列化 `PSMInfo.to_dict()`，自动建目录。
 
 ### 配置（INI）
@@ -42,6 +43,10 @@ negative_qvalue_threshold = 0.05   ; 可选，loose ≥ tight
 classified_tsv = ./datasets/entrapment_classified.tsv
 ; 或 target_fasta = /path/human_swissprot.fasta（内联分类）
 drop_levels = L0, L1
+
+[contaminant]                       ; 可选（污染库过滤，正负例都剔）
+fasta = /path/contaminant.fasta
+; match_li = true                   ; 缺省 true（L0+L↔I）；false 仅精确子串 L0
 ```
 
 ### CLI / 运行示例

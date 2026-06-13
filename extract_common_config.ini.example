@@ -81,3 +81,13 @@ path = ./hela-mix-2da_report.parquet
 # [entrapment]
 # target_fasta = /path/to/human_swissprot.fasta
 # drop_levels = L0, L1
+
+# ----------------------------------------------------------------------
+# 污染库过滤（可选）：剔除映射到污染蛋白(cRAP/常见污染)的肽段。
+# 与 label-site 过滤一样**正负例都剔**；在 label-site 之后、entrapment 之前运行。
+# 判据复用 entrapment 子串索引：肽段是污染蛋白的精确子串(L0)，或（match_li=true，
+# 默认）L↔I 归一化后子串(L1)，即判为污染。缺省无此段则不过滤。
+# ----------------------------------------------------------------------
+# [contaminant]
+# fasta = /path/to/contaminant.fasta
+# match_li = true   # 默认 true；设 false 则只按精确子串(L0)匹配

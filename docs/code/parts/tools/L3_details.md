@@ -26,7 +26,20 @@
 - **正负例都剔**（标记位点与标签无关）；**默认开、无条件运行**，不依赖 `[entrapment]` 段。
 - 判据来自 `spectrum.psm_info.has_label_site(seq, heavy_type)`：SILAC → 序列含 **K 或 R**；CHEAVY(¹³C)/NHEAVY(¹⁵N) → 全原子代谢标记，任何肽必含 C 和 N → 恒 True → **no-op（一条不剔）**；空序列 → False（剔）。
 - 标记方案由 `[extract] labeling` 决定（缺省 `silac`，向后兼容），大小写不敏感，别名：`silac`；`c13/13c/cheavy`；`n15/15n/nheavy`。非法值 → `ValueError`（fail-fast）。
-- 调用点：`extract_n_engines` 中、`label_type` 已设置之后、**先于** entrapment L0/L1 过滤（均为删行）。日志打印剔除的 positive / negative 数。
+- 调用点：`extract_n_engines` 中、`label_type` 已设置之后、**先于** 污染库 / entrapment 过滤（均为删行）。日志打印剔除的 positive / negative 数。
+
+### 污染库过滤（`filter_by_contaminant`）
+
+- 目的：剔除映射到**污染蛋白（cRAP / 常见污染，如 Trypsin/LysC/Keratin/Streptavidin/GFP）**的肽段，避免污染肽进入正负例。
+- **正负例都剔**；**可选**：仅当配置有 `[contaminant] fasta` 才运行（缺省不过滤，向后兼容）。位置在 label-site 之后、entrapment 之前。
+- 复用 `spectrum.entrapment_classifier.load_target_fasta`（建污染库子串索引）+ `classify_peptide`：肽段是污染蛋白的**精确子串(L0)**，或（`match_li`，默认 **true**）**L↔I 归一化后子串(L1)**，即判为污染。`match_li=false` 则只按 L0。
+- 配置：
+  ```ini
+  [contaminant]
+  fasta = ~/share/.../contaminant.fasta
+  # match_li = true   # 默认 true（L0+L1）；false 仅 L0
+  ```
+- 日志：`污染库过滤(contaminant, match_li=True): 剔除 positive=X, negative=Y, 输出=Z`。
 
 ### entrapment 过滤
 

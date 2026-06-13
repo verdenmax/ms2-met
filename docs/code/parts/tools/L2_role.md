@@ -8,7 +8,7 @@
 
 | 脚本 | 用途 | 主要函数 | CLI 入口 |
 |---|---|---|---|
-| `extract_common.py` | N 引擎交并集构造正负例数据集，含无标记位点过滤 + 可选 entrapment 过滤 | `extract_n_engines`、`extract_n_engines_from_psms_dual`、`load_engine_psms_dual`、`filter_by_label_site`、`_parse_labeling`、`load_entrapment_classifications`、`filter_by_entrapment`、`write_psms_to_json` | `--configpath` / `--logpath` |
+| `extract_common.py` | N 引擎交并集构造正负例数据集，含无标记位点过滤 + 可选污染库过滤 + 可选 entrapment 过滤 | `extract_n_engines`、`extract_n_engines_from_psms_dual`、`load_engine_psms_dual`、`filter_by_label_site`、`filter_by_contaminant`、`_parse_labeling`、`load_entrapment_classifications`、`filter_by_entrapment`、`write_psms_to_json` | `--configpath` / `--logpath` |
 | `eval_baseline.py` | 当前全特征集跑 5-fold CV，输出 AUC/AUPRC/MCC + 工作点 + 特征重要性 | `load_features`、`derive_binary_label`、`cv_evaluate`、`compute_working_points`、`compute_feature_importance` | `--features --output [--skip-importance --positive-marker]` |
 | `eval_feature_ablation.py` | 4 组特征集对照 CV，衡量 SILAC 配对信号贡献 | `split_features`、`cv_one`（复用 `derive_binary_label`） | `--features --output` |
 | `entrapment_classify.py` | 把负例 PSM 按 L0/L1/L4 分级，产出 classified.tsv | `classify_negatives_file` | `--negatives --target-fasta --output [--logpath]` |
