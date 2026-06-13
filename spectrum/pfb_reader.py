@@ -115,6 +115,19 @@ def _read_exact(fh: BinaryIO, n: int, spec_idx: int, what: str) -> bytes:
     return raw
 
 
+def _decode_property_str(raw: bytes, spec_idx: int) -> str:
+    """Decode a property_str as UTF-8, stripping trailing NULs. Wraps a
+    UnicodeDecodeError in a ValueError carrying the spectrum index so corrupt
+    files fail with the same contextual error style as the rest of the reader.
+    """
+    try:
+        return raw.decode("utf-8").rstrip("\x00")
+    except UnicodeDecodeError as e:
+        raise ValueError(
+            f"PFB spectrum {spec_idx}: property_str is not valid UTF-8 "
+            f"({e})") from e
+
+
 def iter_spectra(fh: BinaryIO, scan_num: int) -> Iterator[PFBSpectrum]:
     """Sequentially read `scan_num` spectra from the loop body.
 
@@ -122,8 +135,7 @@ def iter_spectra(fh: BinaryIO, scan_num: int) -> Iterator[PFBSpectrum]:
     """
     for i in range(scan_num):
         (slen,) = struct.unpack("<i", _read_exact(fh, 4, i, "property_str_len"))
-        prop = _read_exact(fh, slen, i, "property_str").decode(
-            "utf-8").rstrip("\x00")
+        prop = _decode_property_str(_read_exact(fh, slen, i, "property_str"), i)
         fields = parse_property_str(prop)
         (pnum,) = struct.unpack("<i", _read_exact(fh, 4, i, "peak_num"))
         if pnum < 0:
@@ -150,8 +162,7 @@ def iter_scan_ids(fh: BinaryIO, scan_num: int) -> Iterator[int]:
     """
     for i in range(scan_num):
         (slen,) = struct.unpack("<i", _read_exact(fh, 4, i, "property_str_len"))
-        prop = _read_exact(fh, slen, i, "property_str").decode(
-            "utf-8").rstrip("\x00")
+        prop = _decode_property_str(_read_exact(fh, slen, i, "property_str"), i)
         scan = int(prop.split("\t", 1)[0])
         (pnum,) = struct.unpack("<i", _read_exact(fh, 4, i, "peak_num"))
         if pnum < 0:

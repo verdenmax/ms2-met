@@ -176,3 +176,28 @@ def test_read_footer_truncated_raises(tmp_path):
         # ask for more offsets than exist -> footer too short
         with pytest.raises(ValueError, match="footer truncated"):
             pfb_reader.read_footer(fh, addr_list_addr, scan_num + 100)
+
+
+def test_parse_property_str_unknown_mstype_raises():
+    with pytest.raises(ValueError, match="Unknown MsType"):
+        pfb_reader.parse_property_str("1\t3\t0.1\tFTMS")
+
+
+def test_read_header_truncated_raises():
+    import io
+    fh = io.BytesIO(b"\x00" * 10)  # < 24 bytes
+    with pytest.raises(ValueError, match="header truncated"):
+        pfb_reader.read_header(fh)
+
+
+def test_iter_spectra_invalid_utf8_property_str_raises(tmp_path):
+    p = tmp_path / "badutf8.pfb"
+    write_pfb(str(p), [_MS1, _MS2])
+    raw = bytearray(p.read_bytes())
+    # first property_str starts at offset 24 (header) + 4 (len int)
+    raw[28] = 0xFF  # invalid UTF-8 start byte
+    p.write_bytes(raw)
+    with open(p, "rb") as fh:
+        _addr, scan_num = pfb_reader.read_header(fh)
+        with pytest.raises(ValueError, match="not valid UTF-8"):
+            list(pfb_reader.iter_spectra(fh, scan_num))

@@ -155,3 +155,70 @@ def test_get_dia_data_object_dispatch_uppercase_and_none(monkeypatch):
     called.clear()
     dm.get_dia_data_object(None)
     assert called == {"mzml": None}
+
+
+def test_pfb_and_mzml_load_equivalent_arrays(monkeypatch, tmp_path):
+    """Strongest drop-in guarantee: the SAME logical spectra loaded as mzML
+    vs PFB must yield array-identical DIAData. mzML RT is minutes (plain float
+    treated as minutes); PFB RT is seconds (=minutes*60) and /60 on load, so
+    both rt_values land on the same minutes."""
+    from tests.test_dia_data_load_mzml import _FakeMzmlReader, _make_spectrum
+    from spectrum import dia_data as dd
+
+    # --- mzML side (rt in minutes; window = selected_ion_mz +/- offset) ---
+    mzml_spectra = [
+        _make_spectrum(scan_num=1, ms_level=1, rt=1.0,
+                       mz_arr=[400.0, 401.0, 402.0], int_arr=[10.0, 20.0, 30.0]),
+        _make_spectrum(scan_num=2, ms_level=2, rt=1.05,
+                       mz_arr=[200.0, 201.0], int_arr=[5.0, 15.0],
+                       precursor_scan_num=1, precursor_mz=500.0,
+                       iso_lower_off=1.0, iso_upper_off=1.0),
+        _make_spectrum(scan_num=3, ms_level=2, rt=1.10,
+                       mz_arr=[300.0, 301.0, 302.0, 303.0],
+                       int_arr=[1.0, 2.0, 3.0, 4.0],
+                       precursor_scan_num=1, precursor_mz=600.0,
+                       iso_lower_off=2.0, iso_upper_off=2.0),
+    ]
+    monkeypatch.setattr(dd.mzml, 'read', lambda p: _FakeMzmlReader(mzml_spectra))
+    d_mzml = DIAData()
+    d_mzml._centroid_enabled = False
+    d_mzml._load_from_mzml('fake.mzML')
+
+    # --- PFB side (rt in seconds = minutes*60; window = center +/- window/2) ---
+    pfb_spectra = [
+        {"scan": 1, "ms_level": 1, "rt": 60.0, "instrument_type": "FTMS",
+         "mz": [400.0, 401.0, 402.0], "intensity": [10.0, 20.0, 30.0]},
+        {"scan": 2, "ms_level": 2, "rt": 63.0, "instrument_type": "FTMS",
+         "charge": 2, "mh_plus": 999.0, "ion_injection_time": 50.0,
+         "activation_center": 500.0, "activation_type": "HCD",
+         "precursor_scan": 1, "activation_window": 2.0, "nce": 27.0,
+         "monoisotopic_mz": 500.0, "mz": [200.0, 201.0], "intensity": [5.0, 15.0]},
+        {"scan": 3, "ms_level": 2, "rt": 66.0, "instrument_type": "FTMS",
+         "charge": 2, "mh_plus": 1199.0, "ion_injection_time": 50.0,
+         "activation_center": 600.0, "activation_type": "HCD",
+         "precursor_scan": 1, "activation_window": 4.0, "nce": 27.0,
+         "monoisotopic_mz": 600.0, "mz": [300.0, 301.0, 302.0, 303.0],
+         "intensity": [1.0, 2.0, 3.0, 4.0]},
+    ]
+    pfb_path = str(tmp_path / "eq.pfb")
+    write_pfb(pfb_path, pfb_spectra)
+    d_pfb = DIAData()
+    d_pfb._load_from_pfb(pfb_path)
+
+    # --- assert full array parity ---
+    np.testing.assert_allclose(d_pfb._mz_values, d_mzml._mz_values)
+    np.testing.assert_allclose(d_pfb._intensity_values, d_mzml._intensity_values)
+    np.testing.assert_array_equal(d_pfb._peak_start_idx_list, d_mzml._peak_start_idx_list)
+    np.testing.assert_array_equal(d_pfb._peak_stop_idx_list, d_mzml._peak_stop_idx_list)
+    np.testing.assert_array_equal(d_pfb.precursor_scan_ids, d_mzml.precursor_scan_ids)
+    np.testing.assert_array_equal(d_pfb.ms1_indexs, d_mzml.ms1_indexs)
+    np.testing.assert_array_equal(d_pfb.ms2_indexs, d_mzml.ms2_indexs)
+    np.testing.assert_allclose(d_pfb.rt_values, d_mzml.rt_values)
+    np.testing.assert_allclose(d_pfb.ms1_indexs_rt, d_mzml.ms1_indexs_rt)
+    np.testing.assert_allclose(d_pfb.ms2_indexs_rt, d_mzml.ms2_indexs_rt)
+    np.testing.assert_allclose(d_pfb._precursor_lower_mz, d_mzml._precursor_lower_mz, equal_nan=True)
+    np.testing.assert_allclose(d_pfb._precursor_upper_mz, d_mzml._precursor_upper_mz, equal_nan=True)
+    assert float(d_pfb._min_mz_value) == pytest.approx(float(d_mzml._min_mz_value))
+    assert float(d_pfb._max_mz_value) == pytest.approx(float(d_mzml._max_mz_value))
+    np.testing.assert_array_equal(d_pfb._scan_id_to_index, d_mzml._scan_id_to_index)
+    assert d_pfb.has_ms1 == d_mzml.has_ms1

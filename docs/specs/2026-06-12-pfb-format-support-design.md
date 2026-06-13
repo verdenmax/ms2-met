@@ -175,7 +175,7 @@ PFB（pXtract 导出）已是 peak-picked 峰列表，**跳过** on-load 质心�
 | Property token 数与 MsType 不符 | 报错（期望 4/13，实得 N） |
 | **MS2 缺 ActivationWindow** | 明确报错（DIA 需要窗宽；config 默认窗宽留作未来） |
 | 空文件 / Scan_Num=0 | 产出空 `DIAData`（与空 mzML 一致） |
-| Property_Str 非 UTF-8 | `decode("utf-8")` + `rstrip("\x00")`（解码失败按需 `errors` 处理并报警） |
+| Property_Str 非 UTF-8 | `_decode_property_str` 捕获 `UnicodeDecodeError`，重抛带谱序号的 `ValueError`（"property_str is not valid UTF-8"）|
 | 字节序 | 假定小端（struct `<`） |
 
 ---
@@ -186,7 +186,9 @@ PFB（pXtract 导出）已是 peak-picked 峰列表，**跳过** on-load 质心�
 - **`tests/test_dia_data_load_pfb.py`**：合成 `.pfb` → `_load_from_pfb` → 断言 `ms1_indexs`/`ms2_indexs`/`rt_values`/`_precursor_lower_mz`/`_precursor_upper_mz`/`_peak_start_idx_list`/`_peak_stop_idx_list`/`_scan_id_to_index`/min/max mz/`_cycle_left_precursor` 与预期一致（仿 `test_dia_data_load_mzml.py` 结构）。
 - **真实文件 opt-in 慢测**：仅当 `~/share/.../Rep1.pfb` 存在才跑（`pytest.mark.skipif` + 路径判断），校验 `scan_num==80096`、首张 MS1 RT≈0.197、首张 MS2 窗口==[500,502]。CI 不依赖 813MB 大文件。
 - **重构安全网**：抽取 `_record_spectrum`/`_finalize_arrays` 后，现有 `test_dia_data_load_mzml.py`(19) + `test_dia_data_window.py`(9) + cache/centroid 测试须全绿。
-- **分派测试**：`get_dia_data_object("x.pfb")` 路由到 `_load_from_pfb`（monkeypatch/spy 验证）；`.mzML` 仍走 `_load_from_mzml`。
+- **分派测试**：`get_dia_data_object("x.pfb")` 路由到 `_load_from_pfb`（monkeypatch/spy 验证）；`.mzML` 仍走 `_load_from_mzml`；含大小写（`.PFB`）与 `None` 路径鲁棒性。
+- **mzML↔PFB 端到端等价测试**：同一组逻辑谱图分别构造 mzML（monkeypatch `dd.mzml.read`）与 PFB（`write_pfb`，RT=分钟×60 秒），断言两者加载出的全部 DIAData 数组逐一相等（峰/切片/ms1ms2/rt/窗口/scan 映射/min-max）——锁定"drop-in 替代"并验证 RT 秒→分钟换算。
+- **解析鲁棒性**：未知 MsType、header 截断（<24B）、property_str 非 UTF-8 均有用例验证抛 `ValueError`。
 
 ---
 
