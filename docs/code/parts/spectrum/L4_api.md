@@ -18,7 +18,7 @@ float32 数组排序后容差去重；`None`/空 → `None`。用于构造 DIA �
 
 - `save_to_file(filepath: str, source_path: str | None = None)` — 存为 `.npz`（`savez_compressed`，`_format_version=3`，过滤 None，原子写 `mkstemp`+`os.replace`）。给定 `source_path` 时把源文件 `mtime`/`size` 写入缓存（`_source_mtime`/`_source_size`），供 `validate_cache_params` 检测源文件是否被替换/重建。
 - `classmethod load_from_file(filepath, use_mmap=True, expected_centroid_enabled=None, expected_centroid_rel_threshold=None) -> DIAData` — 从 npz 加载；**Raises** `ValueError`（版本≠3 或 centroid 参数不符）。
-- `staticmethod validate_cache_params(filepath, expected_centroid_enabled, expected_centroid_rel_threshold, expected_source_path=None) -> None` — 用 mmap 只读元数据标量做轻量校验：版本、centroid 参数，以及（给定 `expected_source_path` 且缓存含 `_source_size` 时）源文件 size/mtime；不符 **Raises** `ValueError`。
+- `staticmethod validate_cache_params(filepath, expected_centroid_enabled, expected_centroid_rel_threshold, expected_source_path=None) -> None` — 用 mmap 只读元数据标量做轻量校验：版本、centroid 参数，以及（给定 `expected_source_path` 且缓存含 `_source_size` 且源文件存在时）源文件 size/mtime；不符 **Raises** `ValueError`。源文件校验**被跳过**时（旧缓存无字段 / 源文件不存在）发 `WARNING`，不静默通过。
 - `_load_from_mzml(mzml_file_path=None)` — 两遍加载 mzML（统计→填充+质心化+concat）。
 - `_load_from_pfb(pfb_file_path)` — 两遍加载 PFB（统计→填充+concat）。**不质心化**（PFB 已 peak-picked）；RT 秒→分钟 `/60`；MS2 隔离窗口 = `activation_center ± activation_window/2`；MS1 `precursor_scan_id=-1`。复用 `_record_spectrum` / `_finalize_arrays`。
 - `_record_spectrum(spectrum_idx, current_peak_index, *, scan_id, rt, precursor_scan_id, isolation_lower, isolation_upper, mz_array, intensity_array) -> (mz, intensity)` — 格式无关：把单谱归一化字段写入按谱图定长的数组（isolation 为 None 时存 NaN）。mzML 与 PFB 共用。
@@ -158,8 +158,8 @@ SILAC 委托上者；CHEAVY=`C数×1.003355`；NHEAVY=`N数×0.997035`。**仅�
 ### `@dataclass TargetIndex`
 字段：`raw_text: str`、`li_normalized_text: str`、`n_proteins: int`。
 
-### `load_target_fasta(fasta_path) -> TargetIndex`
-读 FASTA 拼接（分隔符 `|`）+ `I→L` 归一化；不存在 **Raises** `FileNotFoundError`。
+### `load_target_fasta(fasta_path, log_label="target FASTA") -> TargetIndex`
+读 FASTA 拼接（分隔符 `|`）+ `I→L` 归一化；不存在 **Raises** `FileNotFoundError`。`log_label` 控制日志（`加载 {log_label}: ...`）与报错措辞——entrapment 用默认 "target FASTA"，污染库过滤传 "污染库"，避免把污染库误称为 target 蛋白组。
 
 ### `classify_peptide(peptide, target) -> str`
 返回 `"L0"`（精确子串）/`"L1"`（L↔I 归一后子串）/`"L4"`（都不是）；空肽 → `"L4"`。

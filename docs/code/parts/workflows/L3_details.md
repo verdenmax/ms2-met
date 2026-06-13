@@ -24,7 +24,7 @@
 
 ## DIA 缓存校验（`flow_utils.data_to_npz`）
 
-- 已存在 `.dia.npz` 时先 `DIAData.validate_cache_params` 校验 centroid 参数（轻量 mmap 标量读，不加载数组）；与当前 config 不匹配则删除重建。否则改 centroid 参数将无效。
+- 已存在 `.dia.npz` 时先 `DIAData.validate_cache_params` 校验 **centroid 参数 + 源文件身份（size/mtime）**（轻量 mmap 标量读，不加载数组）；不匹配（含源文件已变化，如 mzML→pfb）或损坏则删除重建。源文件校验被跳过时（旧缓存无身份字段 / 源文件不存在）发 `WARNING`。命中日志为「命中（params 校验通过）」（不再谎称"源文件匹配"）。注意 `.dia.npz` 缓存键是文件名 stem（**与扩展名无关**），故 `X.mzML` 与 `X.pfb` 共享 `X.dia.npz`，靠 size/mtime 校验区分。
 
 ## 特征提取流程（`single_pair_work` / `multi_batch_work`）
 

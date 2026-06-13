@@ -37,7 +37,7 @@
 
 - `_format_version=3`：相对 v2 新增「内嵌 centroid 参数」。加载/校验时若版本≠3 或 centroid 参数与配置不符则抛 `ValueError`，强制重建缓存（避免用旧 profile 缓存）。
 - `validate_cache_params` 用 `with np.load(..., mmap_mode='r')` 只读少量元数据标量（`_format_version`、`_centroid_enabled`、`_centroid_rel_threshold`，以及给定 `expected_source_path` 时的 `_source_size`/`_source_mtime`）再关闭句柄——避免为校验元数据而 mmap 数 GB 数组，并防止 Windows 删除文件时的句柄竞争。
-- **源文件身份失效**：`save_to_file(source_path=...)` 把源 mzML/PFB 的 `mtime`/`size` 写入缓存；`validate_cache_params(expected_source_path=...)` 比对，size/mtime 不符则抛 `ValueError` 触发重建（旧缓存无 `_source_size` 字段时跳过该校验，保持向后兼容命中）。`workflows/flow_utils.py` 命中前即用它校验。
+- **源文件身份失效**：`save_to_file(source_path=...)` 把源 mzML/PFB 的 `mtime`/`size` 写入缓存；`validate_cache_params(expected_source_path=...)` 比对，size/mtime 不符则抛 `ValueError` 触发重建。**跳过 size/mtime 比对的两种情形（旧缓存无 `_source_size` 字段、或源文件不存在）现在会发出明确 `WARNING`**（提示可能复用与当前输入不一致的缓存、建议删除重建 / 确认 raw_path），不再静默命中。`workflows/flow_utils.py` 命中前即用它校验；命中日志为「命中（params 校验通过）」（不再谎称"源文件匹配"）。
 - `save_to_file` 过滤掉 None 值（`np.savez` 不支持 None）、原子写（同目录 `mkstemp` + `os.replace`）；加载用 `_load_attrs` 填充，`_format_version` 故意不回填到对象。
 
 ### XIC 提取逻辑

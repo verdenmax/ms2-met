@@ -77,7 +77,7 @@
 | 符号 | 签名 | 简述 |
 |---|---|---|
 | `TargetIndex` | dataclass | 拼接 target proteome 文本 + L↔I 归一化视图 |
-| `load_target_fasta` | `(fasta_path) → TargetIndex` | 读 FASTA 拼接成可子串搜索的文本 |
+| `load_target_fasta` | `(fasta_path, log_label="target FASTA") → TargetIndex` | 读 FASTA 拼接成可子串搜索的文本；`log_label` 控制日志/报错措辞（如污染库传 "污染库"）|
 | `classify_peptide` | `(peptide, target) → "L0"\|"L1"\|"L4"` | 单肽是否与 target 质谱不可区分 |
 | `classify_peptides_batch` | `(peptides, target) → list[str]` | 批量分级 |
 
