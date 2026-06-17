@@ -18,6 +18,7 @@ from workflows.flow_utils import data_to_npz
 from workflows.flow_utils import process_batch_pair_shuffle
 from workflows.flow_utils import process_batch_single, process_batch_pair
 from workflows.single_work import multi_batch_work
+from workflows.feature_postfilter import filter_heavy_out_of_range
 from manager.light_result_manager import LightResultManager
 from spectrum.psm_info import PSMInfo
 
@@ -354,6 +355,20 @@ class PairFlow:
 
         # NOTE: 保存结果
         ans_df = pd.DataFrame(ans)
+
+        # Post-extraction filter: drop heavy-out-of-range PSMs (both classes).
+        # heavy_out_of_range is only known after XIC extraction, so this can't
+        # live in extract_common (pre-DIA). Symmetric drop avoids a spurious
+        # "out-of-range => positive" rule. Default on; disable via config.
+        if self._config.getboolean(
+                ConfigKeys.GENERAL, ConfigKeys.FILTER_HEAVY_OUT_OF_RANGE,
+                fallback=True):
+            ans_df, n_hor_pos, n_hor_neg = filter_heavy_out_of_range(ans_df)
+            if n_hor_pos or n_hor_neg:
+                logging.info(
+                    "heavy_out_of_range 过滤(两类): 剔除 "
+                    f"positive={n_hor_pos}, negative={n_hor_neg}, "
+                    f"输出={len(ans_df)}")
 
         result_file = os.path.expanduser(self._config.get(
             ConfigKeys.GENERAL, ConfigKeys.RESULT_FILE,

@@ -31,6 +31,10 @@ class ConfigKeys(metaclass=ConstantsClass):
     RESULT_FILE = "result_file"
     FEATURE_TYPE = "feature_type"
     RANDOM_SEED = "random_seed"
+    # Drop PSMs whose heavy precursor fell outside the acquisition range
+    # (heavy_out_of_range == 1) for BOTH classes; default on. See
+    # workflows/feature_postfilter.py.
+    FILTER_HEAVY_OUT_OF_RANGE = "filter_heavy_out_of_range"
 
     # mzML centroiding (loaded by manager/data_manager.py)
     CENTROID_ENABLED = "centroid_enabled"

@@ -11,10 +11,16 @@
 - `__init__(self, workname: str, config: ConfigParser | None = None, work_path: str = "./Pairworkspace")` — 记录配置、建工作目录。类常量 `RAW_DATA_MANAGER_PICKLE`、`LIGHT_RESULT_MANAGER_PUCKEL`。
 - `load(self) -> None` — 构造 `LightResultManager` 读 `light_result_file` 得 `psm_info`；构造并 `save()` `DataManager`。
 - `run(self) -> None` — `load()` 后 `distribute()`。
-- `distribute(self) -> None` — 两阶段：① 进程池 `data_to_npz` 生成 DIA npz 缓存；② 按 `feature_type`(0/1/2) 生成任务、按 shared 路径分桶切 `BATCH_SIZE`，进程池跑批函数，`as_completed` 汇总写 `result_file`；崩溃写 `*.PARTIAL_INCOMPLETE`。
+- `distribute(self) -> None` — 两阶段：① 进程池 `data_to_npz` 生成 DIA npz 缓存；② 按 `feature_type`(0/1/2) 生成任务、按 shared 路径分桶切 `BATCH_SIZE`，进程池跑批函数，`as_completed` 汇总；落盘前经 `filter_heavy_out_of_range`（见下，默认开）过滤，再写 `result_file`；崩溃写 `*.PARTIAL_INCOMPLETE`。
 - `multi_handle(self, psm1: PSMInfo, psm2: PSMInfo, label: int) -> dict` — 单进程路径：调 `multi_batch_work`，返回元数据+特征+`label` 行。
 - `pharse_data(self, tot_raw_path: str) -> tuple[str, DIAData]` — 经 `DataManager` 取 DIA 对象。
 - `_process_group(self, group) -> list[dict]` — 组内两两组合生成正例与（heavy `_rt+10` 的）负例。**⚠️ DEPRECATED**：负例半段（RT+10 in-silico）已弃用，改用陷阱库 entrapment 负例（feature_type 0）。
+
+## workflows/feature_postfilter.py
+
+特征提取后、落盘前作用于整张特征表的过滤（此时 DIA 派生列如 `heavy_out_of_range` 才存在；故不能放 `extract_common` 的 pre-DIA 阶段）。
+
+- `filter_heavy_out_of_range(df) -> (kept_df, n_pos_dropped, n_neg_dropped)` — 删除 `heavy_out_of_range == 1` 的行，**正负例都删**（对称，避免训练出"出界⇒正例"的伪规则）。列缺失则原样返回 `(df, 0, 0)`；类别优先按 `label_type`，否则按 `label`。鲁棒处理 int/float/bool/str 编码。由 `PairFlow.distribute` 在写 `result_file` 前调用，开关 `[general] filter_heavy_out_of_range`（默认 `True`）。
 
 ## workflows/flow_utils.py
 

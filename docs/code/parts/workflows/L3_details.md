@@ -7,7 +7,7 @@
 1. `load()`：用 `LightResultManager` 读出 `psm_info` 列表，用 `DataManager` 准备 raw 数据访问。
 2. `distribute()` 第一阶段：对每个 `raw_path_N` 用进程池调 `data_to_npz`，把 DIA 数据写成 `<name>.dia.npz`，得到 `name → shared_path` 映射。各 worker 用 `DIAData.load_from_file(..., use_mmap=True)` 内存映射加载，物理内存共享、零拷贝。
 3. `distribute()` 第二阶段：把 `psm_info` 按 `PSMInfo.get_key` 分组（同序列/电荷/…的重复样本聚到一起），按 `feature_type` 生成任务，按 `shared_path` 分桶，每桶切成 `BATCH_SIZE=5000` 的 chunk 提交进程池。
-4. 各批 worker 调 `single_pair_work` 或 `multi_batch_work` 算出特征 dict，拼上元数据与 `label`，`as_completed` 收集，`pd.DataFrame` 落盘 `result_file`。
+4. 各批 worker 调 `single_pair_work` 或 `multi_batch_work` 算出特征 dict，拼上元数据与 `label`，`as_completed` 收集成 `pd.DataFrame`；落盘前经 `feature_postfilter.filter_heavy_out_of_range` 删除 `heavy_out_of_range==1`（**正负例都删**，默认开，`[general] filter_heavy_out_of_range`）后写 `result_file`。理由：重标前体出采集范围 ⇒ 无 SILAC 重通道、碎片无法验证；只删负例会让模型学到"出界⇒正例"伪规则，故对称删除。
 
 ### feature_type 三种模式（`distribute` / flow_utils 批函数）
 
