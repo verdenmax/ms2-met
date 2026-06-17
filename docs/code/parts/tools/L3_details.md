@@ -8,6 +8,7 @@
 - key 用 `PSMInfo.get_key_with_raw()`（sequence + charge + modify + raw_title）。
 - **正例**：所有引擎 key 集合的**交集**，且权威 PSM 的 `protein_names` 命中 `positive_marker`（`matches_species_marker`，suffix + decoy-aware）→ `label_type="positive"`。
 - **负例**：所有引擎 key 集合的**并集**，去掉正例 key，且权威 PSM 不命中 marker → `label_type="negative"`。
+  - ⚠️ 已知行为：`matches_species_marker` 对空/`None` 的 `protein_names` 返回 `False`，故**无蛋白归属**的 PSM（物种未知）也会被划入负例，而非跳过——可能给 SILAC 负例集带入标签噪声（`extract_common.py:311-320`）。如需更纯的负例集，可改为要求"明确命中非目标物种 token"才计入负例。
 - `positive_marker=None` → 仅取交集，不打 label。
 - **权威 PSM 选择**：若 `diann` 在引擎列表中则 diann 优先（蛋白归属更可靠），否则按 `engine_order` 先到先得。marker 检查只看权威 PSM。
 - 进入算法前先把所有输入 PSM 的 `_label_type` 清空，防止重复调用残留 stale state。

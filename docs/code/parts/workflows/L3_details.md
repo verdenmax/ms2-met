@@ -8,6 +8,7 @@
 2. `distribute()` 第一阶段：对每个 `raw_path_N` 用进程池调 `data_to_npz`，把 DIA 数据写成 `<name>.dia.npz`，得到 `name → shared_path` 映射。各 worker 用 `DIAData.load_from_file(..., use_mmap=True)` 内存映射加载，物理内存共享、零拷贝。
 3. `distribute()` 第二阶段：把 `psm_info` 按 `PSMInfo.get_key` 分组（同序列/电荷/…的重复样本聚到一起），按 `feature_type` 生成任务，按 `shared_path` 分桶，每桶切成 `BATCH_SIZE=5000` 的 chunk 提交进程池。
 4. 各批 worker 调 `single_pair_work` 或 `multi_batch_work` 算出特征 dict，拼上元数据与 `label`，`as_completed` 收集成 `pd.DataFrame`；落盘前经 `feature_postfilter.filter_heavy_out_of_range` 删除 `heavy_out_of_range==1`（**正负例都删**，默认开，`[general] filter_heavy_out_of_range`）后写 `result_file`。理由：重标前体出采集范围 ⇒ 无 SILAC 重通道、碎片无法验证；只删负例会让模型学到"出界⇒正例"伪规则，故对称删除。
+   - ⚠️ 该过滤**依赖 `heavy_out_of_range` 列存在**，而此列**仅在 `if speclib_enabled` 内产出**（`single_work.py:882`）。故未配 `[speclib]`（或 feature_type 1/2 的 `multi_batch_work` 路径）时列缺失，过滤为无操作。所有 baseline 配置都含 `[speclib]`，故正常运行时过滤生效。`heavy_in_raw` 在两条路径都算，若要让过滤对非 speclib 也生效，可将 `heavy_out_of_range` 移出 speclib 块无条件产出。
 
 ### feature_type 三种模式（`distribute` / flow_utils 批函数）
 

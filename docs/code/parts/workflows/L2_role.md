@@ -32,4 +32,5 @@ SILAC 轻重标 MS2 校验工具的**编排与特征提取层**：从配置/搜�
 ## 输入 / 输出
 
 - 输入：`config.ini`（`[input]` raw 路径数 `raw_num`、`raw_path_N`、`light_result_file`；`[general]` `mass_tol_ppm`、`xic_cycle_window`、`feature_type`、`result_file`、`random_seed`、`work_directory`、`filter_heavy_out_of_range`(默认 True)），DIA raw 文件，搜索结果文件。
-- 输出：`result_file`（CSV，每行 = 一条 PSM/PSM 对的元数据 + 全部特征 + `label`；落盘前已删除 `heavy_out_of_range==1` 的行，正负例都删）；进程池崩溃时旁路写 `*.PARTIAL_INCOMPLETE` 标记；工作目录下的 `*.dia.npz` 缓存。
+- 输出：`result_file`（CSV，每行 = 一条 PSM/PSM 对的元数据 + 全部特征 + `label`；落盘前删除 `heavy_out_of_range==1` 的行，正负例都删）；进程池崩溃时旁路写 `*.PARTIAL_INCOMPLETE` 标记；工作目录下的 `*.dia.npz` 缓存。
+  - ⚠️ 注意：`heavy_out_of_range` 列**仅在配置了 `[speclib]` 时**才由 `single_pair_work` 产出（见 `single_work.py:868-882`，在 `if speclib_enabled` 内）。未配 `[speclib]` 或走 `multi_batch_work`(feature_type 1/2) 时该列缺失，过滤是**无操作**（`filter_heavy_out_of_range` 列缺失即原样返回），尽管开关默认 True。
