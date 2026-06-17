@@ -85,3 +85,44 @@ def test_counts_fall_back_to_label_when_no_label_type():
     kept, n_pos, n_neg = filter_heavy_out_of_range(df)
     assert list(kept["sequence"]) == ["CK"]
     assert (n_pos, n_neg) == (1, 1)
+
+
+# --- CLI / file-level helper ---
+
+from workflows.feature_postfilter import filter_csv_file  # noqa: E402
+
+_ROWS = [
+    {"sequence": "AK", "label": 1, "label_type": "positive", "heavy_out_of_range": 0},
+    {"sequence": "BK", "label": 1, "label_type": "positive", "heavy_out_of_range": 1},
+    {"sequence": "DK", "label": 0, "label_type": "negative", "heavy_out_of_range": 1},
+]
+
+
+def test_filter_csv_dry_run_does_not_write(tmp_path):
+    import pandas as pd
+    p = tmp_path / "features.csv"
+    pd.DataFrame(_ROWS).to_csv(p, index=False)
+    n_pos, n_neg = filter_csv_file(str(p))  # dry-run
+    assert (n_pos, n_neg) == (1, 1)
+    assert len(pd.read_csv(p)) == 3  # unchanged
+
+
+def test_filter_csv_output_writes_filtered(tmp_path):
+    import pandas as pd
+    p = tmp_path / "features.csv"
+    out = tmp_path / "features.filtered.csv"
+    pd.DataFrame(_ROWS).to_csv(p, index=False)
+    filter_csv_file(str(p), output=str(out))
+    assert len(pd.read_csv(p)) == 3            # input untouched
+    res = pd.read_csv(out)
+    assert list(res["sequence"]) == ["AK"]     # both out-of-range rows dropped
+
+
+def test_filter_csv_in_place_with_backup(tmp_path):
+    import pandas as pd
+    p = tmp_path / "features.csv"
+    pd.DataFrame(_ROWS).to_csv(p, index=False)
+    filter_csv_file(str(p), in_place=True)
+    assert list(pd.read_csv(p)["sequence"]) == ["AK"]      # overwritten/filtered
+    assert (tmp_path / "features.csv.prefilter.bak").exists()
+    assert len(pd.read_csv(tmp_path / "features.csv.prefilter.bak")) == 3

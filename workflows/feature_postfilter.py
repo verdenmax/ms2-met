@@ -16,7 +16,11 @@ Currently one filter:
 """
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def filter_heavy_out_of_range(df: pd.DataFrame):
@@ -51,3 +55,69 @@ def filter_heavy_out_of_range(df: pd.DataFrame):
 
     kept = df.loc[~out_mask].reset_index(drop=True)
     return kept, n_pos, n_neg
+
+
+def filter_csv_file(path: str, output: str | None = None,
+                    in_place: bool = False, make_backup: bool = True):
+    """Apply ``filter_heavy_out_of_range`` to a features CSV on disk.
+
+    Args:
+        path: input features.csv.
+        output: write result here (mutually exclusive with in_place).
+        in_place: overwrite ``path`` (writes ``path + '.prefilter.bak'`` first
+            unless make_backup is False).
+        make_backup: whether to back up before in-place overwrite.
+
+    Returns:
+        ``(n_pos_dropped, n_neg_dropped)``. With neither ``output`` nor
+        ``in_place`` it is a dry run (counts only, nothing written).
+    """
+    import shutil
+
+    df = pd.read_csv(path)
+    kept, n_pos, n_neg = filter_heavy_out_of_range(df)
+    mode = "dry-run" if not (output or in_place) else "write"
+    logger.info(
+        "heavy_out_of_range 过滤(%s) %s: 剔除 positive=%d, negative=%d, "
+        "输出=%d/%d", mode, path, n_pos, n_neg, len(kept), len(df))
+    if output:
+        kept.to_csv(output, index=False)
+    elif in_place:
+        if make_backup:
+            shutil.copy2(path, path + ".prefilter.bak")
+        kept.to_csv(path, index=False)
+    return n_pos, n_neg
+
+
+def main(argv=None):
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Drop heavy-out-of-range PSMs (both classes) from one or "
+                    "more features.csv. Default is a dry run (counts only).")
+    ap.add_argument("features", nargs="+", help="features.csv path(s)")
+    ap.add_argument("--output", help="write result here (single input only)")
+    ap.add_argument("--in-place", action="store_true",
+                    help="overwrite each input (writes a .prefilter.bak first)")
+    ap.add_argument("--no-backup", action="store_true",
+                    help="skip the .prefilter.bak backup with --in-place")
+    args = ap.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s | %(levelname)s | %(message)s")
+    if args.output and (len(args.features) != 1 or args.in_place):
+        ap.error("--output requires exactly one input and excludes --in-place")
+
+    tot_pos = tot_neg = 0
+    for path in args.features:
+        np_, nn = filter_csv_file(
+            path, output=args.output, in_place=args.in_place,
+            make_backup=not args.no_backup)
+        tot_pos += np_
+        tot_neg += nn
+    logger.info("总计剔除: positive=%d, negative=%d (文件数=%d)",
+                tot_pos, tot_neg, len(args.features))
+
+
+if __name__ == "__main__":
+    main()

@@ -21,6 +21,8 @@
 特征提取后、落盘前作用于整张特征表的过滤（此时 DIA 派生列如 `heavy_out_of_range` 才存在；故不能放 `extract_common` 的 pre-DIA 阶段）。
 
 - `filter_heavy_out_of_range(df) -> (kept_df, n_pos_dropped, n_neg_dropped)` — 删除 `heavy_out_of_range == 1` 的行，**正负例都删**（对称，避免训练出"出界⇒正例"的伪规则）。列缺失则原样返回 `(df, 0, 0)`；类别优先按 `label_type`，否则按 `label`。鲁棒处理 int/float/bool/str 编码。由 `PairFlow.distribute` 在写 `result_file` 前调用，开关 `[general] filter_heavy_out_of_range`（默认 `True`）。
+- `filter_csv_file(path, output=None, in_place=False, make_backup=True) -> (n_pos, n_neg)` — 对磁盘上 features.csv 应用上面过滤；无 `output`/`in_place` 时为 dry-run。
+- `main(argv=None)` / `python -m workflows.feature_postfilter <csv...> [--output OUT | --in-place] [--no-backup]` — CLI；就地过滤写 `*.prefilter.bak` 备份。**一键过滤旧文件**：`make filter`（dry-run：`make filter-dry`），范围由 `FILTER_GLOB` 控制（默认 `runs/baseline_*/features.csv`）。新提取已在 `main.py` 内自动过滤，本 CLI/make 仅用于过滤功能上线前产出的旧 features.csv。
 
 ## workflows/flow_utils.py
 

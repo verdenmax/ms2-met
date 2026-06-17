@@ -21,6 +21,10 @@
 # Python 解释器（如果用 conda 环境，可改成 conda run -n jianyan python3）
 PY ?= python3
 
+# 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
+# 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
+FILTER_GLOB ?= runs/baseline_*/features.csv
+
 # 三个 extract_common 配置文件
 INI_2TH    ?= extract_2da_pfind_diann.ini
 INI_5TH    ?= extract_5da_pfind_diann.ini
@@ -111,6 +115,7 @@ endef
 
 .PHONY: help all run clean
 .PHONY: 2th 5th normal
+.PHONY: filter filter-dry
 .PHONY: extract-2th extract-5th extract-normal
 .PHONY: clean-2th clean-5th clean-normal clean-all
 .PHONY: 2th-neg05 2th-neg10 5th-neg05 5th-neg10 normal-neg05 normal-neg10
@@ -159,6 +164,12 @@ help:
 	@echo "  make clean-5th       删除 5da features.csv / log"
 	@echo "  make clean-normal    删除 normal features.csv / log"
 	@echo "  make clean-all       上述三者全清"
+	@echo ""
+	@echo "  make filter-dry      预览：列出各 features.csv 会删多少 heavy-out-of-range 行（不改文件）"
+	@echo "  make filter          就地过滤现有 features.csv（删 heavy_out_of_range==1，备份 *.prefilter.bak）"
+	@echo "                       范围由 FILTER_GLOB 控制，默认 runs/baseline_*/features.csv"
+	@echo "                       例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'"
+	@echo "                       注：新提取已在 main.py 内自动过滤，本目标用于旧文件补过滤"
 	@echo ""
 	@echo "  make train-exp1         旧实验：训练 exp1（2da 单独）"
 	@echo "  make train-exp2         旧实验：训练 exp2（2da + 5da combined）"
@@ -714,6 +725,18 @@ clean-normal:
 	fi
 
 clean-all: clean-2th clean-5th clean-normal
+
+# --------------------------- heavy-out-of-range 一键过滤 ---------------------------
+# 对已有 features.csv 一次性删除 heavy_out_of_range==1（正负例都删）。
+# 新提取已在 main.py 内自动过滤；本目标用于过滤"过滤功能上线前"产出的旧文件。
+filter-dry:
+	$(call BANNER,filter dry-run)
+	$(PY) -m workflows.feature_postfilter $(wildcard $(FILTER_GLOB))
+
+filter:
+	$(call BANNER,filter in-place)
+	$(PY) -m workflows.feature_postfilter --in-place $(wildcard $(FILTER_GLOB))
+	@echo "[done] 已就地过滤 $(FILTER_GLOB)（原文件备份为 *.prefilter.bak）"
 
 # Neg-FDR variant clean targets (same conservative pattern as clean-2th/5th/normal)
 clean-2th-neg05:
