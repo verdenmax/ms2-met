@@ -1257,7 +1257,8 @@ def _calc_smoothness(intensity: np.ndarray) -> float:
     return float(np.sum(second_diff ** 2) / (n_terms * (total ** 2 + 1e-12)))
 
 
-def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
+def _calc_cycle_offset(xic: np.ndarray, center_rt: float,
+                       apex_idx: int = None) -> tuple[int, int]:
     """Compute how far the intensity apex is from the center RT, in cycles.
 
     Returns (abs_offset, signed_offset). signed < 0 means apex is at an
@@ -1281,7 +1282,8 @@ def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
     valid_xic = xic[valid_mask]
     center_local_idx = int(np.argmin(np.abs(valid_xic["rt"] - center_rt)))
     center_cycle = int(valid_xic["cycle_idx"][center_local_idx])
-    apex_global_idx = int(np.argmax(xic["intensity"]))
+    apex_global_idx = (int(np.argmax(xic["intensity"]))
+                       if apex_idx is None else int(apex_idx))
     apex_cycle = int(xic["cycle_idx"][apex_global_idx])
     if apex_cycle < 0:
         return 0, 0
@@ -1301,7 +1303,8 @@ def _calc_centering_defect(xic: np.ndarray, center_rt: float) -> float:
     """
     if len(xic) == 0:
         return 0.0
-    abs_off, _ = _calc_cycle_offset(xic, center_rt)
+    abs_off, _ = _calc_cycle_offset(
+        xic, center_rt, apex_idx=_robust_apex_idx(xic["intensity"]))
     if abs_off == 0:
         return 0.0
     valid = int(np.sum(xic["cycle_idx"] >= 0))

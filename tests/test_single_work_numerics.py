@@ -847,3 +847,29 @@ def test_fragment_shape_acc_without_light_omits_light_keys():
     out = _fragment_shape_aggregates(acc)
     assert "all_heavy_centering_defect_mean" in out
     assert not any(k.startswith("all_light_") for k in out)
+
+
+def test_centering_defect_centered_flat_top_is_zero():
+    """A CENTERED flat-top must not be penalized: robust apex is the plateau
+    center, not argmax's left edge (audit finding f-centering-argmax)."""
+    from workflows.single_work import _calc_centering_defect
+    xic = _make_xic(cycles=[0, 1, 2, 3, 4, 5, 6],
+                    rts=[10, 11, 12, 13, 14, 15, 16],
+                    intensities=[1, 3, 5, 5, 5, 3, 1])  # plateau centered at rt=13
+    assert _calc_centering_defect(xic, center_rt=13.0) == 0.0
+
+
+def test_centering_defect_descending_ramp_is_high():
+    """Descending edge ramp: apex at first cycle, center mid-window -> ~1.0."""
+    from workflows.single_work import _calc_centering_defect
+    xic = _make_xic(cycles=[5, 6, 7, 8, 9], rts=[10, 11, 12, 13, 14],
+                    intensities=[100, 5, 3, 2, 1])  # apex at rt=10, center rt=12
+    assert _calc_centering_defect(xic, center_rt=12.0) == 1.0
+
+
+def test_shape_irregularity_clean_tailing_peak_is_zero():
+    """Real asymmetric (tailing) chromatographic peak must score ~0
+    (guard against false positives — audit finding f-missing-tests)."""
+    from workflows.single_work import _calc_shape_irregularity
+    assert _calc_shape_irregularity(
+        np.array([0, 1, 9, 8, 6, 5, 4, 3, 2, 1], dtype="f8")) == 0.0
