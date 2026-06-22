@@ -1390,6 +1390,15 @@ def _default_xic_score() -> dict:
         "apex_monotonicity": 0.0,
         "n_peaks": 0,
         "smoothness": 0.0,
+        "light_centering_defect": 0.0,
+        "heavy_centering_defect": 0.0,
+        "light_shape_irregularity": 0.0,
+        "heavy_shape_irregularity": 0.0,
+        "light_base_to_apex_ratio": 0.0,
+        "light_n_peaks": 0,
+        "light_smoothness": 0.0,
+        "light_narrow_defect": 0.0,
+        "heavy_narrow_defect": 0.0,
     }
 
 
@@ -1451,6 +1460,36 @@ def calc_xic_score(
     apex_monotonicity = _calc_apex_monotonicity(heavy_xic["intensity"])
     n_peaks = _calc_n_peaks(heavy_xic["intensity"])
     smoothness = _calc_smoothness(heavy_xic["intensity"])
+    # P-AS1: light-channel peak shape + edge/centering/spike defects.
+    # All "higher = worse" so the fragment _max aggregate surfaces the
+    # worst fragment. apex_monotonicity (heavy, good=high) is kept for now
+    # and removed in a later cleanup once consumers migrate.
+    heavy_shape_irregularity = _calc_shape_irregularity(heavy_xic["intensity"])
+    light_shape_irregularity = _calc_shape_irregularity(light_xic["intensity"])
+    light_base_to_apex_ratio = _calc_base_to_apex_ratio(light_xic["intensity"])
+    light_n_peaks = _calc_n_peaks(light_xic["intensity"])
+    light_smoothness = _calc_smoothness(light_xic["intensity"])
+    heavy_narrow_defect = _calc_narrow_defect(heavy_xic["intensity"])
+    light_narrow_defect = _calc_narrow_defect(light_xic["intensity"])
+    if center_rt is not None:
+        _h_center = (heavy_center_rt
+                     if heavy_center_rt is not None else center_rt)
+        light_centering_defect = _calc_centering_defect(light_xic, center_rt)
+        heavy_centering_defect = _calc_centering_defect(heavy_xic, _h_center)
+    else:
+        light_centering_defect = 0.0
+        heavy_centering_defect = 0.0
+    _shape_defects = {
+        "light_centering_defect": light_centering_defect,
+        "heavy_centering_defect": heavy_centering_defect,
+        "light_shape_irregularity": light_shape_irregularity,
+        "heavy_shape_irregularity": heavy_shape_irregularity,
+        "light_base_to_apex_ratio": light_base_to_apex_ratio,
+        "light_n_peaks": light_n_peaks,
+        "light_smoothness": light_smoothness,
+        "light_narrow_defect": light_narrow_defect,
+        "heavy_narrow_defect": heavy_narrow_defect,
+    }
 
     # 计算峰相关性
     # 统一时间轴
@@ -1472,6 +1511,7 @@ def calc_xic_score(
         result["apex_monotonicity"] = apex_monotonicity
         result["n_peaks"] = n_peaks
         result["smoothness"] = smoothness
+        result.update(_shape_defects)
         if center_rt is not None:
             l_abs, l_sig = _calc_cycle_offset(light_xic, center_rt)
             h_center = (heavy_center_rt
@@ -1528,7 +1568,7 @@ def calc_xic_score(
     else:
         l_abs = l_sig = h_abs = h_sig = 0
 
-    return {
+    result = {
         "pearson": np.float32(corr),
         "mz_avg_err": mz_avg_err,
         "apex_delta": apex_delta,
@@ -1549,6 +1589,8 @@ def calc_xic_score(
         "n_peaks": n_peaks,
         "smoothness": smoothness,
     }
+    result.update(_shape_defects)
+    return result
 
 
 def plot_light_heavy_xic(light_xic, heavy_xic):

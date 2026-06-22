@@ -814,3 +814,41 @@ def test_extract_ion_numeric_features_default_still_four():
     out = extract_ion_numeric_features([1.0, 2.0, 3.0], "demo")
     assert set(out.keys()) == {
         "demo_mean", "demo_p50", "demo_std", "demo_max"}
+
+
+def _peak_xic(intensities, cycles=None, rts=None):
+    dt = [("rt", "f8"), ("ppm_error", "f8"),
+          ("intensity", "f8"), ("cycle_idx", "i4")]
+    n = len(intensities)
+    arr = np.zeros(n, dtype=dt)
+    arr["intensity"] = intensities
+    arr["rt"] = rts if rts is not None else np.arange(n, dtype="f8") + 10.0
+    arr["cycle_idx"] = cycles if cycles is not None else np.arange(n)
+    return arr
+
+
+def test_calc_xic_score_emits_new_shape_defect_keys():
+    from workflows.single_work import calc_xic_score
+    light = _peak_xic([1, 5, 50, 100, 50, 5, 1])
+    heavy = light.copy()
+    r = calc_xic_score(light, heavy, center_rt=13.0)
+    for k in ("light_centering_defect", "heavy_centering_defect",
+              "light_shape_irregularity", "heavy_shape_irregularity",
+              "light_base_to_apex_ratio", "light_n_peaks",
+              "light_smoothness", "light_narrow_defect",
+              "heavy_narrow_defect"):
+        assert k in r, f"missing {k}"
+    # clean centered peak -> defects all low
+    assert r["heavy_shape_irregularity"] == 0.0
+    assert r["heavy_centering_defect"] == 0.0
+
+
+def test_calc_xic_score_default_has_new_shape_defect_keys():
+    from workflows.single_work import _default_xic_score
+    d = _default_xic_score()
+    for k in ("light_centering_defect", "heavy_centering_defect",
+              "light_shape_irregularity", "heavy_shape_irregularity",
+              "light_base_to_apex_ratio", "light_n_peaks",
+              "light_smoothness", "light_narrow_defect",
+              "heavy_narrow_defect"):
+        assert d[k] == 0 or d[k] == 0.0, f"{k} default not zero"
