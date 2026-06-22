@@ -693,3 +693,30 @@ def test_multi_batch_work_emits_R4_precursor_keys_in_empty_xic_branch():
     assert not missing, (
         f"multi_batch_work missing R4 precursor keys {missing} (I-F1). "
         f"Schema drift with single_pair_work — concat will produce NaN columns.")
+
+
+def test_robust_apex_idx_single_peak():
+    from workflows.single_work import _robust_apex_idx
+    assert _robust_apex_idx(np.array([1, 3, 9, 3, 1], dtype="f8")) == 2
+
+
+def test_robust_apex_idx_flat_top_returns_center_not_left_edge():
+    """平顶并列时取近峰顶区中位索引，而非 argmax 的最左点。"""
+    from workflows.single_work import _robust_apex_idx
+    # 三点等高平顶在 idx 2,3,4 -> 期望 apex_idx == 3
+    assert _robust_apex_idx(
+        np.array([1, 3, 5, 5, 5, 3, 1], dtype="f8")) == 3
+
+
+def test_robust_apex_idx_empty_and_allzero():
+    from workflows.single_work import _robust_apex_idx
+    assert _robust_apex_idx(np.array([], dtype="f8")) == 0
+    assert _robust_apex_idx(np.array([0, 0, 0], dtype="f8")) == 0
+
+
+def test_robust_apex_idx_nonfinite_falls_back_to_argmax():
+    from workflows.single_work import _robust_apex_idx
+    arr = np.array([1, np.nan, 9, 1], dtype="f8")
+    # argmax on NaN-containing array is implementation-defined but must not raise
+    idx = _robust_apex_idx(arr)
+    assert isinstance(idx, int)

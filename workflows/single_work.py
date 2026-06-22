@@ -1142,6 +1142,27 @@ def _calc_base_to_apex_ratio(intensity: np.ndarray) -> float:
     return base / apex
 
 
+def _robust_apex_idx(intensity: np.ndarray, flat_tol: float = 0.05) -> int:
+    """Median index of the near-max region (>= (1-flat_tol)*max).
+
+    Robust to flat tops / ties where np.argmax silently returns the
+    leftmost max index — which would make a centered plateau look like a
+    left-edge ramp. Returns 0 for empty input; falls back to argmax for
+    all-zero / non-finite input (defensive, never raises).
+    """
+    if len(intensity) == 0:
+        return 0
+    if not np.all(np.isfinite(intensity)):
+        return int(np.argmax(intensity))
+    max_v = float(np.max(intensity))
+    if max_v <= 0:
+        return int(np.argmax(intensity))
+    near = np.where(intensity >= (1.0 - flat_tol) * max_v)[0]
+    if len(near) == 0:
+        return int(np.argmax(intensity))
+    return int(round(float(np.median(near))))
+
+
 def _calc_apex_monotonicity(intensity: np.ndarray) -> float:
     """Fraction of pairs that monotonically rise to apex and fall after.
 
