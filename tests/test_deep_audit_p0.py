@@ -474,3 +474,28 @@ def test_multi_batch_work_passes_heavy_mass_for_heavy_xic():
     assert 100.0 not in heavy_masses, (
         f"P0-4: heavy DIA must NOT receive light_mass=100.0 (Units-C1 bug); "
         f"got {heavy_masses}")
+
+
+def test_single_and_multi_emit_same_precursor_shape_defect_keys():
+    """single_pair_work 与 multi_batch_work 的母离子缺陷列必须同名同集，
+    否则 concat 会产生 NaN 列。"""
+    from workflows.single_work import single_pair_work, multi_batch_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=False)
+    cfg = _minimal_config()
+    sf = single_pair_work(psm, dia, cfg)
+    mf = multi_batch_work(psm, dia, psm, dia, cfg)
+    new_keys = {
+        "precursor_light_centering_defect", "precursor_heavy_centering_defect",
+        "precursor_light_shape_irregularity",
+        "precursor_heavy_shape_irregularity",
+        "precursor_light_base_to_apex_ratio", "precursor_light_n_peaks",
+        "precursor_light_smoothness", "precursor_light_narrow_defect",
+        "precursor_heavy_narrow_defect",
+    }
+    assert new_keys <= set(sf.keys()), new_keys - set(sf.keys())
+    assert new_keys <= set(mf.keys()), new_keys - set(mf.keys())
+    assert "precursor_apex_monotonicity" not in sf
+    # fragment aggregates present (mean+max), monotonicity aggregate gone
+    assert "all_heavy_centering_defect_max" in sf
+    assert "all_apex_monotonicity_mean" not in sf

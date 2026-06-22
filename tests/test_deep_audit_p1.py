@@ -130,7 +130,7 @@ def test_fragment_empty_branch_aggregates_no_nan_when_all_empty():
         "all_light_apex_cycle_offset_mean",
         "all_heavy_apex_cycle_offset_mean",
         "all_base_to_apex_ratio_mean",
-        "all_apex_monotonicity_mean",
+        "all_heavy_shape_irregularity_mean",
         "all_n_peaks_mean",
         "all_smoothness_mean",
     ):
@@ -220,12 +220,12 @@ def test_mixed_empty_and_valid_fragments_list_parity():
 
     orig_extract = sw_mod.extract_ion_numeric_features
 
-    def spy_extract(values, prefix):
+    def spy_extract(values, prefix, **kwargs):
         if prefix == "all_apex_delta":
             captured["apex_delta_len"] = len(values)
         if prefix == "all_n_peaks":
             captured["n_peaks_len"] = len(values)
-        return orig_extract(values, prefix)
+        return orig_extract(values, prefix, **kwargs)
 
     psm = _MultiFragPSM(n_fragments=3)
     dia = _MixedFragDIA()
