@@ -720,3 +720,36 @@ def test_robust_apex_idx_nonfinite_falls_back_to_argmax():
     # argmax on NaN-containing array is implementation-defined but must not raise
     idx = _robust_apex_idx(arr)
     assert isinstance(idx, int)
+
+
+def test_shape_irregularity_clean_peak_is_zero():
+    from workflows.single_work import _calc_shape_irregularity
+    assert _calc_shape_irregularity(
+        np.array([1, 3, 9, 3, 1], dtype="f8")) == 0.0
+
+
+def test_shape_irregularity_monotone_ramp_is_zero():
+    """纯单调斜坡本身不算'形状不规则'（由 centering_defect 来抓）。"""
+    from workflows.single_work import _calc_shape_irregularity
+    assert _calc_shape_irregularity(
+        np.array([9, 7, 5, 3, 1], dtype="f8")) == 0.0
+
+
+def test_shape_irregularity_flat_top_penalized():
+    """平顶持平 (diff==0) 计违例 -> 非零。"""
+    from workflows.single_work import _calc_shape_irregularity
+    r = _calc_shape_irregularity(np.array([1, 3, 5, 5, 5, 3, 1], dtype="f8"))
+    assert r > 0.0
+
+
+def test_shape_irregularity_zigzag_high():
+    from workflows.single_work import _calc_shape_irregularity
+    r = _calc_shape_irregularity(np.array([1, 5, 2, 6, 1], dtype="f8"))
+    assert r >= 0.25
+
+
+def test_shape_irregularity_short_or_nonfinite_zero():
+    from workflows.single_work import _calc_shape_irregularity
+    assert _calc_shape_irregularity(np.array([1, 2], dtype="f8")) == 0.0
+    assert _calc_shape_irregularity(
+        np.array([1, np.nan, 3], dtype="f8")) == 0.0

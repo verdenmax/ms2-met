@@ -1163,6 +1163,30 @@ def _robust_apex_idx(intensity: np.ndarray, flat_tol: float = 0.05) -> int:
     return int(round(float(np.median(near))))
 
 
+def _calc_shape_irregularity(intensity: np.ndarray) -> float:
+    """Strict rise-to-apex / fall-after-apex violation fraction. higher=worse.
+
+    Uses _robust_apex_idx. Left of apex must STRICTLY rise, right must
+    STRICTLY fall; flat steps (diff==0) count as violations so plateaus /
+    flat-tops are penalized (unlike the old monotonicity which treated
+    flat as OK). A pure monotone ramp scores ~0 here BY DESIGN — its
+    "badness" is that the apex sits at the window edge, which is captured
+    separately by _calc_centering_defect.
+
+    Returns 0.0 for empty / short (n<3) / non-finite XIC.
+    """
+    if len(intensity) < 3:
+        return 0.0
+    if not np.all(np.isfinite(intensity)):
+        return 0.0
+    apex_idx = _robust_apex_idx(intensity)
+    left = intensity[:apex_idx + 1]
+    right = intensity[apex_idx:]
+    lv = int(np.sum(np.diff(left) <= 0)) if len(left) >= 2 else 0
+    rv = int(np.sum(np.diff(right) >= 0)) if len(right) >= 2 else 0
+    return (lv + rv) / max(1, len(intensity) - 1)
+
+
 def _calc_apex_monotonicity(intensity: np.ndarray) -> float:
     """Fraction of pairs that monotonically rise to apex and fall after.
 
