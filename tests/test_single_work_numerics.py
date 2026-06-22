@@ -872,3 +872,34 @@ def test_precursor_shape_cols_keys_and_values():
     assert set(empty.keys()) == set(cols.keys())
     assert all(v == 0 or v == 0.0 for v in empty.values())
     assert "precursor_apex_monotonicity" not in cols
+
+
+def test_fragment_shape_acc_roundtrip_with_light():
+    from workflows.single_work import (
+        _new_fragment_shape_acc, _append_fragment_shape,
+        _append_empty_fragment_shape, _fragment_shape_aggregates)
+    acc = _new_fragment_shape_acc(light_fragment_shape=True)
+    score = {
+        "heavy_centering_defect": 0.9, "heavy_shape_irregularity": 0.1,
+        "heavy_narrow_defect": 0.2, "light_centering_defect": 0.3,
+        "light_shape_irregularity": 0.4, "light_base_to_apex_ratio": 0.5,
+        "light_n_peaks": 1, "light_smoothness": 0.6, "light_narrow_defect": 0.7,
+    }
+    _append_fragment_shape(acc, score)
+    _append_empty_fragment_shape(acc)  # second "fragment" all-zero
+    out = _fragment_shape_aggregates(acc)
+    assert out["all_heavy_centering_defect_max"] == 0.9   # worst fragment
+    assert abs(out["all_heavy_centering_defect_mean"] - 0.45) < 1e-9
+    assert "all_light_n_peaks_max" in out
+    # only mean + max emitted
+    assert "all_heavy_centering_defect_p50" not in out
+    assert "all_heavy_centering_defect_std" not in out
+
+
+def test_fragment_shape_acc_without_light_omits_light_keys():
+    from workflows.single_work import (
+        _new_fragment_shape_acc, _fragment_shape_aggregates)
+    acc = _new_fragment_shape_acc(light_fragment_shape=False)
+    out = _fragment_shape_aggregates(acc)
+    assert "all_heavy_centering_defect_mean" in out
+    assert not any(k.startswith("all_light_") for k in out)

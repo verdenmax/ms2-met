@@ -1619,6 +1619,44 @@ def _empty_precursor_shape_cols() -> dict:
     return {col: 0.0 for col in _PRECURSOR_SHAPE_MAP}
 
 
+_FRAG_SHAPE_HEAVY = (
+    "heavy_centering_defect", "heavy_shape_irregularity", "heavy_narrow_defect")
+_FRAG_SHAPE_LIGHT = (
+    "light_centering_defect", "light_shape_irregularity",
+    "light_base_to_apex_ratio", "light_n_peaks", "light_smoothness",
+    "light_narrow_defect")
+
+
+def _new_fragment_shape_acc(light_fragment_shape: bool) -> dict:
+    """Empty accumulator: one list per per-fragment shape-defect metric.
+    Light-channel keys are included only when light_fragment_shape is on."""
+    keys = list(_FRAG_SHAPE_HEAVY)
+    if light_fragment_shape:
+        keys += list(_FRAG_SHAPE_LIGHT)
+    return {k: [] for k in keys}
+
+
+def _append_fragment_shape(acc: dict, ion_score: dict) -> None:
+    """Append this fragment's metrics from a calc_xic_score result."""
+    for k in acc:
+        acc[k].append(ion_score[k])
+
+
+def _append_empty_fragment_shape(acc: dict) -> None:
+    """Append zeros for a fragment whose XIC pair was empty."""
+    for k in acc:
+        acc[k].append(0.0)
+
+
+def _fragment_shape_aggregates(acc: dict) -> dict:
+    """Aggregate each accumulated list to all_<key>_{mean,max}."""
+    out = {}
+    for k, vals in acc.items():
+        out.update(extract_ion_numeric_features(
+            vals, f"all_{k}", stats=("mean", "max")))
+    return out
+
+
 def plot_light_heavy_xic(light_xic, heavy_xic):
     """ 画图 """
     rt_values = light_xic["rt"]
