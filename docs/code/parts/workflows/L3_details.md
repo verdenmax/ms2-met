@@ -51,7 +51,8 @@
 - 入口先按 rt 排序（`np.interp` 要求 xp 单调；多路复用 DIA 扫描序不保证）。
 - 空对 / 全零 → `_default_xic_score()`（全零）。这避免 `np.argmax` 在全零上返回 0 而伪装成"完美共洗脱"。
 - Pearson：统一到 100 点公共 RT 网格插值；任一近零、std<1e-10、或 scipy 返回 NaN（`ConstantInputWarning`）一律置 0。
-- 还产出 cosine、`apex_delta`（含 signed，因负例总把 heavy +10，无符号无法区分方向）、`intensity_ratio=light/heavy`、SNR（p25 噪声底，封顶 1000）、FWHM 宽度比、对称性、`base_to_apex_ratio`、`apex_monotonicity`、`n_peaks`（prominence≥0.3·apex）、`smoothness`（按二阶差分项数归一，跨 window 可比）、`*_apex_cycle_offset`（abs/signed，apex 相对 center_rt 的周期偏移）。
+- 还产出 cosine、`apex_delta`（含 signed，因负例总把 heavy +10，无符号无法区分方向）、`intensity_ratio=light/heavy`、SNR（p25 噪声底，封顶 1000）、FWHM 宽度比、对称性、`base_to_apex_ratio`、`n_peaks`（prominence≥0.3·apex）、`smoothness`（按二阶差分项数归一，跨 window 可比）、`*_apex_cycle_offset`（abs/signed，apex 相对 center_rt 的周期偏移）。
+- 峰形缺陷类特征（均"高=坏"，轻+重双通道，母离子+碎片）：`shape_irregularity`（严格升/降违例比例，惩罚平台/锯齿；取代旧 `apex_monotonicity`）、`centering_defect`（apex 偏离 center_rt 的归一化偏移，惩罚边缘斜坡）、`narrow_defect`（1/support，惩罚单 cycle 尖刺）。碎片侧经 `_fragment_shape_aggregates` 聚合为 `all_*_{mean,max}`，`_max` 即最差碎片；轻标碎片受 `[general] light_fragment_shape` 开关（默认 on）控制。
 
 ## Q1a 碎片配对召回（`q1a_helpers`）
 

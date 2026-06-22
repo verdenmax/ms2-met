@@ -45,7 +45,8 @@
 - `extract_ion_pearson_features(ions_pearsons: list) -> dict` — count/p25/p50/p75/mean/std/min/high_ratio；`count==1` 时 std=NaN。
 - `extract_ion_numeric_features(values: list, prefix: str) -> dict` — `{prefix}_mean/p50/std/max`，清洗 NaN/Inf。
 - `_is_empty_xic_pair(light_xic, heavy_xic) -> bool` — 任一 XIC 空或全零强度。
-- `_calc_fwhm(rt, intensity) -> float`、`_calc_symmetry(intensity) -> float`、`_calc_snr(intensity) -> float`、`_calc_base_to_apex_ratio(intensity) -> float`、`_calc_apex_monotonicity(intensity) -> float`、`_calc_n_peaks(intensity, prominence_frac=0.3) -> int`、`_calc_smoothness(intensity) -> float` — 单 XIC 峰形指标。
+- `_calc_fwhm(rt, intensity) -> float`、`_calc_symmetry(intensity) -> float`、`_calc_snr(intensity) -> float`、`_calc_base_to_apex_ratio(intensity) -> float`、`_calc_n_peaks(intensity, prominence_frac=0.3) -> int`、`_calc_smoothness(intensity) -> float` — 单 XIC 峰形指标。
+- `_robust_apex_idx(intensity, flat_tol=0.05) -> int`、`_calc_shape_irregularity(intensity) -> float`、`_calc_narrow_defect(intensity) -> float`、`_calc_centering_defect(xic, center_rt) -> float` — 峰形缺陷指标（均"高=坏"）。装配/聚合：`_precursor_shape_cols`/`_empty_precursor_shape_cols`（母离子列）、`_new_fragment_shape_acc`/`_append_fragment_shape`/`_append_empty_fragment_shape`/`_fragment_shape_aggregates`（碎片 `all_*_{mean,max}`）。
 - `_calc_cycle_offset(xic, center_rt: float) -> tuple[int, int]` — apex 相对 center_rt 的 (abs, signed) 周期偏移。
 - `_calc_hl_ratio_consistency(ratios: list) -> tuple[float, float]` — log10(L/H) 的 (std, mad)；`count==1` 时 std=NaN。
 - `_default_xic_score() -> dict` — calc_xic_score 全零默认返回。

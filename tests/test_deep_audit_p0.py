@@ -495,6 +495,10 @@ def test_single_and_multi_emit_same_precursor_shape_defect_keys():
     }
     assert new_keys <= set(sf.keys()), new_keys - set(sf.keys())
     assert new_keys <= set(mf.keys()), new_keys - set(mf.keys())
+    # Full schema parity: the two work functions must emit identical column
+    # sets, else concat across them produces NaN columns (I-F1 regression).
+    assert set(sf.keys()) == set(mf.keys()), (
+        set(sf.keys()) ^ set(mf.keys()))
     assert "precursor_apex_monotonicity" not in sf
     # fragment aggregates present (mean+max), monotonicity aggregate gone
     assert "all_heavy_centering_defect_max" in sf
