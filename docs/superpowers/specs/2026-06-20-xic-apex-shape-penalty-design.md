@@ -114,10 +114,10 @@ narrow_defect = 1.0 / max(1, support)
 4. **碎片聚合**：新"缺陷类"指标（`*_centering_defect`、`*_shape_irregularity`、`*_narrow_defect`、`light_*`）**只输出 `mean` + `max` 两个聚合**（`max`=最差碎片），以控制列数；沿用指标（heavy `base_to_apex`/`n_peaks`/`smoothness`）保持现有 4 聚合不变。为此在 `extract_ion_numeric_features` 旁新增一个轻量聚合 helper（或加 `stats=("mean","max")` 参数），不改动现有调用。
 5. **训练**：`feature_cols: []` 自动纳入新列，无需改任何训练/cross_test 配置。
 
-**新增列估算**：母离子约 9 列；碎片约 24 列（新缺陷指标 ×2 聚合）。特征总数约 142 → ~175。早前消融表明模型对多特征鲁棒、树会自动取舍，可接受。
+**新增列**：母离子 9 列；碎片 18 列（新缺陷指标 ×2 聚合）；移除 5 列（旧 `apex_monotonicity`）。特征总数 142 → 164。早前消融表明模型对多特征鲁棒、树会自动取舍，可接受。
 
 ### 5.1 轻标碎片形状开关
-轻标**碎片**形状是本批最贵、置信度最低的一块（点名失败案例为母离子轻标）。新增 config 布尔项 `[features] light_fragment_shape`（默认 `true`）；为 `false` 时跳过轻标碎片形状指标的计算与写出，便于消融。母离子轻标形状不受此开关影响（始终计算）。
+轻标**碎片**形状是本批最贵、置信度最低的一块（点名失败案例为母离子轻标）。新增 config 布尔项 `[general] light_fragment_shape`（默认 `true`，与现有 `xic_cycle_window` 等同属 `[general]` 段，经 `config[ConfigKeys.GENERAL].getboolean(...)` 读取）；为 `false` 时跳过轻标碎片形状指标的计算与写出，便于消融。母离子轻标形状不受此开关影响（始终计算）。
 
 ---
 
