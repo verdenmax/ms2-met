@@ -852,3 +852,23 @@ def test_calc_xic_score_default_has_new_shape_defect_keys():
               "light_smoothness", "light_narrow_defect",
               "heavy_narrow_defect"):
         assert d[k] == 0 or d[k] == 0.0, f"{k} default not zero"
+
+
+def test_precursor_shape_cols_keys_and_values():
+    from workflows.single_work import (
+        _precursor_shape_cols, _empty_precursor_shape_cols)
+    score = {
+        "light_centering_defect": 0.2, "heavy_centering_defect": 0.3,
+        "light_shape_irregularity": 0.1, "heavy_shape_irregularity": 0.4,
+        "light_base_to_apex_ratio": 0.5, "light_n_peaks": 2,
+        "light_smoothness": 0.6, "light_narrow_defect": 0.7,
+        "heavy_narrow_defect": 0.8,
+    }
+    cols = _precursor_shape_cols(score)
+    assert cols["precursor_heavy_shape_irregularity"] == 0.4
+    assert cols["precursor_light_n_peaks"] == 2
+    assert cols["precursor_heavy_narrow_defect"] == 0.8
+    empty = _empty_precursor_shape_cols()
+    assert set(empty.keys()) == set(cols.keys())
+    assert all(v == 0 or v == 0.0 for v in empty.values())
+    assert "precursor_apex_monotonicity" not in cols

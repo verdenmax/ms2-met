@@ -1593,6 +1593,32 @@ def calc_xic_score(
     return result
 
 
+# col_name -> calc_xic_score result key. New precursor shape-defect cols.
+# Heavy base_to_apex/n_peaks/smoothness stay as their existing unprefixed
+# precursor_* lines and are NOT included here.
+_PRECURSOR_SHAPE_MAP = {
+    "precursor_light_centering_defect": "light_centering_defect",
+    "precursor_heavy_centering_defect": "heavy_centering_defect",
+    "precursor_light_shape_irregularity": "light_shape_irregularity",
+    "precursor_heavy_shape_irregularity": "heavy_shape_irregularity",
+    "precursor_light_base_to_apex_ratio": "light_base_to_apex_ratio",
+    "precursor_light_n_peaks": "light_n_peaks",
+    "precursor_light_smoothness": "light_smoothness",
+    "precursor_light_narrow_defect": "light_narrow_defect",
+    "precursor_heavy_narrow_defect": "heavy_narrow_defect",
+}
+
+
+def _precursor_shape_cols(score: dict) -> dict:
+    """Map calc_xic_score result -> precursor_* shape-defect feature cols."""
+    return {col: score[key] for col, key in _PRECURSOR_SHAPE_MAP.items()}
+
+
+def _empty_precursor_shape_cols() -> dict:
+    """Zero defaults for the empty-XIC branch (schema parity)."""
+    return {col: 0.0 for col in _PRECURSOR_SHAPE_MAP}
+
+
 def plot_light_heavy_xic(light_xic, heavy_xic):
     """ 画图 """
     rt_values = light_xic["rt"]
