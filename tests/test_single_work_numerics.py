@@ -753,3 +753,22 @@ def test_shape_irregularity_short_or_nonfinite_zero():
     assert _calc_shape_irregularity(np.array([1, 2], dtype="f8")) == 0.0
     assert _calc_shape_irregularity(
         np.array([1, np.nan, 3], dtype="f8")) == 0.0
+
+
+def test_narrow_defect_single_cycle_spike_is_one():
+    from workflows.single_work import _calc_narrow_defect
+    assert _calc_narrow_defect(np.array([0, 0, 9, 0, 0], dtype="f8")) == 1.0
+
+
+def test_narrow_defect_broad_peak_low():
+    from workflows.single_work import _calc_narrow_defect
+    # support (>=0.5*max) = 4 cycles -> 0.25
+    r = _calc_narrow_defect(np.array([2, 5, 9, 9, 8, 5, 1], dtype="f8"))
+    assert r <= 0.34
+
+
+def test_narrow_defect_short_zero_nonfinite():
+    from workflows.single_work import _calc_narrow_defect
+    assert _calc_narrow_defect(np.array([1, 2], dtype="f8")) == 0.0
+    assert _calc_narrow_defect(np.array([0, 0, 0], dtype="f8")) == 0.0
+    assert _calc_narrow_defect(np.array([1, np.inf, 1], dtype="f8")) == 0.0

@@ -1187,6 +1187,27 @@ def _calc_shape_irregularity(intensity: np.ndarray) -> float:
     return (lv + rv) / max(1, len(intensity) - 1)
 
 
+def _calc_narrow_defect(intensity: np.ndarray) -> float:
+    """1 / support, where support = #cycles with intensity >= 0.5*max.
+
+    Approximates inverse FWHM-in-cycles. higher=worse: a single-cycle
+    noise spike (support=1) -> 1.0; a broad chromatographic peak -> low.
+    A spike scores ~0 on base_to_apex and 1.0 on the old monotonicity, so
+    this is the dedicated penalty that catches it.
+
+    Returns 0.0 for empty / short (n<3) / non-finite / all-zero XIC.
+    """
+    if len(intensity) < 3:
+        return 0.0
+    if not np.all(np.isfinite(intensity)):
+        return 0.0
+    max_v = float(np.max(intensity))
+    if max_v <= 0:
+        return 0.0
+    support = int(np.sum(intensity >= 0.5 * max_v))
+    return 1.0 / max(1, support)
+
+
 def _calc_apex_monotonicity(intensity: np.ndarray) -> float:
     """Fraction of pairs that monotonically rise to apex and fall after.
 
