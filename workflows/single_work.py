@@ -1052,25 +1052,25 @@ def extract_ion_pearson_features(ions_pearsons: []) -> dict:
     }
 
 
-def extract_ion_numeric_features(values: list, prefix: str) -> dict:
+def extract_ion_numeric_features(
+    values: list, prefix: str, stats: tuple = ("mean", "p50", "std", "max")
+) -> dict:
     """
-    对碎片级数值列表（如 apex_delta、mz_err、cycle_offset）计算均值、
-    中位数、标准差和最大值。清除 NaN/Inf 值后统计。
+    对碎片级数值列表（如 apex_delta、mz_err、cycle_offset）计算指定统计量。
+    清除 NaN/Inf 值后统计。stats 默认四项 (mean/p50/std/max)；缺陷类指标可传
+    ("mean","max") 只取均值与最差碎片，以控制列数。
     """
     clean_vals = [v for v in values if not np.isnan(v) and np.isfinite(v)]
-    if len(clean_vals) == 0:
-        return {
-            f"{prefix}_mean": 0.0,
-            f"{prefix}_p50": 0.0,
-            f"{prefix}_std": 0.0,
-            f"{prefix}_max": 0.0,
-        }
-    return {
-        f"{prefix}_mean": float(np.mean(clean_vals)),
-        f"{prefix}_p50": float(np.median(clean_vals)),
-        f"{prefix}_std": float(np.std(clean_vals)),
-        f"{prefix}_max": float(np.max(clean_vals)),
+    funcs = {
+        "mean": lambda a: float(np.mean(a)),
+        "p50": lambda a: float(np.median(a)),
+        "std": lambda a: float(np.std(a)),
+        "max": lambda a: float(np.max(a)),
     }
+    if len(clean_vals) == 0:
+        return {f"{prefix}_{s}": 0.0 for s in stats}
+    arr = np.asarray(clean_vals, dtype="f8")
+    return {f"{prefix}_{s}": funcs[s](arr) for s in stats}
 
 
 def _calc_fwhm(rt: np.ndarray, intensity: np.ndarray) -> float:

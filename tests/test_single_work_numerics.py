@@ -793,3 +793,24 @@ def test_centering_defect_empty_is_zero():
     from workflows.single_work import _calc_centering_defect
     xic = _make_xic(cycles=[], rts=[], intensities=[])
     assert _calc_centering_defect(xic, center_rt=0.0) == 0.0
+
+
+def test_extract_ion_numeric_features_stats_subset():
+    from workflows.single_work import extract_ion_numeric_features
+    out = extract_ion_numeric_features(
+        [0.1, 0.5, 0.3, 0.9], "demo", stats=("mean", "max"))
+    assert set(out.keys()) == {"demo_mean", "demo_max"}
+    assert abs(out["demo_max"] - 0.9) < 1e-9
+
+
+def test_extract_ion_numeric_features_stats_subset_empty():
+    from workflows.single_work import extract_ion_numeric_features
+    out = extract_ion_numeric_features([], "demo", stats=("mean", "max"))
+    assert out == {"demo_mean": 0.0, "demo_max": 0.0}
+
+
+def test_extract_ion_numeric_features_default_still_four():
+    from workflows.single_work import extract_ion_numeric_features
+    out = extract_ion_numeric_features([1.0, 2.0, 3.0], "demo")
+    assert set(out.keys()) == {
+        "demo_mean", "demo_p50", "demo_std", "demo_max"}
