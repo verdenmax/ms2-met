@@ -499,3 +499,51 @@ def test_single_and_multi_emit_same_precursor_shape_defect_keys():
     # fragment aggregates present (mean+max), monotonicity aggregate gone
     assert "all_heavy_centering_defect_max" in sf
     assert "all_apex_monotonicity_mean" not in sf
+
+
+def test_shape_defect_cols_are_finite_not_nan():
+    """所有新缺陷列在真实 stub 路径下必须是有限值（非 NaN/Inf）。"""
+    import numpy as np
+    from workflows.single_work import single_pair_work, multi_batch_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=False)
+    cfg = _minimal_config()
+    new_cols = [
+        "precursor_light_centering_defect", "precursor_heavy_centering_defect",
+        "precursor_light_shape_irregularity",
+        "precursor_heavy_shape_irregularity",
+        "precursor_light_base_to_apex_ratio", "precursor_light_n_peaks",
+        "precursor_light_smoothness", "precursor_light_narrow_defect",
+        "precursor_heavy_narrow_defect",
+        "all_heavy_centering_defect_max", "all_heavy_shape_irregularity_max",
+        "all_heavy_narrow_defect_max", "all_light_centering_defect_max",
+        "all_light_shape_irregularity_max", "all_light_base_to_apex_ratio_max",
+        "all_light_n_peaks_max", "all_light_smoothness_max",
+        "all_light_narrow_defect_max",
+    ]
+    for feats in (single_pair_work(psm, dia, cfg),
+                  multi_batch_work(psm, dia, psm, dia, cfg)):
+        for c in new_cols:
+            assert c in feats, f"missing {c}"
+            v = feats[c]
+            assert np.isfinite(v), f"{c} non-finite: {v}"
+
+
+def test_light_fragment_shape_off_drops_light_fragment_cols():
+    """开关 off 时 all_light_* 碎片列消失，母离子轻标列仍在。"""
+    import configparser
+    from workflows.single_work import single_pair_work
+    psm = _FakePSM()
+    dia = _FakeDIA(force_empty=False)
+    cfg = configparser.ConfigParser()
+    cfg.read_dict({"general": {
+        "mass_tol_ppm": "20", "xic_cycle_window": "5",
+        "light_fragment_shape": "false"}})
+    feats = single_pair_work(psm, dia, cfg)
+    assert not any(k.startswith("all_light_") and
+                   ("centering_defect" in k or "shape_irregularity" in k or
+                    "narrow_defect" in k or "base_to_apex" in k or
+                    "_n_peaks_" in k or "smoothness" in k)
+                   for k in feats), "light fragment shape cols should be gone"
+    assert "precursor_light_centering_defect" in feats  # precursor unaffected
+    assert "all_heavy_centering_defect_max" in feats     # heavy unaffected
