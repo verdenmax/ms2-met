@@ -685,14 +685,17 @@ def test_multi_batch_work_emits_R4_precursor_keys_in_empty_xic_branch():
 
     R4_PRECURSOR_KEYS = {
         "precursor_base_to_apex_ratio",
-        "precursor_apex_monotonicity",
+        "precursor_heavy_shape_irregularity",
         "precursor_n_peaks",
         "precursor_smoothness",
+        "precursor_light_centering_defect",
+        "precursor_heavy_narrow_defect",
     }
     missing = R4_PRECURSOR_KEYS - set(features.keys())
     assert not missing, (
         f"multi_batch_work missing R4 precursor keys {missing} (I-F1). "
         f"Schema drift with single_pair_work — concat will produce NaN columns.")
+    assert "precursor_apex_monotonicity" not in features
 
 
 def test_robust_apex_idx_single_peak():

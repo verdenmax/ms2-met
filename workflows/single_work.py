@@ -55,6 +55,8 @@ def multi_batch_work(
     # 从配置中获得 窗口大小
     xic_cycle_window = config[ConfigKeys.GENERAL].getint(
         ConfigKeys.XIC_CYCLE_WINDOW, fallback=3)
+    light_fragment_shape = config[ConfigKeys.GENERAL].getboolean(
+        ConfigKeys.LIGHT_FRAGMENT_SHAPE, fallback=True)
 
     light_xic = dia_data1.xic_peaks_extreact(
         psm1._rt, xic_cycle_window,
@@ -94,7 +96,7 @@ def multi_batch_work(
         features["precursor_heavy_apex_cycle_offset"] = 0
         features["precursor_heavy_apex_cycle_offset_signed"] = 0
         features["precursor_base_to_apex_ratio"] = 0.0
-        features["precursor_apex_monotonicity"] = 0.0
+        features.update(_empty_precursor_shape_cols())
         features["precursor_n_peaks"] = 0
         features["precursor_smoothness"] = 0.0
         features["precursor_xic_empty"] = 1
@@ -124,8 +126,7 @@ def multi_batch_work(
             precursor_score["heavy_apex_cycle_offset_signed"])
         features["precursor_base_to_apex_ratio"] = (
             precursor_score["base_to_apex_ratio"])
-        features["precursor_apex_monotonicity"] = (
-            precursor_score["apex_monotonicity"])
+        features.update(_precursor_shape_cols(precursor_score))
         features["precursor_n_peaks"] = precursor_score["n_peaks"]
         features["precursor_smoothness"] = precursor_score["smoothness"]
         features["precursor_xic_empty"] = 0
@@ -195,7 +196,7 @@ def multi_batch_work(
     fragment_heavy_cycle_offsets_signed = []
     fragment_hl_ratios = {"all": [], "b": [], "y": []}
     fragment_base_to_apex_ratios = []
-    fragment_apex_monotonicities = []
+    frag_shape = _new_fragment_shape_acc(light_fragment_shape)
     fragment_n_peaks_list = []
     fragment_smoothnesses = []
     fragment_xic_empty_count = 0
@@ -262,7 +263,7 @@ def multi_batch_work(
             fragment_heavy_cycle_offsets.append(0)
             fragment_heavy_cycle_offsets_signed.append(0)
             fragment_base_to_apex_ratios.append(0.0)
-            fragment_apex_monotonicities.append(0.0)
+            _append_empty_fragment_shape(frag_shape)
             fragment_n_peaks_list.append(0)
             fragment_smoothnesses.append(0.0)
             # fragment_hl_ratios intentionally NOT appended — by design
@@ -309,8 +310,7 @@ def multi_batch_work(
                 float(ion_score["intensity_ratio"]))
         fragment_base_to_apex_ratios.append(
             ion_score["base_to_apex_ratio"])
-        fragment_apex_monotonicities.append(
-            ion_score["apex_monotonicity"])
+        _append_fragment_shape(frag_shape, ion_score)
         fragment_n_peaks_list.append(ion_score["n_peaks"])
         fragment_smoothnesses.append(ion_score["smoothness"])
 
@@ -399,8 +399,7 @@ def multi_batch_work(
     # 碎片级 peak-likeness 汇总（heavy XIC × {mean,p50,std,max}）
     features.update(extract_ion_numeric_features(
         fragment_base_to_apex_ratios, "all_base_to_apex_ratio"))
-    features.update(extract_ion_numeric_features(
-        fragment_apex_monotonicities, "all_apex_monotonicity"))
+    features.update(_fragment_shape_aggregates(frag_shape))
     features.update(extract_ion_numeric_features(
         fragment_n_peaks_list, "all_n_peaks"))
     features.update(extract_ion_numeric_features(
