@@ -1,7 +1,7 @@
 """Contract test: resolve_feature_cols against the REAL features.csv header.
 
 Existing tests use small synthetic CSVs; this pins the actual stage-2 -> stage-3
-column contract (155 cols -> 142 features) using a committed fixture mirroring
+column contract (177 cols -> 164 features) using a committed fixture mirroring
 runs_new/baseline_2da_clean/features.csv. It would catch schema drift (e.g. the
 runs/ 131-col vs runs_new/ 155-col divergence) and accidental label leakage.
 """
@@ -17,12 +17,12 @@ if _SPEC_SRC not in sys.path:
 from feature_cols import resolve_feature_cols, META_COLUMNS, EXCLUDED_EXTRA  # noqa: E402
 
 _FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "fixtures", "features_header_155.csv")
+                        "fixtures", "features_header_177.csv")
 
 
-def test_real_header_resolves_to_142_features():
+def test_real_header_resolves_to_164_features():
     feats = resolve_feature_cols([], [_FIXTURE], "label")
-    assert len(feats) == 142
+    assert len(feats) == 164
 
 
 def test_no_label_leakage():
