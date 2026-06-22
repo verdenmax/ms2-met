@@ -31,6 +31,10 @@ class ConfigKeys(metaclass=ConstantsClass):
     RESULT_FILE = "result_file"
     FEATURE_TYPE = "feature_type"
     RANDOM_SEED = "random_seed"
+    # 轻标【碎片】峰形特征开关（默认 on）。off 时跳过 all_light_* 碎片缺陷列，
+    # 便于消融。母离子轻标形状不受此开关影响。见
+    # docs/superpowers/specs/2026-06-20-xic-apex-shape-penalty-design.md
+    LIGHT_FRAGMENT_SHAPE = "light_fragment_shape"
     # Drop PSMs whose heavy precursor fell outside the acquisition range
     # (heavy_out_of_range == 1) for BOTH classes; default on. See
     # workflows/feature_postfilter.py.
