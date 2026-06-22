@@ -466,65 +466,6 @@ def test_calc_base_to_apex_ratio_edge_cases():
     assert _calc_base_to_apex_ratio(np.array([0, 0, 0], dtype="f8")) == 0.0
 
 
-def test_calc_apex_monotonicity_perfect_peak_returns_one():
-    """Strictly monotonic up to apex, then strictly down: monotonicity = 1.0."""
-    from workflows.single_work import _calc_apex_monotonicity
-    intensity = np.array([1, 5, 50, 100, 50, 5, 1], dtype="f8")
-    # All 6 diffs go in the "right" direction -> 0 violations -> 1.0
-    assert _calc_apex_monotonicity(intensity) == 1.0
-
-
-def test_calc_apex_monotonicity_zigzag_returns_low():
-    """Zigzag (multiple direction reversals) returns low monotonicity."""
-    from workflows.single_work import _calc_apex_monotonicity
-    intensity = np.array([10, 50, 20, 100, 30, 60, 5], dtype="f8")
-    # apex at idx 3, left=[10,50,20,100] diffs [40,-30,80] -> 1 viol (50->20)
-    # right=[100,30,60,5] diffs [-70,30,-55] -> 1 viol (30->60)
-    # total_pairs = 6, violations = 2, monotonicity = 1 - 2/6 ~= 0.667
-    result = _calc_apex_monotonicity(intensity)
-    assert 0.5 < result < 0.75
-
-
-def test_calc_apex_monotonicity_apex_at_edge():
-    """Apex at index 0 or last index: function handles boundary safely."""
-    from workflows.single_work import _calc_apex_monotonicity
-    # Apex at idx 0: left=[100], right=[100,50,10] diffs [-50,-40] all <=0 -> 0 viol
-    result_left = _calc_apex_monotonicity(
-        np.array([100, 50, 10], dtype="f8"))
-    assert result_left == 1.0
-    # Apex at last idx: left=[10,50,100] diffs [40,50] -> 0 viol, right=[100] -> 0 pairs
-    result_right = _calc_apex_monotonicity(
-        np.array([10, 50, 100], dtype="f8"))
-    assert result_right == 1.0
-    # Edge: empty / short
-    assert _calc_apex_monotonicity(np.array([], dtype="f8")) == 0.0
-    assert _calc_apex_monotonicity(np.array([1, 2], dtype="f8")) == 0.0
-
-
-def test_calc_apex_monotonicity_nan_returns_zero():
-    """NaN in XIC must return 0.0 (defensive), NOT silently return 1.0.
-
-    Without a finiteness guard, np.argmax(NaN-containing) returns the
-    NaN index and np.diff comparisons against NaN are always False,
-    making garbage input look like a perfect peak. This is exactly the
-    wrong direction for a peak-likeness metric.
-    """
-    import math
-    from workflows.single_work import _calc_apex_monotonicity
-    # NaN in middle
-    assert _calc_apex_monotonicity(
-        np.array([1, 5, np.nan, 100, 50, 5, 1], dtype="f8")) == 0.0
-    # All-NaN
-    assert _calc_apex_monotonicity(
-        np.array([np.nan, np.nan, np.nan], dtype="f8")) == 0.0
-    # NaN at edge
-    assert _calc_apex_monotonicity(
-        np.array([np.nan, 50, 100, 50, 10], dtype="f8")) == 0.0
-    # Inf also non-finite
-    assert _calc_apex_monotonicity(
-        np.array([1, 5, np.inf, 5, 1], dtype="f8")) == 0.0
-
-
 def test_calc_n_peaks_single_peak_returns_one():
     """Classic unimodal peak: find_peaks returns 1 local maximum."""
     from workflows.single_work import _calc_n_peaks
@@ -617,8 +558,8 @@ def test_calc_xic_score_emits_peak_likeness_fields():
     result = calc_xic_score(light, heavy)
     assert "base_to_apex_ratio" in result
     assert result["base_to_apex_ratio"] < 0.05
-    assert "apex_monotonicity" in result
-    assert result["apex_monotonicity"] == 1.0
+    assert "heavy_shape_irregularity" in result
+    assert result["heavy_shape_irregularity"] == 0.0
     assert "n_peaks" in result
     assert result["n_peaks"] == 1
     assert "smoothness" in result
@@ -630,7 +571,7 @@ def test_default_xic_score_has_peak_likeness_zero_fields():
     from workflows.single_work import _default_xic_score
     d = _default_xic_score()
     assert d["base_to_apex_ratio"] == 0.0
-    assert d["apex_monotonicity"] == 0.0
+    assert d["heavy_shape_irregularity"] == 0.0
     assert d["n_peaks"] == 0
     assert d["smoothness"] == 0.0
 

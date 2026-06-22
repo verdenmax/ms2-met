@@ -1206,35 +1206,6 @@ def _calc_narrow_defect(intensity: np.ndarray) -> float:
     return 1.0 / max(1, support)
 
 
-def _calc_apex_monotonicity(intensity: np.ndarray) -> float:
-    """Fraction of pairs that monotonically rise to apex and fall after.
-
-    Left of apex should be non-decreasing; right of apex should be
-    non-increasing. Return = 1 - (violations / total_pairs) in [0, 1].
-    True peaks -> ~1; zigzag / noise -> low.
-
-    Returns 0.0 for empty / short XIC, or if any value is non-finite
-    (NaN would silently inflate the score because nan compares False
-    against any number, so np.diff(...) < 0 yields False at NaN gaps).
-
-    Note: right slice includes apex (intensity[apex_idx:]) so when apex
-    is at the leftmost index there is still a meaningful right slice.
-    """
-    if len(intensity) < 3:
-        return 0.0
-    if not np.all(np.isfinite(intensity)):
-        return 0.0
-    apex_idx = int(np.argmax(intensity))
-    left = intensity[:apex_idx + 1]
-    right = intensity[apex_idx:]
-    if len(left) < 2 and len(right) < 2:
-        return 0.0
-    left_viol = int(np.sum(np.diff(left) < 0)) if len(left) >= 2 else 0
-    right_viol = int(np.sum(np.diff(right) > 0)) if len(right) >= 2 else 0
-    total_pairs = max(len(intensity) - 1, 1)
-    return 1.0 - (left_viol + right_viol) / total_pairs
-
-
 def _calc_n_peaks(
     intensity: np.ndarray, prominence_frac: float = 0.3
 ) -> int:
@@ -1385,7 +1356,6 @@ def _default_xic_score() -> dict:
         "heavy_apex_cycle_offset": 0,
         "heavy_apex_cycle_offset_signed": 0,
         "base_to_apex_ratio": 0.0,
-        "apex_monotonicity": 0.0,
         "n_peaks": 0,
         "smoothness": 0.0,
         "light_centering_defect": 0.0,
@@ -1455,13 +1425,11 @@ def calc_xic_score(
     peak_width_ratio = (heavy_fwhm / light_fwhm
                         if light_fwhm > 0 else 0.0)
     base_to_apex_ratio = _calc_base_to_apex_ratio(heavy_xic["intensity"])
-    apex_monotonicity = _calc_apex_monotonicity(heavy_xic["intensity"])
     n_peaks = _calc_n_peaks(heavy_xic["intensity"])
     smoothness = _calc_smoothness(heavy_xic["intensity"])
     # P-AS1: light-channel peak shape + edge/centering/spike defects.
     # All "higher = worse" so the fragment _max aggregate surfaces the
-    # worst fragment. apex_monotonicity (heavy, good=high) is kept for now
-    # and removed in a later cleanup once consumers migrate.
+    # worst fragment.
     heavy_shape_irregularity = _calc_shape_irregularity(heavy_xic["intensity"])
     light_shape_irregularity = _calc_shape_irregularity(light_xic["intensity"])
     light_base_to_apex_ratio = _calc_base_to_apex_ratio(light_xic["intensity"])
@@ -1506,7 +1474,6 @@ def calc_xic_score(
         result["peak_width_ratio"] = peak_width_ratio
         result["peak_symmetry"] = peak_symmetry
         result["base_to_apex_ratio"] = base_to_apex_ratio
-        result["apex_monotonicity"] = apex_monotonicity
         result["n_peaks"] = n_peaks
         result["smoothness"] = smoothness
         result.update(_shape_defects)
@@ -1583,7 +1550,6 @@ def calc_xic_score(
         "heavy_apex_cycle_offset": h_abs,
         "heavy_apex_cycle_offset_signed": h_sig,
         "base_to_apex_ratio": base_to_apex_ratio,
-        "apex_monotonicity": apex_monotonicity,
         "n_peaks": n_peaks,
         "smoothness": smoothness,
     }
