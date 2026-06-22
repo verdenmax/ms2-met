@@ -772,3 +772,24 @@ def test_narrow_defect_short_zero_nonfinite():
     assert _calc_narrow_defect(np.array([1, 2], dtype="f8")) == 0.0
     assert _calc_narrow_defect(np.array([0, 0, 0], dtype="f8")) == 0.0
     assert _calc_narrow_defect(np.array([1, np.inf, 1], dtype="f8")) == 0.0
+
+
+def test_centering_defect_apex_at_center_is_zero():
+    from workflows.single_work import _calc_centering_defect
+    xic = _make_xic(cycles=[5, 6, 7, 8, 9], rts=[10, 11, 12, 13, 14],
+                    intensities=[1, 5, 100, 5, 1])  # apex at center rt=12
+    assert _calc_centering_defect(xic, center_rt=12.0) == 0.0
+
+
+def test_centering_defect_apex_at_edge_near_one():
+    from workflows.single_work import _calc_centering_defect
+    # apex at last cycle (rt=14); center rt=12 -> offset 2, half=(5-1)/2=2 -> 1.0
+    xic = _make_xic(cycles=[5, 6, 7, 8, 9], rts=[10, 11, 12, 13, 14],
+                    intensities=[1, 1, 5, 1, 100])
+    assert _calc_centering_defect(xic, center_rt=12.0) == 1.0
+
+
+def test_centering_defect_empty_is_zero():
+    from workflows.single_work import _calc_centering_defect
+    xic = _make_xic(cycles=[], rts=[], intensities=[])
+    assert _calc_centering_defect(xic, center_rt=0.0) == 0.0

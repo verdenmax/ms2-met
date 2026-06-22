@@ -1320,6 +1320,26 @@ def _calc_cycle_offset(xic: np.ndarray, center_rt: float) -> tuple[int, int]:
     return abs(signed), signed
 
 
+def _calc_centering_defect(xic: np.ndarray, center_rt: float) -> float:
+    """|apex cycle offset| normalized by half the valid-cycle span.
+
+    higher=worse, in [0, 1]: 0 = apex sits at the expected (center_rt)
+    cycle; ~1 = apex sits at the window edge (e.g. an edge ramp whose true
+    peak is clipped / outside the window). Reuses _calc_cycle_offset so the
+    apex/center definition stays consistent with the existing offset cols.
+
+    Returns 0.0 for empty XIC or zero offset.
+    """
+    if len(xic) == 0:
+        return 0.0
+    abs_off, _ = _calc_cycle_offset(xic, center_rt)
+    if abs_off == 0:
+        return 0.0
+    valid = int(np.sum(xic["cycle_idx"] >= 0))
+    half = max(1.0, (valid - 1) / 2.0)
+    return float(min(1.0, abs_off / half))
+
+
 def _calc_hl_ratio_consistency(ratios: list) -> tuple[float, float]:
     """Compute consistency of light/heavy intensity ratios across fragments.
 
