@@ -853,6 +853,7 @@ all-neg20: 2th-neg20 5th-neg20 normal-neg20
 
 .PHONY: train-exp1 train-exp2 clean-train
 .PHONY: train-legacy-all train-clean-all train-neg05-all train-neg10-all train-neg15-all train-neg20-all train-all
+.PHONY: train-cv-2da
 
 # features.csv 规则：缺失时自动跑对应特征提取；并声明上游依赖
 # （baseline config.ini + extract ini + dataset JSON），任一比 features.csv 新
@@ -994,6 +995,16 @@ train-clean-all: $(CLEAN_FEATURES)
 		$(PY) tools/spec_trainer/src/main.py --config $$yaml --name $$name || exit 1; \
 	done
 	@echo "[done] train-clean-all finished (6 experiments)"
+
+# 5 折分组 CV + 折间 ensemble + 标签审计（生产 LightGBM；见
+# docs/superpowers/specs/2026-06-28-cv-ensemble-label-audit-design.md）
+train-cv-2da: runs/baseline_2da_clean/features.csv
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results
+	$(PY) tools/spec_trainer/src/cv_train.py \
+	    --config tools/spec_trainer/config/cv_in_2da_clean.yaml \
+	    --name cv_in_2da_clean \
+	    --logpath runs/spec_trainer/cv_spec.log
+	@echo "[done] CV → runs/spec_trainer/results/cv_in_2da_clean.cv.json (+ .suspects.csv)"
 
 train-neg05-all: $(NEG05_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
