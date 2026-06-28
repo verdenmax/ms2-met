@@ -52,3 +52,12 @@ def test_to_cv_config_does_not_mutate_source():
     before = copy.deepcopy(src)
     to_cv_config(src, "in_2da_clean")
     assert src == before                                                   # deepcopy
+
+
+def test_to_cv_config_rejects_bad_shape():
+    import pytest
+    from gen_cv_configs import to_cv_config
+    with pytest.raises(ValueError):
+        to_cv_config(None, "x")                      # not a dict
+    with pytest.raises(ValueError):
+        to_cv_config({"data": {}}, "x")              # missing 'training'
