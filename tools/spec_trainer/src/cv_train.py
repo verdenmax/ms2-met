@@ -40,3 +40,56 @@ def _build_parser():
     p.add_argument("--name", required=True)
     p.add_argument("--logpath", default="./cv_spec.log")
     return p
+
+
+def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
+    """Train one model per fold, collect leak-free OOF preds, save fold models.
+
+    Returns (oof_proba, fold_metrics, model_paths). lightgbm imported here.
+    """
+    from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import GroupShuffleSplit, StratifiedShuffleSplit
+    from models.model_manager import ModelManager
+
+    n_folds = int(cfg["training"].get("cv_folds", 5))
+    seed = int(cfg["training"].get("cv_seed", 42))
+    valid_size = float(cfg["training"].get("valid_size", 0.15))
+    grp_vals = None if groups is None else groups.values
+
+    splits = make_cv_splits(y.values, grp_vals, n_folds=n_folds, seed=seed)
+    oof = np.full(len(y), np.nan)
+    fold_metrics, model_paths = [], []
+
+    for k, (tr_idx, te_idx) in enumerate(splits):
+        # 折内早停验证集（分组，避免污染 OOF 折）
+        if groups is not None:
+            inner = GroupShuffleSplit(n_splits=1, test_size=valid_size,
+                                      random_state=seed)
+            loc_tr, loc_val = next(inner.split(
+                X.iloc[tr_idx], y.iloc[tr_idx], groups.iloc[tr_idx]))
+        else:
+            inner = StratifiedShuffleSplit(n_splits=1, test_size=valid_size,
+                                           random_state=seed)
+            loc_tr, loc_val = next(inner.split(X.iloc[tr_idx], y.iloc[tr_idx]))
+        tr2, val = tr_idx[loc_tr], tr_idx[loc_val]
+
+        model = ModelManager.create(cfg, feature_names=feature_cols)
+        model.fit(X.iloc[tr2], y.iloc[tr2], X.iloc[val], y.iloc[val])
+        oof[te_idx] = model.predict_proba(X.iloc[te_idx])
+
+        mp = f"{model_prefix}.fold{k}.txt"
+        os.makedirs(os.path.dirname(mp) or ".", exist_ok=True)
+        model.save(mp)
+        model_paths.append(mp)
+
+        te_y, te_p = y.iloc[te_idx].values, oof[te_idx]
+        if len(set(te_y.tolist())) < 2:               # 该折单类 → auc 无定义
+            fold_metrics.append({"fold": k, "auc": float("nan"),
+                                 "fnr_at_fpr5": float("nan")})
+        else:
+            fold_metrics.append({"fold": k,
+                                 "auc": float(roc_auc_score(te_y, te_p)),
+                                 "fnr_at_fpr5": float(fnr_at_fpr5(te_y, te_p))})
+
+    assert not np.isnan(oof).any(), "OOF has NaN — some sample never predicted"
+    return oof, fold_metrics, model_paths

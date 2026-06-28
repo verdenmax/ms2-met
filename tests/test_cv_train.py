@@ -26,3 +26,45 @@ def test_read_dataframe_concat(tmp_path):
     pd.DataFrame({"x": [3]}).to_csv(b, index=False)
     df = cv_train.read_dataframe([str(a), str(b)])
     assert list(df["x"]) == [1, 2, 3]
+
+
+def _toy_df(n_groups=40, per=5, seed=0):
+    """40 个肽段(group)×5 行；前 70% 组为正，all_p75 含信号。"""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for g in range(n_groups):
+        lab = 1 if g < int(n_groups * 0.7) else 0
+        for _ in range(per):
+            rows.append({"sequence": f"PEP{g}", "charge": 2, "label": lab,
+                         "all_p75": rng.normal(lab, 1.0),           # 有信息
+                         "precursor_pearson": rng.normal(0, 1.0)})  # 噪声
+    return pd.DataFrame(rows)
+
+
+def _toy_cfg(tmp_path):
+    return {
+        "data": {"feature_cols": [], "target_col": "label", "group_col": "sequence"},
+        "model": {"type": "lightgbm", "params": {
+            "objective": "binary", "num_leaves": 7, "learning_rate": 0.1,
+            "min_data_in_leaf": 5, "verbose": -1}},
+        "training": {"num_boost_round": 40, "early_stopping_rounds": 15,
+                     "cv_folds": 5, "cv_seed": 42, "valid_size": 0.25},
+        "audit": {"suspect_threshold": 0.5, "suspect_top_n": 50},
+        "output": {"model_path": str(tmp_path / "m.txt"),
+                   "result_path": str(tmp_path / "r.cv.json")},
+    }
+
+
+@requires_lgb
+def test_assemble_oof_no_nan_and_saves_models(tmp_path):
+    import cv_train
+    df = _toy_df()
+    csv = tmp_path / "feat.csv"; df.to_csv(csv, index=False)
+    feature_cols = resolve_feature_cols(None, [str(csv)], "label")
+    X = df[feature_cols]; y = df["label"]; groups = df["sequence"]
+    cfg = _toy_cfg(tmp_path)
+    oof, fold_metrics, model_paths = cv_train.assemble_oof(
+        df, X, y, groups, cfg, feature_cols, str(tmp_path / "m"))
+    assert not np.isnan(oof).any()                       # 每行恰好预测一次
+    assert len(fold_metrics) == 5 and "auc" in fold_metrics[0]
+    assert len(model_paths) == 5 and all(os.path.exists(p) for p in model_paths)

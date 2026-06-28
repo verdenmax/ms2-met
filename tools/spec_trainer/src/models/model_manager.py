@@ -1,10 +1,10 @@
 from .base_model import BaseModel
 from .lgb_model import LGBModel
-from .xgb_model import XGBModel
 from .sklearn_lr_model import SklearnLRModel
 from .sklearn_rf_model import SklearnRFModel
 import logging
-# 未来可添加：from .xgb_model import XGBModel, etc.
+# xgboost 是可选后端：延迟到 'xgboost' 分支内导入，避免未安装 xgboost 时
+# 整个 ModelManager（及 lightgbm 路径）无法导入。
 
 
 class ModelManager:
@@ -39,6 +39,7 @@ class ModelManager:
                 feature_names=feature_names,
             )
         elif model_type == 'xgboost':
+            from .xgb_model import XGBModel
             return XGBModel(
                 model_params=config['model']['params'],
                 training_params=config['training'],
