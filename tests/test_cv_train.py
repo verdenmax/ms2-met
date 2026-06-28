@@ -187,3 +187,25 @@ def test_evaluate_cross_test(tmp_path):
         model_paths, Xb, _np.ones(len(dfB)))
     assert _np.isnan(pf1[0]["auc"]) and _np.isnan(agg1["test_auc_mean"])
     assert _np.isfinite(ens1).all()
+
+
+@requires_lgb
+def test_main_cross_test_mode(tmp_path):
+    import cv_train, yaml
+    dfA = _toy_df(seed=0)                # 训练数据集 A
+    dfB = _toy_df(seed=7)               # 外部测试数据集 B
+    a = tmp_path / "a.csv"; dfA.to_csv(a, index=False)
+    b = tmp_path / "b.csv"; dfB.to_csv(b, index=False)
+    cfg = _toy_cfg(tmp_path)
+    cfg["data"]["train_files"] = [str(a)]
+    cfg["data"]["test_files"] = [str(b)]            # 触发 cross_test
+    cfg_path = tmp_path / "cfg.yaml"; cfg_path.write_text(yaml.safe_dump(cfg))
+    summary = cv_train.main(["--config", str(cfg_path), "--name", "xt",
+                             "--logpath", str(tmp_path / "log.txt")])
+    res = json.loads((tmp_path / "r.cv.json").read_text())
+    assert res["mode"] == "cross_test"
+    assert len(res["test_per_fold"]) == 5
+    assert "test_auc_mean" in res and "train_oof_auc" in res
+    assert res["n_pos"] == int((dfB["label"] == 1).sum())   # 计数来自 B
+    assert (tmp_path / "r.cv.suspects.csv").exists()
+    assert summary["auc"] == res["auc"]

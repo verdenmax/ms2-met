@@ -142,37 +142,64 @@ def main(argv=None):
     oof, fold_metrics, model_paths = assemble_oof(
         df, X, y, groups, cfg, feature_cols, model_prefix)
 
-    summary = evaluate_oof(y, oof)
-    aucs = [m["auc"] for m in fold_metrics if not np.isnan(m["auc"])]
-    # FNR@FPR5 fold mean/std — exposing this metric's cross-fold variance is the
-    # feature's stated motivation (single-split variance hides real vs noise).
-    fnrs = [m["fnr_at_fpr5"] for m in fold_metrics
-            if not np.isnan(m["fnr_at_fpr5"])]
+    test_files = cfg["data"].get("test_files")
+    if test_files and set(test_files) != set(train_files):
+        # cross_test 模式：ensemble 给外部测试集打分，在外部测试集评估/审计
+        test_df = read_dataframe(test_files)
+        eval_df = test_df
+        eval_y = test_df[target_col]
+        ens_proba, test_per_fold, test_agg = evaluate_cross_test(
+            model_paths, test_df[feature_cols].values, eval_y.values)
+        eval_proba = ens_proba
+        summary = evaluate_oof(eval_y, eval_proba)
+        train_oof = evaluate_oof(y, oof)
+        summary.update({
+            "mode": "cross_test",
+            "test_per_fold": test_per_fold,
+            "train_oof_auc": train_oof["auc"],
+            "train_oof_fnr_at_fpr5": train_oof["fnr_at_fpr5"],
+            "train_fold_metrics": fold_metrics,
+        })
+        summary.update(test_agg)
+    else:
+        # in_sample 模式（行为同上一里程碑）
+        eval_df = df
+        eval_y = y
+        eval_proba = oof
+        summary = evaluate_oof(eval_y, eval_proba)
+        aucs = [m["auc"] for m in fold_metrics if not np.isnan(m["auc"])]
+        fnrs = [m["fnr_at_fpr5"] for m in fold_metrics
+                if not np.isnan(m["fnr_at_fpr5"])]
+        summary.update({
+            "mode": "in_sample",
+            "fold_metrics": fold_metrics,
+            "auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
+            "auc_std": float(np.std(aucs)) if aucs else float("nan"),
+            "fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
+            "fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
+        })
+
     summary.update({
         "cv_folds": len(fold_metrics),
-        "fold_metrics": fold_metrics,
-        "auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
-        "auc_std": float(np.std(aucs)) if aucs else float("nan"),
-        "fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
-        "fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
         "model_paths": model_paths,
-        "n_pos": int((y == 1).sum()),
-        "n_neg": int((y == 0).sum()),
+        "n_pos": int((eval_y == 1).sum()),
+        "n_neg": int((eval_y == 0).sum()),
+        "name": args.name,
     })
-    summary["name"] = args.name
     os.makedirs(os.path.dirname(result_path) or ".", exist_ok=True)
     with open(result_path, "w") as f:
         json.dump(summary, f, indent=2)
 
     audit_cfg = cfg.get("audit", {})
     susp = audit_labels(
-        df, oof, label_col=target_col,
+        eval_df, eval_proba, label_col=target_col,
         threshold=float(audit_cfg.get("suspect_threshold", 0.9)),
         top_n=int(audit_cfg.get("suspect_top_n", 200)))
     susp.to_csv(suspects_path, index=False)
 
-    logging.info("CV done: AUC=%.4f FNR@FPR5=%.4f; %d suspects -> %s",
-                 summary["auc"], summary["fnr_at_fpr5"], len(susp), suspects_path)
+    logging.info("CV(%s) done: AUC=%.4f FNR@FPR5=%.4f; %d suspects -> %s",
+                 summary["mode"], summary["auc"], summary["fnr_at_fpr5"],
+                 len(susp), suspects_path)
     return summary
 
 
