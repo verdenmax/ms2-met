@@ -1,0 +1,30 @@
+data:
+  train_files:
+    - runs/baseline_2da_clean/features.csv
+  feature_cols: []
+  target_col: label
+  group_col: sequence          # StratifiedGroupKFold 按肽段分组防泄漏
+model:
+  type: lightgbm
+  params:
+    boosting_type: gbdt
+    objective: binary
+    metric: [auc, binary_logloss]
+    num_leaves: 15
+    learning_rate: 0.02
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    min_data_in_leaf: 50
+    verbose: -1
+training:
+  num_boost_round: 1000
+  early_stopping_rounds: 200
+  cv_folds: 5
+  cv_seed: 42
+  valid_size: 0.15             # 折内早停验证集比例
+audit:
+  suspect_threshold: 0.9
+  suspect_top_n: 200
+output:
+  model_path: runs/spec_trainer/models/cv_in_2da_clean.txt   # → .fold0..4.txt
+  result_path: runs/spec_trainer/results/cv_in_2da_clean.cv.json
