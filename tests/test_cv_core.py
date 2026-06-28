@@ -41,14 +41,9 @@ def test_working_points_and_fnr_clean_separation():
 
 
 def test_working_points_matches_eval_baseline():
-    import importlib.util, numpy as np
-    # 口径 parity: 与 tools/eval_baseline.py 同输出; 无法导入则跳过
-    spec = importlib.util.find_spec("eval_baseline")
-    if spec is None:
-        import pytest
-        pytest.skip("eval_baseline not importable in this env")
+    import numpy as np, pytest
+    compute_working_points = pytest.importorskip("tools.eval_baseline").compute_working_points
     from cv_core import working_points
-    from eval_baseline import compute_working_points
     rng = np.random.default_rng(0)
     y = rng.integers(0, 2, 200)
     s = rng.random(200)
