@@ -1006,6 +1006,75 @@ train-cv-2da: runs/baseline_2da_clean/features.csv
 	    --logpath runs/spec_trainer/cv_spec.log
 	@echo "[done] CV → runs/spec_trainer/results/cv_in_2da_clean.cv.json (+ .suspects.csv)"
 
+# ---------- CV 全矩阵(in-sample + cross_test ensemble)----------
+.PHONY: train-cv-clean-all train-cv-neg05-all train-cv-neg10-all
+.PHONY: train-cv-neg15-all train-cv-neg20-all train-cv-all
+
+CV_CLEAN_YAMLS := cv_in_2da_clean cv_in_5da_clean cv_in_normal_clean \
+                  cv_cross_test_2da_clean cv_cross_test_5da_clean cv_cross_test_normal_clean
+CV_NEG05_YAMLS := $(subst _clean,_neg05,$(CV_CLEAN_YAMLS))
+CV_NEG10_YAMLS := $(subst _clean,_neg10,$(CV_CLEAN_YAMLS))
+CV_NEG15_YAMLS := $(subst _clean,_neg15,$(CV_CLEAN_YAMLS))
+CV_NEG20_YAMLS := $(subst _clean,_neg20,$(CV_CLEAN_YAMLS))
+
+train-cv-clean-all: $(CLEAN_FEATURES)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results
+	@for y in $(CV_CLEAN_YAMLS); do \
+		echo "==================== CV $$y ===================="; \
+		$(PY) tools/spec_trainer/src/cv_train.py \
+		    --config tools/spec_trainer/config/$$y.yaml --name $$y \
+		    --logpath runs/spec_trainer/cv_spec.log || exit 1; \
+	done
+	@echo "[done] train-cv-clean-all (6 CV experiments)"
+
+train-cv-neg05-all: $(NEG05_FEATURES)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results
+	@for y in $(CV_NEG05_YAMLS); do \
+		echo "==================== CV $$y ===================="; \
+		$(PY) tools/spec_trainer/src/cv_train.py \
+		    --config tools/spec_trainer/config/$$y.yaml --name $$y \
+		    --logpath runs/spec_trainer/cv_spec.log || exit 1; \
+	done
+	@echo "[done] train-cv-neg05-all (6 CV experiments)"
+
+train-cv-neg10-all: $(NEG10_FEATURES)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results
+	@for y in $(CV_NEG10_YAMLS); do \
+		echo "==================== CV $$y ===================="; \
+		$(PY) tools/spec_trainer/src/cv_train.py \
+		    --config tools/spec_trainer/config/$$y.yaml --name $$y \
+		    --logpath runs/spec_trainer/cv_spec.log || exit 1; \
+	done
+	@echo "[done] train-cv-neg10-all (6 CV experiments)"
+
+train-cv-neg15-all: $(NEG15_FEATURES)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results
+	@for y in $(CV_NEG15_YAMLS); do \
+		echo "==================== CV $$y ===================="; \
+		$(PY) tools/spec_trainer/src/cv_train.py \
+		    --config tools/spec_trainer/config/$$y.yaml --name $$y \
+		    --logpath runs/spec_trainer/cv_spec.log || exit 1; \
+	done
+	@echo "[done] train-cv-neg15-all (6 CV experiments)"
+
+train-cv-neg20-all: $(NEG20_FEATURES)
+	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results
+	@for y in $(CV_NEG20_YAMLS); do \
+		echo "==================== CV $$y ===================="; \
+		$(PY) tools/spec_trainer/src/cv_train.py \
+		    --config tools/spec_trainer/config/$$y.yaml --name $$y \
+		    --logpath runs/spec_trainer/cv_spec.log || exit 1; \
+	done
+	@echo "[done] train-cv-neg20-all (6 CV experiments)"
+
+train-cv-all:
+	$(MAKE) train-cv-clean-all
+	$(MAKE) train-cv-neg05-all
+	$(MAKE) train-cv-neg10-all
+	$(MAKE) train-cv-neg15-all
+	$(MAKE) train-cv-neg20-all
+	@echo "[done] train-cv-all finished (30 CV experiments)"
+
 train-neg05-all: $(NEG05_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
 	@for yaml in $(NEG05_YAMLS); do \
