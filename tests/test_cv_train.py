@@ -72,12 +72,15 @@ def test_assemble_oof_no_nan_and_saves_models(tmp_path):
 
 def test_inner_split_no_leak_grouped():
     import cv_train
-    n = 50
+    # te_idx occupies LOW indices, tr_idx is OFFSET high -> the local->global
+    # remap is NON-trivial: a dropped remap would return low (0..) indices that
+    # overlap te_idx and fail the disjointness assertion (gives the test teeth).
+    n = 60
     X = pd.DataFrame({"f": np.arange(n)})
-    y = pd.Series([1] * 30 + [0] * 20)
-    groups = pd.Series(np.repeat(np.arange(25), 2))   # 25 peptides x2 rows
-    tr_idx = np.arange(40)                            # train fold
-    te_idx = np.arange(40, 50)                        # held-out OOF test fold
+    y = pd.Series([1, 0] * (n // 2))                  # both classes everywhere
+    groups = pd.Series(np.repeat(np.arange(n // 2), 2))   # 30 peptides x2 rows
+    te_idx = np.arange(0, 12)                         # held-out OOF fold (low)
+    tr_idx = np.arange(12, n)                         # train fold (offset high)
     tr2, val = cv_train._inner_split(X, y, groups, tr_idx, valid_size=0.25, seed=42)
     assert set(val).issubset(set(tr_idx))             # val drawn only from train
     assert set(tr2).issubset(set(tr_idx))
@@ -85,18 +88,19 @@ def test_inner_split_no_leak_grouped():
     assert set(tr2).isdisjoint(set(te_idx))
     assert set(tr2).isdisjoint(set(val))              # train/val partition
     assert len(tr2) + len(val) == len(tr_idx)
-    # grouped: no peptide spans tr2/val
-    assert set(groups.iloc[tr2]).isdisjoint(set(groups.iloc[val]))
+    assert set(groups.iloc[tr2]).isdisjoint(set(groups.iloc[val]))   # no peptide spans
 
 
 def test_inner_split_no_groups_branch():
     import cv_train
-    n = 40
+    n = 50
     X = pd.DataFrame({"f": np.arange(n)})
-    y = pd.Series([1] * 28 + [0] * 12)
-    tr_idx = np.arange(32)
-    te_idx = np.arange(32, 40)
+    y = pd.Series([1, 0] * (n // 2))                  # both classes for stratify
+    te_idx = np.arange(0, 10)                         # low
+    tr_idx = np.arange(10, n)                         # offset high
     tr2, val = cv_train._inner_split(X, y, None, tr_idx, valid_size=0.25, seed=1)
-    assert set(val).issubset(set(tr_idx)) and set(val).isdisjoint(set(te_idx))
+    assert set(val).issubset(set(tr_idx))
+    assert set(val).isdisjoint(set(te_idx))           # ** no leak **
+    assert set(tr2).isdisjoint(set(te_idx))
     assert set(tr2).isdisjoint(set(val))
     assert len(tr2) + len(val) == len(tr_idx)
