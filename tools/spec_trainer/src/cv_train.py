@@ -169,5 +169,17 @@ def main(argv=None):
     return summary
 
 
+def predict_ensemble(model_paths, X):
+    """Ensemble score for NEW data = mean of the per-fold models' predictions.
+
+    X: numpy array or DataFrame with the same feature columns/order used in
+    training (lightgbm matches by position). Used to score external data
+    (e.g. cross_test, production) — NOT for in-sample eval (use OOF for that).
+    """
+    import lightgbm as lgb
+    probas = [lgb.Booster(model_file=p).predict(X) for p in model_paths]
+    return average_proba(probas)
+
+
 if __name__ == "__main__":
     main()

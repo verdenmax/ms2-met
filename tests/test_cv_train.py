@@ -129,3 +129,18 @@ def test_main_writes_outputs(tmp_path):
     assert (tmp_path / "r.cv.suspects.csv").exists()     # 派生路径
     assert summary["auc"] == res["auc"]
     assert res["name"] == "toy"
+
+
+@requires_lgb
+def test_predict_ensemble_in_range(tmp_path):
+    import cv_train
+    df = _toy_df()
+    csv = tmp_path / "feat.csv"; df.to_csv(csv, index=False)
+    feature_cols = resolve_feature_cols(None, [str(csv)], "label")
+    X = df[feature_cols]; y = df["label"]; groups = df["sequence"]
+    cfg = _toy_cfg(tmp_path)
+    _, _, model_paths = cv_train.assemble_oof(
+        df, X, y, groups, cfg, feature_cols, str(tmp_path / "m"))
+    s = cv_train.predict_ensemble(model_paths, X.values)
+    assert s.shape == (len(X),)
+    assert (s >= 0).all() and (s <= 1).all()
