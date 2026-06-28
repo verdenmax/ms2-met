@@ -133,7 +133,7 @@ def test_main_writes_outputs(tmp_path):
 
 @requires_lgb
 def test_predict_ensemble_in_range(tmp_path):
-    import cv_train
+    import cv_train, lightgbm as lgb
     df = _toy_df()
     csv = tmp_path / "feat.csv"; df.to_csv(csv, index=False)
     feature_cols = resolve_feature_cols(None, [str(csv)], "label")
@@ -144,3 +144,9 @@ def test_predict_ensemble_in_range(tmp_path):
     s = cv_train.predict_ensemble(model_paths, X.values)
     assert s.shape == (len(X),)
     assert (s >= 0).all() and (s <= 1).all()
+    # teeth: it is the MEAN of the per-fold predictions, not fold-0 / max / min
+    per_fold = [lgb.Booster(model_file=p).predict(X.values) for p in model_paths]
+    assert np.allclose(s, np.mean(per_fold, axis=0))
+    # DataFrame input path (docstring promises numpy OR DataFrame) agrees with numpy
+    s_df = cv_train.predict_ensemble(model_paths, X)
+    assert np.allclose(s_df, s)

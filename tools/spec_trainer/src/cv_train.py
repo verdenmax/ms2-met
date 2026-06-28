@@ -3,7 +3,7 @@
 One CV pass yields OOF predictions that drive: honest evaluation, fold
 ensemble (saved per-fold models), and label-noise audit. Does NOT touch
 main.py (single-holdout flow unchanged). lightgbm is imported lazily inside
-assemble_oof so this module (and path helpers) import without it.
+assemble_oof / predict_ensemble so this module (and path helpers) import without it.
 """
 import argparse
 import json
