@@ -174,3 +174,16 @@ def test_evaluate_cross_test(tmp_path):
     assert len(per_fold) == 5 and "auc" in per_fold[0] and "fnr_at_fpr5" in per_fold[0]
     assert {"test_auc_mean", "test_auc_std",
             "test_fnr_at_fpr5_mean", "test_fnr_at_fpr5_std"} <= set(agg)
+    # value-level: per-fold metrics are the real auc/fnr (not swapped)
+    from cv_core import fnr_at_fpr5 as _fnr
+    from sklearn.metrics import roc_auc_score as _auc
+    assert np.isclose(per_fold[0]["auc"], _auc(yb, per[0]))
+    assert np.isclose(per_fold[0]["fnr_at_fpr5"], _fnr(yb, per[0]))
+    assert np.isclose(agg["test_auc_mean"],
+                      np.mean([m["auc"] for m in per_fold]))
+    # single-class external y -> per-fold + agg NaN, but ensemble still scores
+    import numpy as _np
+    ens1, pf1, agg1 = cv_train.evaluate_cross_test(
+        model_paths, Xb, _np.ones(len(dfB)))
+    assert _np.isnan(pf1[0]["auc"]) and _np.isnan(agg1["test_auc_mean"])
+    assert _np.isfinite(ens1).all()
