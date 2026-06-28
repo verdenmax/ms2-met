@@ -148,9 +148,11 @@ def main(argv=None):
         test_df = read_dataframe(test_files)
         eval_df = test_df
         eval_y = test_df[target_col]
+        # position-matched: feature_cols order must equal training's df[feature_cols]
         ens_proba, test_per_fold, test_agg = evaluate_cross_test(
             model_paths, test_df[feature_cols].values, eval_y.values)
         eval_proba = ens_proba
+        # generic auc/fnr/working_points on the ensemble scores (NOT OOF in cross_test)
         summary = evaluate_oof(eval_y, eval_proba)
         train_oof = evaluate_oof(y, oof)
         summary.update({

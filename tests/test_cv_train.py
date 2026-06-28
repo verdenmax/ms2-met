@@ -193,7 +193,7 @@ def test_evaluate_cross_test(tmp_path):
 def test_main_cross_test_mode(tmp_path):
     import cv_train, yaml
     dfA = _toy_df(seed=0)                # 训练数据集 A
-    dfB = _toy_df(seed=7)               # 外部测试数据集 B
+    dfB = _toy_df(n_groups=30, seed=7)  # 外部测试集 B：150 行（≠ A 的 200），规模不同才能区分评估目标
     a = tmp_path / "a.csv"; dfA.to_csv(a, index=False)
     b = tmp_path / "b.csv"; dfB.to_csv(b, index=False)
     cfg = _toy_cfg(tmp_path)
@@ -206,6 +206,8 @@ def test_main_cross_test_mode(tmp_path):
     assert res["mode"] == "cross_test"
     assert len(res["test_per_fold"]) == 5
     assert "test_auc_mean" in res and "train_oof_auc" in res
-    assert res["n_pos"] == int((dfB["label"] == 1).sum())   # 计数来自 B
+    assert res["n_pos"] == int((dfB["label"] == 1).sum())     # 105 — fails if counted from A (140)
+    assert res["n_neg"] == int((dfB["label"] == 0).sum())     # 45
+    assert res["n_pos"] + res["n_neg"] == len(dfB)            # 150 — totals pin to external B
     assert (tmp_path / "r.cv.suspects.csv").exists()
     assert summary["auc"] == res["auc"]
