@@ -19,6 +19,14 @@ def test_derive_paths():
     assert sp == "runs/r/cv_in_2da_clean.cv.suspects.csv"
 
 
+def test_derive_paths_rejects_colliding_result_path():
+    import cv_train, pytest
+    cfg = {"output": {"model_path": "runs/m/x.txt",
+                      "result_path": "runs/r/x.out"}}   # not .json -> would collide
+    with pytest.raises(ValueError):
+        cv_train.derive_paths(cfg)
+
+
 def test_read_dataframe_concat(tmp_path):
     import cv_train
     a = tmp_path / "a.csv"; b = tmp_path / "b.csv"
@@ -120,3 +128,4 @@ def test_main_writes_outputs(tmp_path):
     assert len(res["fold_metrics"]) == 5 and "auc_mean" in res
     assert (tmp_path / "r.cv.suspects.csv").exists()     # 派生路径
     assert summary["auc"] == res["auc"]
+    assert res["name"] == "toy"

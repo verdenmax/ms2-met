@@ -31,6 +31,10 @@ def derive_paths(cfg):
     result_path = cfg["output"]["result_path"]
     model_prefix = re.sub(r"\.txt$", "", model_path)
     suspects_path = re.sub(r"\.json$", ".suspects.csv", result_path)
+    if suspects_path == result_path:
+        raise ValueError(
+            f"output.result_path must end in '.json' so the suspects CSV path "
+            f"doesn't collide with it; got {result_path!r}")
     return model_prefix, result_path, suspects_path
 
 
@@ -148,6 +152,7 @@ def main(argv=None):
         "n_pos": int((y == 1).sum()),
         "n_neg": int((y == 0).sum()),
     })
+    summary["name"] = args.name
     os.makedirs(os.path.dirname(result_path) or ".", exist_ok=True)
     with open(result_path, "w") as f:
         json.dump(summary, f, indent=2)
