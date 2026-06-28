@@ -86,3 +86,9 @@ def audit_labels(df, oof_proba, label_col="label", threshold=0.9, top_n=200,
             + ["oof_proba"]
             + [c for c in diag_cols if c in susp.columns])
     return susp[keep].reset_index(drop=True)
+
+
+def average_proba(proba_list):
+    """Mean of per-fold predict_proba arrays = ensemble score for new data."""
+    arr = np.vstack([np.asarray(p, dtype="f8") for p in proba_list])
+    return arr.mean(axis=0)

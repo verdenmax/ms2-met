@@ -79,3 +79,12 @@ def test_audit_labels_negatives_only_sorted_filtered():
     assert "oof_proba" in susp.columns and "all_p75" in susp.columns
     assert list(susp["oof_proba"]) == [0.97, 0.92]
     assert len(audit_labels(df, oof, threshold=0.9, top_n=1)) == 1   # top_n 截断
+
+
+def test_average_proba():
+    from cv_core import average_proba
+    out = average_proba([np.array([0.0, 1.0]),
+                         np.array([1.0, 0.0]),
+                         np.array([0.5, 0.5])])
+    assert np.allclose(out, [0.5, 0.5])
+    assert np.allclose(average_proba([np.array([0.3, 0.7])]), [0.3, 0.7])
