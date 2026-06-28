@@ -42,13 +42,33 @@ def _build_parser():
     return p
 
 
+def _inner_split(X, y, groups, tr_idx, valid_size, seed):
+    """Carve an early-stopping validation set from a fold's TRAIN indices.
+
+    Returns (tr2, val) as GLOBAL positional indices — both subsets of tr_idx,
+    so the val set never overlaps the OOF test fold. Grouped split when groups
+    is given (no group spans tr2/val), else stratified.
+    """
+    from sklearn.model_selection import GroupShuffleSplit, StratifiedShuffleSplit
+    if groups is not None:
+        inner = GroupShuffleSplit(n_splits=1, test_size=valid_size,
+                                  random_state=seed)
+        loc_tr, loc_val = next(inner.split(
+            X.iloc[tr_idx], y.iloc[tr_idx], groups.iloc[tr_idx]))
+    else:
+        inner = StratifiedShuffleSplit(n_splits=1, test_size=valid_size,
+                                       random_state=seed)
+        loc_tr, loc_val = next(inner.split(X.iloc[tr_idx], y.iloc[tr_idx]))
+    return tr_idx[loc_tr], tr_idx[loc_val]
+
+
 def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
     """Train one model per fold, collect leak-free OOF preds, save fold models.
 
     Returns (oof_proba, fold_metrics, model_paths). lightgbm imported here.
     """
+    # df: unused here; kept for call-site symmetry (caller uses it for label audit)
     from sklearn.metrics import roc_auc_score
-    from sklearn.model_selection import GroupShuffleSplit, StratifiedShuffleSplit
     from models.model_manager import ModelManager
 
     n_folds = int(cfg["training"].get("cv_folds", 5))
@@ -62,16 +82,7 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
 
     for k, (tr_idx, te_idx) in enumerate(splits):
         # 折内早停验证集（分组，避免污染 OOF 折）
-        if groups is not None:
-            inner = GroupShuffleSplit(n_splits=1, test_size=valid_size,
-                                      random_state=seed)
-            loc_tr, loc_val = next(inner.split(
-                X.iloc[tr_idx], y.iloc[tr_idx], groups.iloc[tr_idx]))
-        else:
-            inner = StratifiedShuffleSplit(n_splits=1, test_size=valid_size,
-                                           random_state=seed)
-            loc_tr, loc_val = next(inner.split(X.iloc[tr_idx], y.iloc[tr_idx]))
-        tr2, val = tr_idx[loc_tr], tr_idx[loc_val]
+        tr2, val = _inner_split(X, y, groups, tr_idx, valid_size, seed)
 
         model = ModelManager.create(cfg, feature_names=feature_cols)
         model.fit(X.iloc[tr2], y.iloc[tr2], X.iloc[val], y.iloc[val])

@@ -68,3 +68,35 @@ def test_assemble_oof_no_nan_and_saves_models(tmp_path):
     assert not np.isnan(oof).any()                       # 每行恰好预测一次
     assert len(fold_metrics) == 5 and "auc" in fold_metrics[0]
     assert len(model_paths) == 5 and all(os.path.exists(p) for p in model_paths)
+
+
+def test_inner_split_no_leak_grouped():
+    import cv_train
+    n = 50
+    X = pd.DataFrame({"f": np.arange(n)})
+    y = pd.Series([1] * 30 + [0] * 20)
+    groups = pd.Series(np.repeat(np.arange(25), 2))   # 25 peptides x2 rows
+    tr_idx = np.arange(40)                            # train fold
+    te_idx = np.arange(40, 50)                        # held-out OOF test fold
+    tr2, val = cv_train._inner_split(X, y, groups, tr_idx, valid_size=0.25, seed=42)
+    assert set(val).issubset(set(tr_idx))             # val drawn only from train
+    assert set(tr2).issubset(set(tr_idx))
+    assert set(val).isdisjoint(set(te_idx))           # ** no leak into OOF fold **
+    assert set(tr2).isdisjoint(set(te_idx))
+    assert set(tr2).isdisjoint(set(val))              # train/val partition
+    assert len(tr2) + len(val) == len(tr_idx)
+    # grouped: no peptide spans tr2/val
+    assert set(groups.iloc[tr2]).isdisjoint(set(groups.iloc[val]))
+
+
+def test_inner_split_no_groups_branch():
+    import cv_train
+    n = 40
+    X = pd.DataFrame({"f": np.arange(n)})
+    y = pd.Series([1] * 28 + [0] * 12)
+    tr_idx = np.arange(32)
+    te_idx = np.arange(32, 40)
+    tr2, val = cv_train._inner_split(X, y, None, tr_idx, valid_size=0.25, seed=1)
+    assert set(val).issubset(set(tr_idx)) and set(val).isdisjoint(set(te_idx))
+    assert set(tr2).isdisjoint(set(val))
+    assert len(tr2) + len(val) == len(tr_idx)
