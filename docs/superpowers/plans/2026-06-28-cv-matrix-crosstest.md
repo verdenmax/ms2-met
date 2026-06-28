@@ -543,10 +543,11 @@ train-cv-all:
 
 Run:
 ```bash
-make -n train-cv-clean-all PY="conda run -n jianyan python" 2>&1 | grep -c "cv_train.py"
+# for 循环 recipe 在 make -n 下只回显一次,故数 for 循环里的配置名(应 6)
+make -n train-cv-clean-all 2>&1 | grep -oE "cv_(in|cross_test)_[a-z0-9_]+" | sort -u | wc -l
 make -n train-cv-all 2>&1 | grep -E "train-cv-(clean|neg05|neg10|neg15|neg20)-all"
 ```
-Expected: 第一条输出 `6`(clean 组 6 个 cv_train.py 调用);第二条列出 5 个子目标(train-cv-all 串跑它们)。
+Expected: 第一条输出 `6`(clean 组 for 循环含 6 个配置:3 in_ + 3 cross_test);第二条列出 5 个子目标(train-cv-all 串跑它们)。
 
 - [ ] **Step 3: 确认未破坏 Makefile**
 
