@@ -24,3 +24,32 @@ def test_make_cv_splits_no_groups_fallback():
     assert len(splits) == 5
     covered = np.concatenate([te for _, te in splits])
     assert sorted(covered.tolist()) == list(range(len(y)))
+
+
+def test_working_points_and_fnr_clean_separation():
+    from cv_core import working_points, fnr_at_fpr5
+    neg = np.linspace(0.0, 0.99, 100)      # 负例分数 0..0.99
+    pos = np.ones(100)                     # 正例分数全 1.0(完全高于负例)
+    y = np.r_[np.ones(100), np.zeros(100)]
+    s = np.r_[pos, neg]
+    wp = working_points(y, s)
+    # 阈值 = 负例 95 分位 (<1.0); 正例全部 >= 阈值 -> pos_recall=1
+    assert wp["neg_recall_95"]["pos_recall"] == 1.0
+    assert 0.93 <= wp["neg_recall_95"]["neg_recall"] <= 0.96
+    assert fnr_at_fpr5(y, s) == 0.0
+    assert set(wp) == {"neg_recall_95", "neg_recall_90", "neg_recall_80"}
+
+
+def test_working_points_matches_eval_baseline():
+    import importlib.util, numpy as np
+    # 口径 parity: 与 tools/eval_baseline.py 同输出; 无法导入则跳过
+    spec = importlib.util.find_spec("eval_baseline")
+    if spec is None:
+        import pytest
+        pytest.skip("eval_baseline not importable in this env")
+    from cv_core import working_points
+    from eval_baseline import compute_working_points
+    rng = np.random.default_rng(0)
+    y = rng.integers(0, 2, 200)
+    s = rng.random(200)
+    assert working_points(y, s) == compute_working_points(y, s)
