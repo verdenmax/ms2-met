@@ -13,11 +13,7 @@ import re
 
 import numpy as np
 import pandas as pd
-
-# yaml (PyYAML) is imported lazily inside main() where the config is parsed —
-# mirroring the lazy lightgbm import in assemble_oof — so this module and its
-# path / IO helpers (derive_paths, read_dataframe) import cleanly even in
-# minimal environments where PyYAML is not installed.
+import yaml
 
 from cv_core import (average_proba, audit_labels, evaluate_oof, fnr_at_fpr5,
                      make_cv_splits)
