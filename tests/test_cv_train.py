@@ -104,3 +104,19 @@ def test_inner_split_no_groups_branch():
     assert set(tr2).isdisjoint(set(te_idx))
     assert set(tr2).isdisjoint(set(val))
     assert len(tr2) + len(val) == len(tr_idx)
+
+
+@requires_lgb
+def test_main_writes_outputs(tmp_path):
+    import cv_train, yaml
+    df = _toy_df()
+    csv = tmp_path / "feat.csv"; df.to_csv(csv, index=False)
+    cfg = _toy_cfg(tmp_path); cfg["data"]["train_files"] = [str(csv)]
+    cfg_path = tmp_path / "cfg.yaml"; cfg_path.write_text(yaml.safe_dump(cfg))
+    summary = cv_train.main(["--config", str(cfg_path), "--name", "toy",
+                             "--logpath", str(tmp_path / "log.txt")])
+    res = json.loads((tmp_path / "r.cv.json").read_text())
+    assert "auc" in res and "fnr_at_fpr5" in res
+    assert len(res["fold_metrics"]) == 5 and "auc_mean" in res
+    assert (tmp_path / "r.cv.suspects.csv").exists()     # 派生路径
+    assert summary["auc"] == res["auc"]

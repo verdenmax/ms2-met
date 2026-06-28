@@ -104,3 +104,65 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
 
     assert not np.isnan(oof).any(), "OOF has NaN — some sample never predicted"
     return oof, fold_metrics, model_paths
+
+
+def main(argv=None):
+    args = _build_parser().parse_args(argv)
+    if os.path.dirname(args.logpath):
+        os.makedirs(os.path.dirname(args.logpath), exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[logging.FileHandler(args.logpath, encoding="utf-8")])
+
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+
+    target_col = cfg["data"]["target_col"]
+    train_files = cfg["data"]["train_files"]
+    df = read_dataframe(train_files)
+    feature_cols = resolve_feature_cols(
+        cfg["data"].get("feature_cols"), train_files, target_col)
+    X = df[feature_cols]
+    y = df[target_col]
+
+    group_col = cfg["data"].get("group_col")
+    if group_col and group_col in df.columns:
+        groups = df[group_col]
+    else:
+        groups = None
+        if group_col:
+            logging.warning("group_col %r not in data — ungrouped CV", group_col)
+
+    model_prefix, result_path, suspects_path = derive_paths(cfg)
+    oof, fold_metrics, model_paths = assemble_oof(
+        df, X, y, groups, cfg, feature_cols, model_prefix)
+
+    summary = evaluate_oof(y, oof)
+    aucs = [m["auc"] for m in fold_metrics if not np.isnan(m["auc"])]
+    summary.update({
+        "cv_folds": len(fold_metrics),
+        "fold_metrics": fold_metrics,
+        "auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
+        "auc_std": float(np.std(aucs)) if aucs else float("nan"),
+        "model_paths": model_paths,
+        "n_pos": int((y == 1).sum()),
+        "n_neg": int((y == 0).sum()),
+    })
+    os.makedirs(os.path.dirname(result_path) or ".", exist_ok=True)
+    with open(result_path, "w") as f:
+        json.dump(summary, f, indent=2)
+
+    audit_cfg = cfg.get("audit", {})
+    susp = audit_labels(
+        df, oof, label_col=target_col,
+        threshold=float(audit_cfg.get("suspect_threshold", 0.9)),
+        top_n=int(audit_cfg.get("suspect_top_n", 200)))
+    susp.to_csv(suspects_path, index=False)
+
+    logging.info("CV done: AUC=%.4f FNR@FPR5=%.4f; %d suspects -> %s",
+                 summary["auc"], summary["fnr_at_fpr5"], len(susp), suspects_path)
+    return summary
+
+
+if __name__ == "__main__":
+    main()
