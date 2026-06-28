@@ -63,3 +63,26 @@ def evaluate_oof(y_true, oof_proba):
         "fnr_at_fpr5": float(fnr_at_fpr5(y_true, oof_proba)),
         "working_points": working_points(y_true, oof_proba),
     }
+
+
+def audit_labels(df, oof_proba, label_col="label", threshold=0.9, top_n=200,
+                 id_cols=("sequence", "charge", "label_type"),
+                 diag_cols=("all_p75", "precursor_pearson", "all_cosine_mean",
+                            "all_heavy_shape_irregularity_max")):
+    """Negatives ranked by how 'positive-looking' their OOF prob is.
+
+    Triage list for manual review (NOT auto-relabel): a negative whose
+    out-of-fold prob >= threshold either is a genuine hard negative or a
+    mislabel. Returns id+diagnostic cols (only those present), oof desc,
+    capped at top_n.
+    """
+    work = df.copy()
+    work["oof_proba"] = np.asarray(oof_proba)
+    neg = work[work[label_col] == 0]
+    susp = (neg[neg["oof_proba"] >= threshold]
+            .sort_values("oof_proba", ascending=False)
+            .head(top_n))
+    keep = ([c for c in id_cols if c in susp.columns]
+            + ["oof_proba"]
+            + [c for c in diag_cols if c in susp.columns])
+    return susp[keep].reset_index(drop=True)

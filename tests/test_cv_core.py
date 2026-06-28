@@ -60,3 +60,22 @@ def test_evaluate_oof_perfect_and_reversed():
     assert "neg_recall_95" in m["working_points"]
     m2 = evaluate_oof(y, 1.0 - perfect)                   # 完全反向
     assert m2["auc"] == 0.0
+
+
+import pandas as pd
+
+
+def test_audit_labels_negatives_only_sorted_filtered():
+    from cv_core import audit_labels
+    df = pd.DataFrame({
+        "label": [0, 0, 0, 1, 1],
+        "sequence": list("ABCDE"),
+        "charge": [2, 2, 3, 2, 2],
+        "all_p75": [0.9, 0.8, 0.1, 0.9, 0.9],
+    })
+    oof = [0.97, 0.92, 0.40, 0.99, 0.10]   # 第4个是正例(0.99)不应入榜
+    susp = audit_labels(df, oof, threshold=0.9, top_n=10)
+    assert list(susp["sequence"]) == ["A", "B"]            # 仅负例 A,B 过阈值, 降序
+    assert "oof_proba" in susp.columns and "all_p75" in susp.columns
+    assert list(susp["oof_proba"]) == [0.97, 0.92]
+    assert len(audit_labels(df, oof, threshold=0.9, top_n=1)) == 1   # top_n 截断
