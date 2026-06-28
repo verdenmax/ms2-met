@@ -48,3 +48,15 @@ def test_working_points_matches_eval_baseline():
     y = rng.integers(0, 2, 200)
     s = rng.random(200)
     assert working_points(y, s) == compute_working_points(y, s)
+
+
+def test_evaluate_oof_perfect_and_reversed():
+    from cv_core import evaluate_oof
+    y = np.r_[np.ones(50), np.zeros(50)]
+    perfect = np.r_[np.full(50, 0.9), np.full(50, 0.1)]   # 正高负低
+    m = evaluate_oof(y, perfect)
+    assert m["auc"] == 1.0
+    assert m["fnr_at_fpr5"] == 0.0
+    assert "neg_recall_95" in m["working_points"]
+    m2 = evaluate_oof(y, 1.0 - perfect)                   # 完全反向
+    assert m2["auc"] == 0.0
