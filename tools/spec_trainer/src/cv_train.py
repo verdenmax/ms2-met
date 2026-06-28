@@ -187,5 +187,41 @@ def predict_ensemble(model_paths, X):
     return average_proba(probas)
 
 
+def evaluate_cross_test(model_paths, X, y):
+    """Score external test data with each fold model + the ensemble.
+
+    Returns (ens_proba, per_fold, agg):
+    - ens_proba: mean of the K fold models' predictions on X (cross_test score).
+    - per_fold: [{fold, auc, fnr_at_fpr5}, ...] for each fold model on the
+      external test (NaN when y is single-class).
+    - agg: {test_auc_mean/std, test_fnr_at_fpr5_mean/std} over non-NaN folds.
+    lightgbm imported lazily.
+    """
+    import lightgbm as lgb
+    from sklearn.metrics import roc_auc_score
+    y = np.asarray(y)
+    probas = [lgb.Booster(model_file=p).predict(X) for p in model_paths]
+    ens = average_proba(probas)
+    one_class = len(set(y.tolist())) < 2
+    per_fold = []
+    for k, p in enumerate(probas):
+        if one_class:
+            per_fold.append({"fold": k, "auc": float("nan"),
+                             "fnr_at_fpr5": float("nan")})
+        else:
+            per_fold.append({"fold": k,
+                             "auc": float(roc_auc_score(y, p)),
+                             "fnr_at_fpr5": float(fnr_at_fpr5(y, p))})
+    aucs = [m["auc"] for m in per_fold if not np.isnan(m["auc"])]
+    fnrs = [m["fnr_at_fpr5"] for m in per_fold if not np.isnan(m["fnr_at_fpr5"])]
+    agg = {
+        "test_auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
+        "test_auc_std": float(np.std(aucs)) if aucs else float("nan"),
+        "test_fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
+        "test_fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
+    }
+    return ens, per_fold, agg
+
+
 if __name__ == "__main__":
     main()

@@ -151,3 +151,26 @@ def test_predict_ensemble_in_range(tmp_path):
     # DataFrame input path (docstring promises numpy OR DataFrame) agrees with numpy
     s_df = cv_train.predict_ensemble(model_paths, X)
     assert np.allclose(s_df, s)
+
+
+@requires_lgb
+def test_evaluate_cross_test(tmp_path):
+    import cv_train, lightgbm as lgb
+    dfA = _toy_df(seed=0)               # 训练数据集 A
+    dfB = _toy_df(seed=7)               # 外部测试数据集 B（不同抽样）
+    csvA = tmp_path / "a.csv"; dfA.to_csv(csvA, index=False)
+    feature_cols = resolve_feature_cols(None, [str(csvA)], "label")
+    cfg = _toy_cfg(tmp_path)
+    _, _, model_paths = cv_train.assemble_oof(
+        dfA, dfA[feature_cols], dfA["label"], dfA["sequence"],
+        cfg, feature_cols, str(tmp_path / "m"))
+    Xb = dfB[feature_cols].values
+    yb = dfB["label"].values
+    ens, per_fold, agg = cv_train.evaluate_cross_test(model_paths, Xb, yb)
+    assert ens.shape == (len(dfB),)
+    # ensemble = 各折预测的均值
+    per = [lgb.Booster(model_file=p).predict(Xb) for p in model_paths]
+    assert np.allclose(ens, np.mean(per, axis=0))
+    assert len(per_fold) == 5 and "auc" in per_fold[0] and "fnr_at_fpr5" in per_fold[0]
+    assert {"test_auc_mean", "test_auc_std",
+            "test_fnr_at_fpr5_mean", "test_fnr_at_fpr5_std"} <= set(agg)
