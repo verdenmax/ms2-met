@@ -126,6 +126,7 @@ def test_main_writes_outputs(tmp_path):
     res = json.loads((tmp_path / "r.cv.json").read_text())
     assert "auc" in res and "fnr_at_fpr5" in res
     assert len(res["fold_metrics"]) == 5 and "auc_mean" in res
+    assert "fnr_at_fpr5_mean" in res and "fnr_at_fpr5_std" in res
     assert (tmp_path / "r.cv.suspects.csv").exists()     # 派生路径
     assert summary["auc"] == res["auc"]
     assert res["name"] == "toy"

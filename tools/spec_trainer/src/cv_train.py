@@ -143,11 +143,17 @@ def main(argv=None):
 
     summary = evaluate_oof(y, oof)
     aucs = [m["auc"] for m in fold_metrics if not np.isnan(m["auc"])]
+    # FNR@FPR5 fold mean/std — exposing this metric's cross-fold variance is the
+    # feature's stated motivation (single-split variance hides real vs noise).
+    fnrs = [m["fnr_at_fpr5"] for m in fold_metrics
+            if not np.isnan(m["fnr_at_fpr5"])]
     summary.update({
         "cv_folds": len(fold_metrics),
         "fold_metrics": fold_metrics,
         "auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
         "auc_std": float(np.std(aucs)) if aucs else float("nan"),
+        "fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
+        "fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
         "model_paths": model_paths,
         "n_pos": int((y == 1).sum()),
         "n_neg": int((y == 0).sum()),
