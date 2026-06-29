@@ -106,6 +106,7 @@ def process_psm_pair_shared(
         "sequence_len": len(psm1._sequence),
         "label": label,
         "label_type": "positive" if label == 1 else "negative",
+        "q_value": psm1._q_value,
         ** tot_features
     }
 
@@ -139,6 +140,7 @@ def _make_result_row_single(psm, features: dict) -> dict:
         "sequence_len": len(psm._sequence),
         "label": label,
         "label_type": label_type,
+        "q_value": psm._q_value,
         **features,
     }
 

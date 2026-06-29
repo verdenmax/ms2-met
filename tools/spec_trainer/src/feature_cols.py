@@ -33,12 +33,15 @@ META_COLUMNS = {
 #     成为 dataset 代理特征。
 #   - fragment_heavy_absent_count: 跨数据集均值 1.8/1.8/0.1，窗变窄后
 #     漏检率剧变；同样是 dataset 代理。
+#   - q_value: PSM 鉴定置信度 (来自 pFind FDR)，是 META/分析列而非物理特征。
+#     写入 features.csv 仅供 FDR-binning 分析使用，绝不能成为训练特征。
 EXCLUDED_EXTRA = {
     "modification_count",
     "window_width",
     "fragment_xic_empty_count",
     "fragment_same_mass_count",
     "fragment_heavy_absent_count",
+    "q_value",
 }
 
 
