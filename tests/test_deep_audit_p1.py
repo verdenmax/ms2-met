@@ -277,6 +277,7 @@ def test_make_result_row_single_accepts_positive():
         _raw_title = "fake"
         _protein_names = "HUMAN"
         _label_type = "positive"
+        _q_value = 0.001
 
     row = _make_result_row_single(_PSMPos(), {"f1": 1.0})
     assert row["label"] == 1
@@ -294,6 +295,7 @@ def test_make_result_row_single_accepts_negative():
         _raw_title = "fake"
         _protein_names = "HUMAN"
         _label_type = "negative"
+        _q_value = 0.001
 
     row = _make_result_row_single(_PSMNeg(), {"f1": 1.0})
     assert row["label"] == 0
