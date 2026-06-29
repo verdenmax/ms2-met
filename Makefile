@@ -68,6 +68,10 @@ DIR_5TH_NEG20    ?= runs/baseline_5da_neg20
 DIR_NORMAL_NEG15 ?= runs/baseline_normal_neg15
 DIR_NORMAL_NEG20 ?= runs/baseline_normal_neg20
 
+# pos50 变体：正例放宽至 FDR<=50%（q∈0..0.50），负例不变；用于观察召回随 FDR 衰减
+INI_2TH_POS50    ?= extract_2da_pos50.ini
+DIR_2TH_POS50    ?= runs/baseline_2da_pos50
+
 # 从 extract_*.ini 中动态抽取 result_file 路径。
 # 行格式：result_file = ./path/to/output.json    # optional comment
 # 处理：
@@ -102,6 +106,9 @@ JSON_5TH_NEG20    := $(call EXTRACT_RESULT_FILE,$(INI_5TH_NEG20))
 JSON_NORMAL_NEG15 := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL_NEG15))
 JSON_NORMAL_NEG20 := $(call EXTRACT_RESULT_FILE,$(INI_NORMAL_NEG20))
 
+# pos50 变体 JSON 路径
+JSON_2TH_POS50    := $(call EXTRACT_RESULT_FILE,$(INI_2TH_POS50))
+
 # --------------------------- 工具 / banner ---------------------------
 
 # 优先用 toilet | lolcat（漂亮），缺失则退回 echo
@@ -127,6 +134,8 @@ endef
 .PHONY: extract-2th-neg15 extract-2th-neg20 extract-5th-neg15 extract-5th-neg20 extract-normal-neg15 extract-normal-neg20
 .PHONY: clean-2th-neg15 clean-2th-neg20 clean-5th-neg15 clean-5th-neg20 clean-normal-neg15 clean-normal-neg20
 .PHONY: all-neg15 all-neg20
+
+.PHONY: 2th-pos50 extract-2th-pos50 pos50-2da
 
 help:
 	@echo "ms2-met Makefile — 三种数据集的特征提取流水线"
@@ -574,6 +583,40 @@ extract-2th-neg20:
 
 endif
 
+# ---------- 2th-pos50 ----------
+ifneq ($(wildcard $(INI_2TH_POS50)),)
+
+$(JSON_2TH_POS50): $(INI_2TH_POS50)
+	$(call BANNER,extract 2th-pos50)
+	$(PY) tools/extract_common.py --configpath $(INI_2TH_POS50)
+
+extract-2th-pos50: $(JSON_2TH_POS50)
+
+2th-pos50: $(INI_2TH_POS50) $(JSON_2TH_POS50) $(DIR_2TH_POS50)/config.ini
+	$(call BANNER,2th-pos50)
+	$(PY) main.py --configpath $(DIR_2TH_POS50)/config.ini --logpath $(DIR_2TH_POS50)/extract.log
+	@echo "[done] features written under $(DIR_2TH_POS50)/"
+
+else  # $(INI_2TH_POS50) absent — features.csv must be externally provided
+
+extract-2th-pos50:
+	@echo "[error] $(INI_2TH_POS50) not found — cannot extract; provide ini or use a pre-built JSON" >&2
+	@false
+
+2th-pos50: $(DIR_2TH_POS50)/config.ini
+	$(call BANNER,2th-pos50)
+	@if [ ! -f "$(DIR_2TH_POS50)/features.csv" ]; then \
+		echo "[note] $(INI_2TH_POS50) absent — $(DIR_2TH_POS50)/features.csv must be present" >&2; \
+		echo "       (extract step skipped; main.py will fail if light_result_file in config.ini is invalid)" >&2; \
+	fi
+	$(PY) main.py --configpath $(DIR_2TH_POS50)/config.ini --logpath $(DIR_2TH_POS50)/extract.log
+	@echo "[done] features written under $(DIR_2TH_POS50)/"
+
+endif
+
+# pos50-2da：2th-pos50 别名
+pos50-2da: 2th-pos50
+
 # ---------- 5th-neg15 ----------
 ifneq ($(wildcard $(INI_5TH_NEG15)),)
 
@@ -901,6 +944,9 @@ runs/baseline_2da_neg15/features.csv: $(DIR_2TH_NEG15)/config.ini $(INI_2TH_NEG1
 
 runs/baseline_2da_neg20/features.csv: $(DIR_2TH_NEG20)/config.ini $(INI_2TH_NEG20) $(JSON_2TH_NEG20)
 	$(MAKE) 2th-neg20
+
+runs/baseline_2da_pos50/features.csv: $(DIR_2TH_POS50)/config.ini $(INI_2TH_POS50) $(JSON_2TH_POS50)
+	$(MAKE) 2th-pos50
 
 runs/baseline_5da_neg15/features.csv: $(DIR_5TH_NEG15)/config.ini $(INI_5TH_NEG15) $(JSON_5TH_NEG15)
 	$(MAKE) 5th-neg15

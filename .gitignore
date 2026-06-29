@@ -85,6 +85,8 @@ ms2*.log
 !/extract_*_neg10.ini
 !/extract_*_neg15.ini
 !/extract_*_neg20.ini
+# pos50 变体（正例 FDR<=50%）也纳入跟踪，便于复现召回随 FDR 衰减实验。
+!/extract_*_pos50.ini
 # clean (1% FDR) 模板也纳入跟踪，便于团队共享含 [contaminant] 等公共配置。
 !/extract_*_pfind_diann.ini
 
