@@ -20,6 +20,8 @@ def test_to_cv_config_in_sample():
     assert cv["data"]["group_col"] == "sequence"
     assert cv["training"]["cv_folds"] == 5 and cv["training"]["cv_seed"] == 42
     assert cv["training"]["valid_size"] == 0.15
+    assert cv["training"]["min_class_groups_per_split"] == 5
+    assert cv["operating_point"] == {"target_fpr": 0.10}
     assert cv["audit"] == {"suspect_threshold": 0.9, "suspect_top_n": 200}
     assert cv["output"]["model_path"] == "runs/spec_trainer/models/cv_in_2da_clean.txt"
     assert cv["output"]["result_path"] == "runs/spec_trainer/results/cv_in_2da_clean.cv.json"

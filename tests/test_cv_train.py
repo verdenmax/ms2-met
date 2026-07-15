@@ -56,7 +56,9 @@ def _toy_cfg(tmp_path):
             "objective": "binary", "num_leaves": 7, "learning_rate": 0.1,
             "min_data_in_leaf": 5, "verbose": -1}},
         "training": {"num_boost_round": 40, "early_stopping_rounds": 15,
-                     "cv_folds": 5, "cv_seed": 42, "valid_size": 0.25},
+                     "cv_folds": 5, "cv_seed": 42, "valid_size": 0.25,
+                     "min_class_groups_per_split": 2},
+        "operating_point": {"target_fpr": 0.10},
         "audit": {"suspect_threshold": 0.5, "suspect_top_n": 50},
         "output": {"model_path": str(tmp_path / "m.txt"),
                    "result_path": str(tmp_path / "r.cv.json")},
@@ -75,6 +77,12 @@ def test_assemble_oof_no_nan_and_saves_models(tmp_path):
         df, X, y, groups, cfg, feature_cols, str(tmp_path / "m"))
     assert not np.isnan(oof).any()                       # 每行恰好预测一次
     assert len(fold_metrics) == 5 and "auc" in fold_metrics[0]
+    counts = fold_metrics[0]["split_counts"]
+    assert set(counts) == {"train", "valid", "oof_test"}
+    for split in counts.values():
+        assert split["n_pos_groups"] >= 2
+        assert split["n_neg_groups"] >= 2
+        assert split["n_mixed_groups"] == 0
     assert len(model_paths) == 5 and all(os.path.exists(p) for p in model_paths)
 
 
@@ -85,8 +93,8 @@ def test_inner_split_no_leak_grouped():
     # overlap te_idx and fail the disjointness assertion (gives the test teeth).
     n = 60
     X = pd.DataFrame({"f": np.arange(n)})
-    y = pd.Series([1, 0] * (n // 2))                  # both classes everywhere
     groups = pd.Series(np.repeat(np.arange(n // 2), 2))   # 30 peptides x2 rows
+    y = pd.Series((groups.to_numpy() % 2).astype(int))  # one label per peptide
     te_idx = np.arange(0, 12)                         # held-out OOF fold (low)
     tr_idx = np.arange(12, n)                         # train fold (offset high)
     tr2, val = cv_train._inner_split(X, y, groups, tr_idx, valid_size=0.25, seed=42)
@@ -97,6 +105,29 @@ def test_inner_split_no_leak_grouped():
     assert set(tr2).isdisjoint(set(val))              # train/val partition
     assert len(tr2) + len(val) == len(tr_idx)
     assert set(groups.iloc[tr2]).isdisjoint(set(groups.iloc[val]))   # no peptide spans
+    assert set(y.iloc[tr2]) == {0, 1}
+    assert set(y.iloc[val]) == {0, 1}
+
+
+def test_inner_split_rejects_mixed_label_groups():
+    import cv_train
+    X = pd.DataFrame({"f": np.arange(12)})
+    groups = pd.Series(np.repeat(np.arange(6), 2))
+    y = pd.Series([0, 1] * 6)  # every group conflicts
+    with pytest.raises(ValueError, match="mixed-label groups"):
+        cv_train._inner_split(
+            X, y, groups, np.arange(12), valid_size=0.25, seed=42)
+
+
+def test_validate_split_counts_rejects_too_few_minority_groups():
+    import cv_train
+    counts = {"valid": {
+        "n_rows": 10, "n_pos": 9, "n_neg": 1, "n_groups": 10,
+        "n_pos_groups": 9, "n_neg_groups": 1, "n_mixed_groups": 0,
+    }}
+    with pytest.raises(ValueError, match="require >= 2"):
+        cv_train._validate_split_counts(
+            fold=0, split_counts=counts, min_class_groups=2, grouped=True)
 
 
 def test_inner_split_no_groups_branch():
@@ -127,6 +158,9 @@ def test_main_writes_outputs(tmp_path):
     assert "auc" in res and "fnr_at_fpr5" in res
     assert len(res["fold_metrics"]) == 5 and "auc_mean" in res
     assert "fnr_at_fpr5_mean" in res and "fnr_at_fpr5_std" in res
+    assert res["operating_point"]["target_fpr"] == 0.10
+    assert res["operating_point"]["threshold_source"] == "train_oof"
+    assert res["operating_point"]["train_oof_metrics"]["fpr"] <= 0.10
     assert (tmp_path / "r.cv.suspects.csv").exists()     # 派生路径
     assert summary["auc"] == res["auc"]
     assert res["name"] == "toy"
@@ -206,6 +240,11 @@ def test_main_cross_test_mode(tmp_path):
     assert res["mode"] == "cross_test"
     assert len(res["test_per_fold"]) == 5
     assert "test_auc_mean" in res and "train_oof_auc" in res
+    op = res["operating_point"]
+    assert op["target_fpr"] == 0.10
+    assert op["threshold_source"] == "train_oof"
+    assert "test_metrics" in op
+    assert op["test_metrics"]["n_pos"] == int((dfB["label"] == 1).sum())
     assert res["n_pos"] == int((dfB["label"] == 1).sum())     # 105 — fails if counted from A (140)
     assert res["n_neg"] == int((dfB["label"] == 0).sum())     # 45
     assert res["n_pos"] + res["n_neg"] == len(dfB)            # 150 — totals pin to external B

@@ -48,6 +48,76 @@ def working_points(y_true, y_score, fpr_targets=(0.05, 0.10, 0.20)):
     return out
 
 
+def threshold_at_fpr(y_true, y_score, target_fpr=0.10):
+    """Select the most permissive negative-calibrated threshold with
+    empirical FPR <= ``target_fpr``.
+
+    Scores greater than or equal to the returned threshold are classified as
+    positive.  Unlike a plain quantile, this implementation handles ties at
+    the boundary conservatively: all samples tied with the first disallowed
+    negative are rejected.  Consequently the calibration-set FPR is
+    guaranteed not to exceed the requested target (it can be lower).
+    """
+    if not 0.0 <= target_fpr < 1.0:
+        raise ValueError(
+            f"target_fpr must be in [0, 1), got {target_fpr!r}")
+
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score, dtype="f8")
+    if y_true.shape != y_score.shape:
+        raise ValueError(
+            f"y_true/y_score shape mismatch: {y_true.shape} vs {y_score.shape}")
+    if not np.isfinite(y_score).all():
+        raise ValueError("y_score contains NaN or infinite values")
+
+    neg = np.sort(y_score[y_true == 0])[::-1]
+    if len(neg) == 0:
+        raise ValueError("cannot select an FPR threshold without negatives")
+
+    # At most floor(target_fpr * n_neg) negatives may pass.  The item at
+    # ``allowed_fp`` is the first disallowed score; stepping just above it
+    # also excludes all ties at that boundary.
+    allowed_fp = int(np.floor(target_fpr * len(neg)))
+    first_disallowed = neg[allowed_fp]
+    threshold = float(np.nextafter(first_disallowed, np.inf))
+
+    observed_fpr = float((neg >= threshold).sum() / len(neg))
+    assert observed_fpr <= target_fpr + np.finfo(float).eps
+    return threshold
+
+
+def evaluate_at_threshold(y_true, y_score, threshold):
+    """Classification metrics for the inclusive ``score >= threshold`` rule."""
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score, dtype="f8")
+    if y_true.shape != y_score.shape:
+        raise ValueError(
+            f"y_true/y_score shape mismatch: {y_true.shape} vs {y_score.shape}")
+
+    pred = y_score >= threshold
+    pos = y_true == 1
+    neg = y_true == 0
+    n_pos, n_neg = int(pos.sum()), int(neg.sum())
+    tp = int((pred & pos).sum())
+    fp = int((pred & neg).sum())
+    fn = n_pos - tp
+    tn = n_neg - fp
+    return {
+        "threshold": float(threshold),
+        "n_pos": n_pos,
+        "n_neg": n_neg,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "fpr": float(fp / n_neg) if n_neg else None,
+        "neg_recall": float(tn / n_neg) if n_neg else None,
+        "pos_recall": float(tp / n_pos) if n_pos else None,
+        "fnr": float(fn / n_pos) if n_pos else None,
+        "pos_precision": float(tp / (tp + fp)) if tp + fp else None,
+    }
+
+
 def fnr_at_fpr5(y_true, y_score):
     """FNR at FPR<=5% = 1 - pos_recall at the neg-95% working point."""
     return 1.0 - working_points(y_true, y_score)["neg_recall_95"]["pos_recall"]

@@ -62,6 +62,32 @@ def test_evaluate_oof_perfect_and_reversed():
     assert m2["auc"] == 0.0
 
 
+def test_threshold_at_fpr10_is_strict_and_tie_safe():
+    from cv_core import evaluate_at_threshold, threshold_at_fpr
+    # 20 negatives -> at most 2 false positives.  Three negatives tie at the
+    # boundary, so the conservative selector must reject the whole tie and
+    # return an observed FPR below (not above) 10%.
+    neg = np.array([0.9, 0.8, 0.8] + list(np.linspace(0.7, 0.0, 17)))
+    pos = np.array([0.95, 0.85, 0.5])
+    y = np.r_[np.zeros(len(neg)), np.ones(len(pos))]
+    s = np.r_[neg, pos]
+    threshold = threshold_at_fpr(y, s, target_fpr=0.10)
+    metrics = evaluate_at_threshold(y, s, threshold)
+    assert metrics["fpr"] <= 0.10
+    assert metrics["fp"] == 1       # only 0.9 passes; both tied 0.8 rejected
+    assert metrics["neg_recall"] == 0.95
+    assert metrics["pos_recall"] == 2 / 3
+
+
+def test_threshold_at_fpr_requires_negatives_and_valid_target():
+    import pytest
+    from cv_core import threshold_at_fpr
+    with pytest.raises(ValueError, match="without negatives"):
+        threshold_at_fpr([1, 1], [0.2, 0.8], target_fpr=0.10)
+    with pytest.raises(ValueError, match="target_fpr"):
+        threshold_at_fpr([0, 1], [0.2, 0.8], target_fpr=1.0)
+
+
 import pandas as pd
 
 

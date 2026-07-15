@@ -30,6 +30,8 @@ def to_cv_config(src, name):
     cfg["training"]["cv_folds"] = 5
     cfg["training"]["cv_seed"] = 42
     cfg["training"]["valid_size"] = 0.15
+    cfg["training"]["min_class_groups_per_split"] = 5
+    cfg["operating_point"] = {"target_fpr": 0.10}
     cfg["audit"] = {"suspect_threshold": 0.9, "suspect_top_n": 200}
     cv_name = "cv_" + name
     cfg["output"] = {

@@ -29,9 +29,12 @@ training:
   valid_size: 0.15
   cv_folds: 5
   cv_seed: 42
+  min_class_groups_per_split: 5
 output:
   model_path: runs/spec_trainer/models/cv_cross_test_2da_clean.txt
   result_path: runs/spec_trainer/results/cv_cross_test_2da_clean.cv.json
+operating_point:
+  target_fpr: 0.1
 audit:
   suspect_threshold: 0.9
   suspect_top_n: 200

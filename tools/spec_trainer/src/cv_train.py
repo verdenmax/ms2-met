@@ -16,8 +16,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from cv_core import (average_proba, audit_labels, evaluate_oof, fnr_at_fpr5,
-                     make_cv_splits)
+from cv_core import (average_proba, audit_labels, evaluate_at_threshold,
+                     evaluate_oof, fnr_at_fpr5, make_cv_splits,
+                     threshold_at_fpr)
 from feature_cols import resolve_feature_cols
 
 
@@ -51,20 +52,97 @@ def _inner_split(X, y, groups, tr_idx, valid_size, seed):
     """Carve an early-stopping validation set from a fold's TRAIN indices.
 
     Returns (tr2, val) as GLOBAL positional indices — both subsets of tr_idx,
-    so the val set never overlaps the OOF test fold. Grouped split when groups
-    is given (no group spans tr2/val), else stratified.
+    so the val set never overlaps the OOF test fold. When groups are given,
+    split at group level and stratify by the (required unique) label of each
+    group. Without groups, stratify rows.
     """
-    from sklearn.model_selection import GroupShuffleSplit, StratifiedShuffleSplit
+    from sklearn.model_selection import StratifiedShuffleSplit
     if groups is not None:
-        inner = GroupShuffleSplit(n_splits=1, test_size=valid_size,
-                                  random_state=seed)
-        loc_tr, loc_val = next(inner.split(
-            X.iloc[tr_idx], y.iloc[tr_idx], groups.iloc[tr_idx]))
+        part = pd.DataFrame({
+            "group": groups.iloc[tr_idx].to_numpy(),
+            "label": y.iloc[tr_idx].to_numpy(),
+        })
+        if part["group"].isna().any():
+            raise ValueError("group_col contains missing values")
+        label_counts = part.groupby("group", sort=False)["label"].nunique()
+        mixed = label_counts[label_counts != 1]
+        if len(mixed):
+            examples = mixed.index.tolist()[:5]
+            raise ValueError(
+                "grouped stratification requires one label per group; "
+                f"found {len(mixed)} mixed-label groups, examples={examples}")
+
+        group_table = part.drop_duplicates("group", keep="first")
+        inner = StratifiedShuffleSplit(
+            n_splits=1, test_size=valid_size, random_state=seed)
+        try:
+            group_tr, group_val = next(inner.split(
+                np.zeros(len(group_table)), group_table["label"].to_numpy()))
+        except ValueError as exc:
+            raise ValueError(
+                "cannot create a stratified grouped early-stopping split; "
+                "each class needs enough sequence groups. Reduce valid_size "
+                "or CV folds, or add more minority-class sequences"
+            ) from exc
+        train_groups = set(group_table.iloc[group_tr]["group"])
+        valid_groups = set(group_table.iloc[group_val]["group"])
+        loc_tr = np.flatnonzero(part["group"].isin(train_groups).to_numpy())
+        loc_val = np.flatnonzero(part["group"].isin(valid_groups).to_numpy())
     else:
         inner = StratifiedShuffleSplit(n_splits=1, test_size=valid_size,
                                        random_state=seed)
         loc_tr, loc_val = next(inner.split(X.iloc[tr_idx], y.iloc[tr_idx]))
     return tr_idx[loc_tr], tr_idx[loc_val]
+
+
+def _split_counts(y, groups, idx):
+    """Row/class/group counts for one train/valid/OOF partition."""
+    yy = y.iloc[idx]
+    out = {
+        "n_rows": int(len(idx)),
+        "n_pos": int((yy == 1).sum()),
+        "n_neg": int((yy == 0).sum()),
+    }
+    if groups is None:
+        out.update({"n_groups": None, "n_pos_groups": None,
+                    "n_neg_groups": None, "n_mixed_groups": None})
+        return out
+
+    part = pd.DataFrame({
+        "group": groups.iloc[idx].to_numpy(),
+        "label": yy.to_numpy(),
+    })
+    grouped = part.groupby("group", sort=False)["label"]
+    nunique = grouped.nunique()
+    first = grouped.first()
+    pure = nunique == 1
+    out.update({
+        "n_groups": int(len(nunique)),
+        "n_pos_groups": int(((first == 1) & pure).sum()),
+        "n_neg_groups": int(((first == 0) & pure).sum()),
+        "n_mixed_groups": int((~pure).sum()),
+    })
+    return out
+
+
+def _validate_split_counts(fold, split_counts, min_class_groups, grouped):
+    """Fail fast when a fold cannot support stable binary evaluation."""
+    for split_name, counts in split_counts.items():
+        if counts["n_pos"] == 0 or counts["n_neg"] == 0:
+            raise ValueError(
+                f"fold {fold} {split_name} has a missing class: {counts}")
+        if grouped:
+            if counts["n_mixed_groups"]:
+                raise ValueError(
+                    f"fold {fold} {split_name} contains mixed-label groups: "
+                    f"{counts}")
+            minority = min(counts["n_pos_groups"], counts["n_neg_groups"])
+            if minority < min_class_groups:
+                raise ValueError(
+                    f"fold {fold} {split_name} has only {minority} groups in "
+                    f"its minority class; require >= {min_class_groups}. "
+                    "Reduce training.cv_folds / valid_size or collect more "
+                    f"minority-class sequences. Counts: {counts}")
 
 
 def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
@@ -79,6 +157,10 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
     n_folds = int(cfg["training"].get("cv_folds", 5))
     seed = int(cfg["training"].get("cv_seed", 42))
     valid_size = float(cfg["training"].get("valid_size", 0.15))
+    min_class_groups = int(
+        cfg["training"].get("min_class_groups_per_split", 1))
+    if min_class_groups < 1:
+        raise ValueError("training.min_class_groups_per_split must be >= 1")
     grp_vals = None if groups is None else groups.values
 
     splits = make_cv_splits(y.values, grp_vals, n_folds=n_folds, seed=seed)
@@ -88,6 +170,16 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
     for k, (tr_idx, te_idx) in enumerate(splits):
         # 折内早停验证集（分组，避免污染 OOF 折）
         tr2, val = _inner_split(X, y, groups, tr_idx, valid_size, seed)
+        counts = {
+            "train": _split_counts(y, groups, tr2),
+            "valid": _split_counts(y, groups, val),
+            "oof_test": _split_counts(y, groups, te_idx),
+        }
+        _validate_split_counts(
+            k, counts, min_class_groups, grouped=groups is not None)
+        logging.info(
+            "fold %d split counts: train=%s valid=%s oof_test=%s",
+            k, counts["train"], counts["valid"], counts["oof_test"])
 
         model = ModelManager.create(cfg, feature_names=feature_cols)
         model.fit(X.iloc[tr2], y.iloc[tr2], X.iloc[val], y.iloc[val])
@@ -101,11 +193,13 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
         te_y, te_p = y.iloc[te_idx].values, oof[te_idx]
         if len(set(te_y.tolist())) < 2:               # 该折单类 → auc 无定义
             fold_metrics.append({"fold": k, "auc": float("nan"),
-                                 "fnr_at_fpr5": float("nan")})
+                                 "fnr_at_fpr5": float("nan"),
+                                 "split_counts": counts})
         else:
             fold_metrics.append({"fold": k,
                                  "auc": float(roc_auc_score(te_y, te_p)),
-                                 "fnr_at_fpr5": float(fnr_at_fpr5(te_y, te_p))})
+                                 "fnr_at_fpr5": float(fnr_at_fpr5(te_y, te_p)),
+                                 "split_counts": counts})
 
     assert not np.isnan(oof).any(), "OOF has NaN — some sample never predicted"
     return oof, fold_metrics, model_paths
@@ -142,6 +236,23 @@ def main(argv=None):
     oof, fold_metrics, model_paths = assemble_oof(
         df, X, y, groups, cfg, feature_cols, model_prefix)
 
+    # Deployment operating point: choose once from leak-free TRAIN OOF
+    # predictions, then lock it before touching an external test set.
+    # The strict selector handles ties conservatively, so empirical train-OOF
+    # FPR cannot exceed the requested target.
+    op_cfg = cfg.get("operating_point", {})
+    target_fpr = float(op_cfg.get("target_fpr", 0.10))
+    decision_threshold = threshold_at_fpr(y, oof, target_fpr)
+    train_threshold_metrics = evaluate_at_threshold(
+        y, oof, decision_threshold)
+    operating_point = {
+        "target_fpr": target_fpr,
+        "threshold": decision_threshold,
+        "threshold_source": "train_oof",
+        "decision_rule": "score >= threshold => positive",
+        "train_oof_metrics": train_threshold_metrics,
+    }
+
     test_files = cfg["data"].get("test_files")
     if test_files and set(test_files) != set(train_files):
         # cross_test 模式：ensemble 给外部测试集打分，在外部测试集评估/审计
@@ -163,6 +274,10 @@ def main(argv=None):
             "train_fold_metrics": fold_metrics,
         })
         summary.update(test_agg)
+        # This is the deployable external-test operating point: the threshold
+        # was fixed from train OOF and is NOT re-selected from test labels.
+        operating_point["test_metrics"] = evaluate_at_threshold(
+            eval_y, eval_proba, decision_threshold)
     else:
         # in_sample 模式（行为同上一里程碑）
         eval_df = df
@@ -180,6 +295,8 @@ def main(argv=None):
             "fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
             "fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
         })
+
+    summary["operating_point"] = operating_point
 
     summary.update({
         "cv_folds": len(fold_metrics),
@@ -199,9 +316,16 @@ def main(argv=None):
         top_n=int(audit_cfg.get("suspect_top_n", 200)))
     susp.to_csv(suspects_path, index=False)
 
-    logging.info("CV(%s) done: AUC=%.4f FNR@FPR5=%.4f; %d suspects -> %s",
-                 summary["mode"], summary["auc"], summary["fnr_at_fpr5"],
-                 len(susp), suspects_path)
+    applied = operating_point.get(
+        "test_metrics", operating_point["train_oof_metrics"])
+    logging.info(
+        "CV(%s) done: AUC=%.4f; target FPR<=%.3f, threshold=%.6g, "
+        "observed FPR=%s, pos recall=%s; %d suspects -> %s",
+        summary["mode"], summary["auc"], target_fpr, decision_threshold,
+        "n/a" if applied["fpr"] is None else f'{applied["fpr"]:.4f}',
+        "n/a" if applied["pos_recall"] is None
+        else f'{applied["pos_recall"]:.4f}',
+        len(susp), suspects_path)
     return summary
 
 
