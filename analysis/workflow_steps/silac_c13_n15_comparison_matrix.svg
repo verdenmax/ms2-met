@@ -1,0 +1,354 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000"
+     viewBox="0 0 1600 1000">
+  <title>SILAC, carbon-13, and nitrogen-15 metabolic labeling comparison</title>
+  <desc>Matrix comparison using the example peptide YLYEIAR. Light is cyan and
+    Heavy is green. SILAC labels the terminal arginine in this peptide, whereas
+    uniform 13C and 15N labeling shift every fragment according to its elemental
+    composition.</desc>
+  <defs>
+    <marker id="matrix-axis-arrow" viewBox="0 0 10 10" refX="8.4" refY="5"
+            markerWidth="9" markerHeight="9" orient="auto"
+            markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#2B2B2B"/>
+    </marker>
+    <linearGradient id="matrix-light-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E2F4F8"/>
+      <stop offset="1" stop-color="#BEE8F1"/>
+    </linearGradient>
+    <linearGradient id="matrix-heavy-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#DDF2EC"/>
+      <stop offset="1" stop-color="#91D1C2"/>
+    </linearGradient>
+    <style>
+      .font { font-family: Arial, Helvetica, sans-serif; }
+      .body { fill: #2B2B2B; }
+      .muted { fill: #59667A; }
+      .light-text { fill: #2D7292; }
+      .heavy-text { fill: #145C50; }
+      .purple-text { fill: #8B68AD; }
+      .axis { fill: none; stroke: #44546A; stroke-width: 2.5;
+              stroke-linecap: round; }
+      .divider { fill: none; stroke: #8491B4; stroke-width: 1.8;
+                 stroke-dasharray: 8 7; }
+      .light-peak { stroke: #4DBBD5; stroke-width: 6; stroke-linecap: round; }
+      .heavy-peak { stroke: #00A087; stroke-width: 6; stroke-linecap: round; }
+      .pair { fill: none; stroke: #8B68AD; stroke-width: 1.8;
+              stroke-dasharray: 4 3; stroke-linecap: round; }
+      .section-label { font-size: 15px; font-weight: 700; letter-spacing: 1.2px; }
+      .small { font-size: 14px; }
+    </style>
+  </defs>
+
+  <g id="matrix-header" class="font">
+    <text x="800" y="50" text-anchor="middle" font-size="32" font-weight="700"
+          fill="#2B2B2B">SILAC vs. ¹³C vs. ¹⁵N Metabolic Labeling</text>
+    <text x="800" y="78" text-anchor="middle" font-size="16"
+          fill="#59667A">Same peptide, different rules for precursor and fragment-ion mass shifts</text>
+    <g transform="translate(660 91)" font-size="15" font-weight="700">
+      <rect x="0" y="0" width="18" height="18" rx="4" fill="#4DBBD5"/>
+      <text x="27" y="15" fill="#2D7292">Light</text>
+      <rect x="104" y="0" width="18" height="18" rx="4" fill="#00A087"/>
+      <text x="131" y="15" fill="#145C50">Heavy</text>
+    </g>
+  </g>
+
+  <!-- Shared row labels. -->
+  <g class="font section-label muted" text-anchor="middle">
+    <text x="44" y="245" transform="rotate(-90 44 245)">LABELING RULE</text>
+    <text x="44" y="420" transform="rotate(-90 44 420)">MS1 PRECURSOR</text>
+    <text x="44" y="650" transform="rotate(-90 44 650)">MS2 FRAGMENTS</text>
+    <text x="44" y="850" transform="rotate(-90 44 850)">MASS-SHIFT RULE</text>
+  </g>
+
+  <!-- SILAC column. -->
+  <g id="silac-column" class="font">
+    <rect x="85" y="120" width="475" height="805" rx="28"
+          fill="#D2EEF4" fill-opacity="0.44" stroke="#3C5488" stroke-width="2.2"/>
+    <rect x="85" y="120" width="475" height="58" rx="28"
+          fill="#D2EEF4" fill-opacity="0.96"/>
+    <path d="M85 178 H560" class="divider"/>
+    <text x="322.5" y="157" text-anchor="middle" font-size="25" font-weight="700"
+          fill="#3C5488">SILAC</text>
+    <text x="322.5" y="199" text-anchor="middle" font-size="15" font-weight="700"
+          fill="#59667A">K/R residues only</text>
+
+    <!-- Peptide: only terminal Arg is Heavy. -->
+    <g stroke-linecap="round" stroke-linejoin="round">
+      <path d="M166 238 H442" fill="none" stroke="#8491B4" stroke-width="2"/>
+      <g fill="url(#matrix-light-fill)" stroke="#4DBBD5" stroke-width="2">
+        <circle cx="166" cy="238" r="17"/><circle cx="212" cy="238" r="17"/>
+        <circle cx="258" cy="238" r="17"/><circle cx="304" cy="238" r="17"/>
+        <circle cx="350" cy="238" r="17"/><circle cx="396" cy="238" r="17"/>
+      </g>
+      <circle cx="442" cy="238" r="19" fill="#00A087" stroke="#FFFFFF" stroke-width="2"/>
+      <g text-anchor="middle" font-size="13" font-weight="700" fill="#273A63">
+        <text x="166" y="243">Y</text><text x="212" y="243">L</text>
+        <text x="258" y="243">Y</text><text x="304" y="243">E</text>
+        <text x="350" y="243">I</text><text x="396" y="243">A</text>
+        <text x="442" y="243" fill="#FFFFFF">R*</text>
+      </g>
+    </g>
+    <rect x="190" y="272" width="265" height="30" rx="15"
+          fill="#FFFFFF" fill-opacity="0.78" stroke="#00A087" stroke-width="1.5"/>
+    <text x="322.5" y="293" text-anchor="middle" font-size="14" font-weight="700"
+          fill="#145C50">Arg10 = ¹³C₆¹⁵N₄</text>
+    <path d="M105 318 H540" class="divider"/>
+
+    <!-- MS1 precursor. -->
+    <text x="110" y="344" font-size="16" font-weight="700" fill="#3C5488">MS1 precursor</text>
+    <g stroke-linecap="round">
+      <path d="M125 476 H525" class="axis" marker-end="url(#matrix-axis-arrow)"/>
+      <g class="light-peak">
+        <path d="M184 476 V402"/><path d="M207 476 V370"/>
+        <path d="M230 476 V416"/><path d="M253 476 V449"/>
+      </g>
+      <g class="heavy-peak">
+        <path d="M374 476 V406"/><path d="M397 476 V376"/>
+        <path d="M420 476 V420"/><path d="M443 476 V451"/>
+      </g>
+      <path d="M184 390 V365 H374 V394" class="pair"/>
+      <text x="279" y="355" text-anchor="middle" font-size="14" font-weight="700"
+            fill="#8B68AD">Δm/z = 10.008275 / z</text>
+      <text x="180" y="500" font-size="13" font-weight="700" fill="#2D7292">Light</text>
+      <text x="366" y="500" font-size="13" font-weight="700" fill="#145C50">Heavy</text>
+      <text x="520" y="500" text-anchor="end" font-size="13" font-style="italic"
+            fill="#44546A">m/z</text>
+    </g>
+    <path d="M105 520 H540" class="divider"/>
+
+    <!-- MS2 mirror spectrum. -->
+    <text x="110" y="546" font-size="16" font-weight="700" fill="#3C5488">MS2 fragments</text>
+    <g stroke-linecap="round">
+      <path d="M125 661 H525" class="axis" marker-end="url(#matrix-axis-arrow)"/>
+      <g class="light-peak">
+        <path d="M185 661 V606"/><path d="M270 661 V577"/>
+        <path d="M355 661 V592"/><path d="M448 661 V566"/>
+      </g>
+      <g class="heavy-peak">
+        <path d="M185 661 V713"/><path d="M270 661 V738"/>
+        <path d="M373 661 V725"/><path d="M466 661 V752"/>
+      </g>
+      <g text-anchor="middle" font-size="12.5" font-weight="700" fill="#2D7292">
+        <text x="185" y="597">b3</text><text x="270" y="568">b5</text>
+        <text x="355" y="583">y3</text><text x="448" y="557">y5</text>
+      </g>
+      <path d="M355 657 V651 H373 V657 M448 657 V651 H466 V657" class="pair"/>
+      <text x="227" y="687" text-anchor="middle" font-size="12.5" font-weight="700"
+            fill="#59667A">b ions aligned</text>
+      <text x="411" y="687" text-anchor="middle" font-size="12.5" font-weight="700"
+            fill="#8B68AD">y ions +Arg10</text>
+      <text x="520" y="681" text-anchor="end" font-size="13" font-style="italic"
+            fill="#44546A">m/z</text>
+    </g>
+    <path d="M105 775 H540" class="divider"/>
+
+    <g text-anchor="middle">
+      <text x="322.5" y="808" font-size="15" font-weight="700" fill="#3C5488">Site-specific labeling</text>
+      <text x="322.5" y="839" font-size="15" font-weight="700" fill="#2B2B2B">Precursor ΔM = 10.008275 Da</text>
+      <text x="322.5" y="869" font-size="14" fill="#2B2B2B">ΔM<tspan baseline-shift="sub" font-size="10">fragment</tspan> = Σ labeled K/R</text>
+      <text x="322.5" y="897" font-size="13.5" fill="#59667A">Only fragments carrying K/R shift</text>
+    </g>
+  </g>
+
+  <!-- Uniform carbon-13 column. -->
+  <g id="c13-column" class="font">
+    <rect x="575" y="120" width="475" height="805" rx="28"
+          fill="#E8F5F1" fill-opacity="0.50" stroke="#00A087" stroke-width="2.2"/>
+    <rect x="575" y="120" width="475" height="58" rx="28"
+          fill="#E8F5F1" fill-opacity="0.98"/>
+    <path d="M575 178 H1050" class="divider"/>
+    <text x="812.5" y="157" text-anchor="middle" font-size="25" font-weight="700"
+          fill="#00A087">Uniform ¹³C</text>
+    <text x="812.5" y="199" text-anchor="middle" font-size="15" font-weight="700"
+          fill="#59667A">All carbon atoms</text>
+
+    <!-- Peptide plus whole-peptide carbon atom band. -->
+    <g stroke-linecap="round" stroke-linejoin="round">
+      <path d="M656 231 H932" fill="none" stroke="#8491B4" stroke-width="2"/>
+      <g fill="url(#matrix-light-fill)" stroke="#4DBBD5" stroke-width="2">
+        <circle cx="656" cy="231" r="17"/><circle cx="702" cy="231" r="17"/>
+        <circle cx="748" cy="231" r="17"/><circle cx="794" cy="231" r="17"/>
+        <circle cx="840" cy="231" r="17"/><circle cx="886" cy="231" r="17"/>
+        <circle cx="932" cy="231" r="17"/>
+      </g>
+      <g text-anchor="middle" font-size="13" font-weight="700" fill="#273A63">
+        <text x="656" y="236">Y</text><text x="702" y="236">L</text>
+        <text x="748" y="236">Y</text><text x="794" y="236">E</text>
+        <text x="840" y="236">I</text><text x="886" y="236">A</text>
+        <text x="932" y="236">R</text>
+      </g>
+    </g>
+    <rect x="666" y="265" width="293" height="37" rx="18.5"
+          fill="url(#matrix-heavy-fill)" stroke="#00A087" stroke-width="1.7"/>
+    <g fill="#00A087">
+      <circle cx="688" cy="283.5" r="6"/><circle cx="711" cy="283.5" r="6"/>
+      <circle cx="734" cy="283.5" r="6"/><circle cx="891" cy="283.5" r="6"/>
+      <circle cx="914" cy="283.5" r="6"/><circle cx="937" cy="283.5" r="6"/>
+    </g>
+    <text x="812.5" y="289" text-anchor="middle" font-size="14" font-weight="700"
+          fill="#145C50">all 44 C → ¹³C</text>
+    <path d="M595 318 H1030" class="divider"/>
+
+    <!-- MS1 precursor. -->
+    <text x="600" y="344" font-size="16" font-weight="700" fill="#3C5488">MS1 precursor</text>
+    <g stroke-linecap="round">
+      <path d="M615 476 H1015" class="axis" marker-end="url(#matrix-axis-arrow)"/>
+      <g class="light-peak">
+        <path d="M664 476 V402"/><path d="M687 476 V370"/>
+        <path d="M710 476 V416"/><path d="M733 476 V449"/>
+      </g>
+      <g class="heavy-peak">
+        <path d="M884 476 V406"/><path d="M907 476 V376"/>
+        <path d="M930 476 V420"/><path d="M953 476 V451"/>
+      </g>
+      <path d="M664 390 V365 H884 V394" class="pair"/>
+      <text x="774" y="355" text-anchor="middle" font-size="14" font-weight="700"
+            fill="#8B68AD">Δm/z = (44 × 1.003355) / z</text>
+      <text x="660" y="500" font-size="13" font-weight="700" fill="#2D7292">Light</text>
+      <text x="876" y="500" font-size="13" font-weight="700" fill="#145C50">Heavy</text>
+      <text x="1010" y="500" text-anchor="end" font-size="13" font-style="italic"
+            fill="#44546A">m/z</text>
+    </g>
+    <path d="M595 520 H1030" class="divider"/>
+
+    <!-- MS2 mirror spectrum: variable offsets by fragment carbon count. -->
+    <text x="600" y="546" font-size="16" font-weight="700" fill="#3C5488">MS2 fragments</text>
+    <g stroke-linecap="round">
+      <path d="M615 661 H1015" class="axis" marker-end="url(#matrix-axis-arrow)"/>
+      <g class="light-peak">
+        <path d="M675 661 V606"/><path d="M760 661 V577"/>
+        <path d="M845 661 V592"/><path d="M938 661 V566"/>
+      </g>
+      <g class="heavy-peak">
+        <path d="M688 661 V713"/><path d="M779 661 V738"/>
+        <path d="M853 661 V725"/><path d="M954 661 V752"/>
+      </g>
+      <g text-anchor="middle" font-size="12.5" font-weight="700" fill="#2D7292">
+        <text x="675" y="597">b3</text><text x="760" y="568">b5</text>
+        <text x="845" y="583">y3</text><text x="938" y="557">y5</text>
+      </g>
+      <path d="M675 657 V651 H688 V657 M760 657 V651 H779 V657
+               M845 657 V651 H853 V657 M938 657 V651 H954 V657" class="pair"/>
+      <g text-anchor="middle" font-size="11.5" font-weight="700" fill="#8B68AD">
+        <text x="681.5" y="687">24 C</text><text x="769.5" y="687">35 C</text>
+        <text x="849" y="687">15 C</text><text x="946" y="687">29 C</text>
+      </g>
+      <text x="1010" y="681" text-anchor="end" font-size="13" font-style="italic"
+            fill="#44546A">m/z</text>
+    </g>
+    <path d="M595 775 H1030" class="divider"/>
+
+    <g text-anchor="middle">
+      <text x="812.5" y="808" font-size="15" font-weight="700" fill="#00A087">Composition-dependent labeling</text>
+      <text x="812.5" y="839" font-size="15" font-weight="700" fill="#2B2B2B">Precursor: n(C) = 44; ΔM = 44.147620 Da</text>
+      <text x="812.5" y="869" font-size="14" fill="#2B2B2B">ΔM<tspan baseline-shift="sub" font-size="10">fragment</tspan> = n<tspan baseline-shift="sub" font-size="10">fragment</tspan>(C) × 1.003355 Da</text>
+      <text x="812.5" y="897" font-size="13.5" fill="#59667A">Every fragment shifts by its own C count</text>
+    </g>
+  </g>
+
+  <!-- Uniform nitrogen-15 column. -->
+  <g id="n15-column" class="font">
+    <rect x="1065" y="120" width="475" height="805" rx="28"
+          fill="#F1EEF7" fill-opacity="0.56" stroke="#8B68AD" stroke-width="2.2"/>
+    <rect x="1065" y="120" width="475" height="58" rx="28"
+          fill="#F1EEF7" fill-opacity="0.98"/>
+    <path d="M1065 178 H1540" class="divider"/>
+    <text x="1302.5" y="157" text-anchor="middle" font-size="25" font-weight="700"
+          fill="#8B68AD">Uniform ¹⁵N</text>
+    <text x="1302.5" y="199" text-anchor="middle" font-size="15" font-weight="700"
+          fill="#59667A">All nitrogen atoms</text>
+
+    <!-- Peptide plus whole-peptide nitrogen atom band. -->
+    <g stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1146 231 H1422" fill="none" stroke="#8491B4" stroke-width="2"/>
+      <g fill="url(#matrix-light-fill)" stroke="#4DBBD5" stroke-width="2">
+        <circle cx="1146" cy="231" r="17"/><circle cx="1192" cy="231" r="17"/>
+        <circle cx="1238" cy="231" r="17"/><circle cx="1284" cy="231" r="17"/>
+        <circle cx="1330" cy="231" r="17"/><circle cx="1376" cy="231" r="17"/>
+        <circle cx="1422" cy="231" r="17"/>
+      </g>
+      <g text-anchor="middle" font-size="13" font-weight="700" fill="#273A63">
+        <text x="1146" y="236">Y</text><text x="1192" y="236">L</text>
+        <text x="1238" y="236">Y</text><text x="1284" y="236">E</text>
+        <text x="1330" y="236">I</text><text x="1376" y="236">A</text>
+        <text x="1422" y="236">R</text>
+      </g>
+    </g>
+    <rect x="1156" y="265" width="293" height="37" rx="18.5"
+          fill="#EEE8F5" stroke="#8B68AD" stroke-width="1.7"/>
+    <g fill="#8B68AD">
+      <circle cx="1178" cy="283.5" r="6"/><circle cx="1201" cy="283.5" r="6"/>
+      <circle cx="1224" cy="283.5" r="6"/><circle cx="1381" cy="283.5" r="6"/>
+      <circle cx="1404" cy="283.5" r="6"/><circle cx="1427" cy="283.5" r="6"/>
+    </g>
+    <text x="1302.5" y="289" text-anchor="middle" font-size="14" font-weight="700"
+          fill="#6E4E91">all 10 N → ¹⁵N</text>
+    <path d="M1085 318 H1520" class="divider"/>
+
+    <!-- MS1 precursor. -->
+    <text x="1090" y="344" font-size="16" font-weight="700" fill="#3C5488">MS1 precursor</text>
+    <g stroke-linecap="round">
+      <path d="M1105 476 H1505" class="axis" marker-end="url(#matrix-axis-arrow)"/>
+      <g class="light-peak">
+        <path d="M1164 476 V402"/><path d="M1187 476 V370"/>
+        <path d="M1210 476 V416"/><path d="M1233 476 V449"/>
+      </g>
+      <g class="heavy-peak">
+        <path d="M1350 476 V406"/><path d="M1373 476 V376"/>
+        <path d="M1396 476 V420"/><path d="M1419 476 V451"/>
+      </g>
+      <path d="M1164 390 V365 H1350 V394" class="pair"/>
+      <text x="1257" y="355" text-anchor="middle" font-size="14" font-weight="700"
+            fill="#8B68AD">Δm/z = (10 × 0.997035) / z</text>
+      <text x="1160" y="500" font-size="13" font-weight="700" fill="#2D7292">Light</text>
+      <text x="1342" y="500" font-size="13" font-weight="700" fill="#145C50">Heavy</text>
+      <text x="1500" y="500" text-anchor="end" font-size="13" font-style="italic"
+            fill="#44546A">m/z</text>
+    </g>
+    <path d="M1085 520 H1520" class="divider"/>
+
+    <!-- MS2 mirror spectrum: variable offsets by fragment nitrogen count. -->
+    <text x="1090" y="546" font-size="16" font-weight="700" fill="#3C5488">MS2 fragments</text>
+    <g stroke-linecap="round">
+      <path d="M1105 661 H1505" class="axis" marker-end="url(#matrix-axis-arrow)"/>
+      <g class="light-peak">
+        <path d="M1165 661 V606"/><path d="M1250 661 V577"/>
+        <path d="M1335 661 V592"/><path d="M1428 661 V566"/>
+      </g>
+      <g class="heavy-peak">
+        <path d="M1173 661 V713"/><path d="M1263 661 V738"/>
+        <path d="M1351 661 V725"/><path d="M1449 661 V752"/>
+      </g>
+      <g text-anchor="middle" font-size="12.5" font-weight="700" fill="#2D7292">
+        <text x="1165" y="597">b3</text><text x="1250" y="568">b5</text>
+        <text x="1335" y="583">y3</text><text x="1428" y="557">y5</text>
+      </g>
+      <path d="M1165 657 V651 H1173 V657 M1250 657 V651 H1263 V657
+               M1335 657 V651 H1351 V657 M1428 657 V651 H1449 V657" class="pair"/>
+      <g text-anchor="middle" font-size="11.5" font-weight="700" fill="#8B68AD">
+        <text x="1169" y="687">3 N</text><text x="1256.5" y="687">5 N</text>
+        <text x="1343" y="687">6 N</text><text x="1438.5" y="687">8 N</text>
+      </g>
+      <text x="1500" y="681" text-anchor="end" font-size="13" font-style="italic"
+            fill="#44546A">m/z</text>
+    </g>
+    <path d="M1085 775 H1520" class="divider"/>
+
+    <g text-anchor="middle">
+      <text x="1302.5" y="808" font-size="15" font-weight="700" fill="#8B68AD">Composition-dependent labeling</text>
+      <text x="1302.5" y="839" font-size="15" font-weight="700" fill="#2B2B2B">Precursor: n(N) = 10; ΔM = 9.970350 Da</text>
+      <text x="1302.5" y="869" font-size="14" fill="#2B2B2B">ΔM<tspan baseline-shift="sub" font-size="10">fragment</tspan> = n<tspan baseline-shift="sub" font-size="10">fragment</tspan>(N) × 0.997035 Da</text>
+      <text x="1302.5" y="897" font-size="13.5" fill="#59667A">Every fragment shifts by its own N count</text>
+    </g>
+  </g>
+
+  <g id="matrix-summary" class="font">
+    <rect x="85" y="945" width="1455" height="38" rx="19"
+          fill="#FFFFFF" fill-opacity="0.84" stroke="#8491B4" stroke-width="1.5"/>
+    <circle cx="113" cy="964" r="6" fill="#3C5488"/>
+    <text x="800" y="969" text-anchor="middle" font-size="16" font-weight="700"
+          fill="#2B2B2B">SILAC: site-specific fragment shifts  |  ¹³C / ¹⁵N: composition-dependent shifts in every fragment</text>
+    <text x="1523" y="937" text-anchor="end" font-size="12" font-style="italic"
+          fill="#8491B4">schematic, not to scale</text>
+  </g>
+</svg>
