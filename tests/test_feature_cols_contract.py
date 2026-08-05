@@ -51,3 +51,12 @@ def test_heavy_out_of_range_is_retained_as_feature():
     # post-filter it is constant-0, but it is NOT excluded -> still a feature col
     feats = set(resolve_feature_cols([], [_FIXTURE], "label"))
     assert "heavy_out_of_range" in feats
+
+
+def test_hard_negative_provenance_is_always_metadata():
+    expected = {
+        "rt", "negative_source", "negative_confidence", "query_id",
+        "parent_id", "group_id", "generator", "generator_seed",
+        "heavy_confirmed",
+    }
+    assert expected <= META_COLUMNS

@@ -100,6 +100,7 @@ def process_psm_pair_shared(
         "sequence": psm1._sequence,
         "charge": psm1._charge,
         "precursor_mz": psm1._precursor_mz,
+        "rt": float(psm1._rt),
         "raw_title1": psm1._raw_title,
         "raw_title2": psm2._raw_title,
         "protein_names": psm1._protein_names,
@@ -135,6 +136,9 @@ def _make_result_row_single(psm, features: dict) -> dict:
         "sequence": psm._sequence,
         "charge": psm._charge,
         "precursor_mz": psm._precursor_mz,
+        # getattr keeps the row helper compatible with lightweight test/
+        # third-party PSM stand-ins; real PSMInfo always carries _rt.
+        "rt": float(getattr(psm, "_rt", float("nan"))),
         "raw_title1": psm._raw_title,
         "protein_names": psm._protein_names,
         "sequence_len": len(psm._sequence),
@@ -237,6 +241,7 @@ def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
                 "sequence": psm1._sequence,
                 "charge": psm1._charge,
                 "precursor_mz": psm1._precursor_mz,
+                "rt": float(psm1._rt),
                 "raw_title1": psm1._raw_title,
                 "raw_title2": psm2._raw_title,
                 "protein_names": psm1._protein_names,
@@ -310,6 +315,7 @@ def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, co
                 "sequence": psm1._sequence,
                 "charge": psm1._charge,
                 "precursor_mz": psm1._precursor_mz,
+                "rt": float(psm1._rt),
                 "raw_title1": psm1._raw_title,
                 "raw_title2": psm2._raw_title,
                 "protein_names": psm1._protein_names,

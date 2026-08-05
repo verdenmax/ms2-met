@@ -35,6 +35,7 @@ def test_single_flow_writes_numeric_label_from_label_type():
     assert row_pos["feat1"] == 1.0
     # other required keys still present
     assert row_pos["sequence"] == "HUMAN_PEP"
+    assert row_pos["rt"] == pytest.approx(1.0)
     assert "raw_title1" in row_pos
 
     # None label_type must raise (no silent NaN labels)

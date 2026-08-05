@@ -109,14 +109,16 @@ def test_inner_split_no_leak_grouped():
     assert set(y.iloc[val]) == {0, 1}
 
 
-def test_inner_split_rejects_mixed_label_groups():
+def test_inner_split_supports_parent_positive_with_synthetic_negative_group():
     import cv_train
     X = pd.DataFrame({"f": np.arange(12)})
     groups = pd.Series(np.repeat(np.arange(6), 2))
-    y = pd.Series([0, 1] * 6)  # every group conflicts
-    with pytest.raises(ValueError, match="mixed-label groups"):
-        cv_train._inner_split(
-            X, y, groups, np.arange(12), valid_size=0.25, seed=42)
+    y = pd.Series([0, 1] * 6)  # synthetic negative + parent positive
+    tr, val = cv_train._inner_split(
+        X, y, groups, np.arange(12), valid_size=0.34, seed=42)
+    assert set(groups.iloc[tr]).isdisjoint(set(groups.iloc[val]))
+    assert set(y.iloc[tr]) == {0, 1}
+    assert set(y.iloc[val]) == {0, 1}
 
 
 def test_validate_split_counts_rejects_too_few_minority_groups():

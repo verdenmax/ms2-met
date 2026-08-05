@@ -36,7 +36,9 @@ logger = logging.getLogger(__name__)
 META_COLUMNS = {
     "sequence", "charge", "raw_title1", "raw_title2",
     "protein_names", "label", "label_type",
-    "precursor_mz", "sequence_len",
+    "precursor_mz", "sequence_len", "rt",
+    "negative_source", "negative_confidence", "query_id", "parent_id",
+    "group_id", "generator", "generator_seed", "heavy_confirmed",
 }
 
 

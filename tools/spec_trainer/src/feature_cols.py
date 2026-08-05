@@ -14,7 +14,12 @@ import pandas as pd
 META_COLUMNS = {
     "sequence", "charge", "raw_title1", "raw_title2",
     "protein_names", "label", "label_type",
-    "precursor_mz", "sequence_len",
+    "precursor_mz", "sequence_len", "rt",
+    # Hard-negative builder provenance. These columns are for leak-free
+    # splitting and source audits only; exposing them to a model would make
+    # the synthetic generator itself a label proxy.
+    "negative_source", "negative_confidence", "query_id", "parent_id",
+    "group_id", "generator", "generator_seed", "heavy_confirmed",
 }
 
 # 额外排除的特征列。理由分两类:

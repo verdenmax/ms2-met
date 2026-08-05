@@ -53,10 +53,12 @@ def _inner_split(X, y, groups, tr_idx, valid_size, seed):
 
     Returns (tr2, val) as GLOBAL positional indices — both subsets of tr_idx,
     so the val set never overlaps the OOF test fold. When groups are given,
-    split at group level and stratify by the (required unique) label of each
-    group. Without groups, stratify rows.
+    split at group level and choose the deterministic candidate closest to
+    the global class ratio. Mixed-label groups are supported because a
+    synthetic negative shares its parent positive's group. Without groups,
+    stratify rows.
     """
-    from sklearn.model_selection import StratifiedShuffleSplit
+    from sklearn.model_selection import GroupShuffleSplit, StratifiedShuffleSplit
     if groups is not None:
         part = pd.DataFrame({
             "group": groups.iloc[tr_idx].to_numpy(),
@@ -64,30 +66,33 @@ def _inner_split(X, y, groups, tr_idx, valid_size, seed):
         })
         if part["group"].isna().any():
             raise ValueError("group_col contains missing values")
-        label_counts = part.groupby("group", sort=False)["label"].nunique()
-        mixed = label_counts[label_counts != 1]
-        if len(mixed):
-            examples = mixed.index.tolist()[:5]
+        # Synthetic negatives deliberately share a group with their parent
+        # positive. A one-label-per-group assumption would either reject this
+        # leak-safe representation or force the derived pair across folds.
+        # GroupShuffleSplit supports mixed-label groups; try several
+        # deterministic candidates and retain the one closest to the global
+        # class ratio while keeping both classes on both sides.
+        splitter = GroupShuffleSplit(
+            n_splits=64, test_size=valid_size, random_state=seed)
+        global_rate = float(part["label"].mean())
+        best = None
+        for loc_tr, loc_val in splitter.split(
+                np.zeros(len(part)), part["label"], part["group"]):
+            y_tr = part.iloc[loc_tr]["label"]
+            y_val = part.iloc[loc_val]["label"]
+            if y_tr.nunique() < 2 or y_val.nunique() < 2:
+                continue
+            size_error = abs(len(loc_val) / len(part) - valid_size)
+            ratio_error = abs(float(y_val.mean()) - global_rate)
+            score = ratio_error + size_error
+            if best is None or score < best[0]:
+                best = (score, loc_tr, loc_val)
+        if best is None:
             raise ValueError(
-                "grouped stratification requires one label per group; "
-                f"found {len(mixed)} mixed-label groups, examples={examples}")
-
-        group_table = part.drop_duplicates("group", keep="first")
-        inner = StratifiedShuffleSplit(
-            n_splits=1, test_size=valid_size, random_state=seed)
-        try:
-            group_tr, group_val = next(inner.split(
-                np.zeros(len(group_table)), group_table["label"].to_numpy()))
-        except ValueError as exc:
-            raise ValueError(
-                "cannot create a stratified grouped early-stopping split; "
-                "each class needs enough sequence groups. Reduce valid_size "
-                "or CV folds, or add more minority-class sequences"
-            ) from exc
-        train_groups = set(group_table.iloc[group_tr]["group"])
-        valid_groups = set(group_table.iloc[group_val]["group"])
-        loc_tr = np.flatnonzero(part["group"].isin(train_groups).to_numpy())
-        loc_val = np.flatnonzero(part["group"].isin(valid_groups).to_numpy())
+                "cannot create a grouped early-stopping split containing "
+                "both labels on each side. Reduce valid_size/CV folds or add "
+                "more independent positive and negative groups")
+        _, loc_tr, loc_val = best
     else:
         inner = StratifiedShuffleSplit(n_splits=1, test_size=valid_size,
                                        random_state=seed)
@@ -114,13 +119,13 @@ def _split_counts(y, groups, idx):
     })
     grouped = part.groupby("group", sort=False)["label"]
     nunique = grouped.nunique()
-    first = grouped.first()
-    pure = nunique == 1
+    has_pos = grouped.apply(lambda s: bool((s == 1).any()))
+    has_neg = grouped.apply(lambda s: bool((s == 0).any()))
     out.update({
         "n_groups": int(len(nunique)),
-        "n_pos_groups": int(((first == 1) & pure).sum()),
-        "n_neg_groups": int(((first == 0) & pure).sum()),
-        "n_mixed_groups": int((~pure).sum()),
+        "n_pos_groups": int(has_pos.sum()),
+        "n_neg_groups": int(has_neg.sum()),
+        "n_mixed_groups": int(((has_pos) & (has_neg)).sum()),
     })
     return out
 
@@ -132,10 +137,6 @@ def _validate_split_counts(fold, split_counts, min_class_groups, grouped):
             raise ValueError(
                 f"fold {fold} {split_name} has a missing class: {counts}")
         if grouped:
-            if counts["n_mixed_groups"]:
-                raise ValueError(
-                    f"fold {fold} {split_name} contains mixed-label groups: "
-                    f"{counts}")
             minority = min(counts["n_pos_groups"], counts["n_neg_groups"])
             if minority < min_class_groups:
                 raise ValueError(

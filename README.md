@@ -73,6 +73,12 @@ python -m tools.speclib_inspect \
     --library-dir <谱库目录> \
     --fasta merge_human_ecoli_yeast.fasta --mod modification.ini \
     --element element.ini --aa aa.ini --mass-limit 300000
+
+# 6 · 构造训练专用 synthetic hard negatives（两阶段，中间运行外部 DIA 搜索）
+cp training_set_builder.ini.example training_set_builder.ini
+python -m tools.training_set_builder generate --config training_set_builder.ini
+# search generated FASTA in TRAIN raws, then extract ordinary features.csv
+python -m tools.training_set_builder assemble --config training_set_builder.ini
 ```
 
 依赖安装 / install deps: `pip install -r requirements.txt`（本机推荐用 conda 管理环境）。

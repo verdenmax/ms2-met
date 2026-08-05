@@ -1,0 +1,71 @@
+[queries]
+# Curated TRAIN-raw positives. The table may be CSV/TSV or extract_common JSON.
+# By default every retained row must carry heavy_confirmed=1.
+positives = ./datasets/train_confirmed_positive_psms.csv
+target_fasta = /path/to/target_proteome.fasta
+# Optional second exclusion index.
+contaminant_fasta =
+
+labeling = silac
+confirmation_column = heavy_confirmed
+require_confirmation = true
+exclude_modified = true
+require_tryptic_c_terminus = true
+
+# Two independent generators. They create search queries, not training rows.
+shuffle_per_parent = 1
+markov_per_parent = 1
+markov_order = 2
+seed = 42
+min_length = 7
+max_length = 40
+max_attempts = 500
+
+# Markov candidates are matched to the parent's bins, not exact composition.
+mz_bin_width = 50
+shift_bin_width = 20
+
+output_manifest = ./datasets/synthetic_queries.tsv
+output_fasta = ./datasets/synthetic_queries.fasta
+
+[assembly]
+# All three paths below must contain ordinary ms2-met feature rows.
+# positive_features contains independently light+heavy-confirmed positives.
+positive_features = ./runs/train_positive/features.csv
+gold_features = ./runs/train_gold_entrapment/features.csv
+
+# Results after synthetic_queries.fasta has been searched in TRAIN raw files
+# and the reported precursor/peak groups have passed through ms2-met.
+silver_features = ./runs/train_synthetic/features.csv
+query_manifest = ./datasets/synthetic_queries.tsv
+
+target_fasta = /path/to/target_proteome.fasta
+contaminant_fasta =
+labeling = silac
+
+# Immutable real test rows are used only for a raw-overlap leakage check.
+heldout_features = ./runs/heldout_real/features.csv
+require_heldout = true
+
+confirmation_column = heavy_confirmed
+require_confirmation = true
+
+# Physical-signal gates for a Silver hard negative.
+light_fragment_column = all_count
+heavy_fragment_column = q1a_TP_shifted
+min_light_fragments = 2
+min_heavy_fragments = 2
+min_light_precursor_intensity = 0
+min_heavy_precursor_intensity = 0
+
+# Keep all unique rows; cap each Silver source within every positive bin.
+silver_per_positive_per_source = 1.0
+distribution_columns = charge, precursor_mz, sequence_len, total_silac_shift, psm_is_split_window, rt
+precursor_mz_bin_width = 50
+sequence_len_bin_width = 3
+total_shift_bin_width = 20
+rt_bin_width = 5
+seed = 42
+
+output_features = ./datasets/hard_negative_training.csv
+output_audit = ./datasets/hard_negative_training.audit.json
