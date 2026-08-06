@@ -75,6 +75,9 @@ def _observed_light_map(psm, dia_data, xic_cycle_window, mass_tol_ppm) -> dict:
     """
     out = {}
     seq_len = len(psm._sequence)
+    # Only the light masses are consumed below; they are chemistry-independent.
+    # SILAC is intentional here to avoid imposing the uniform-label PTM guard
+    # on this light-spectrum-only diagnostic.
     b_ions, y_ions = psm.get_fragment_ions(HeavyType.SILAC)
     for ion_type, ion_num, light_mass, _heavy_mass in (b_ions + y_ions):
         xic, _all = dia_data.xic_ms2_peaks_extract(

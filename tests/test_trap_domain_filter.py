@@ -5,7 +5,9 @@ are derived directly from spec §12.1 (class 1 = L0/L1 homolog, class 3 =
 heavy out of window; class 1 takes precedence).
 """
 import pandas as pd
+import pytest
 
+from spectrum.psm_info import HeavyType
 from tools.trap_domain_filter import (
     beyond_tool_limit, annotate_traps, has_label_site)
 
@@ -28,20 +30,23 @@ def test_genuine_trap_in_window_is_kept():
 
 def test_no_label_site_is_dropped():
     # peptide with no K/R -> heavy == light -> SILAC undefined (class 4)
-    assert beyond_tool_limit("L4", 0, has_kr=False) == (True, "no_label_site")
+    assert beyond_tool_limit(
+        "L4", 0, has_label_site_for_mode=False) == (True, "no_label_site")
 
 
-def test_has_kr_defaults_true_keeps_genuine_trap():
-    # default has_kr=True preserves the original 2-arg behavior
+def test_label_site_defaults_true_keeps_genuine_trap():
+    # Default label-site=True preserves the original two-argument behavior.
     assert beyond_tool_limit("L4", 0) == (False, None)
 
 
 def test_homolog_takes_precedence_over_no_label_site():
-    assert beyond_tool_limit("L0", 0, has_kr=False) == (True, "homolog_L0")
+    assert beyond_tool_limit(
+        "L0", 0, has_label_site_for_mode=False) == (True, "homolog_L0")
 
 
 def test_no_label_site_takes_precedence_over_out_of_window():
-    assert beyond_tool_limit("L4", 1, has_kr=False) == (True, "no_label_site")
+    assert beyond_tool_limit(
+        "L4", 1, has_label_site_for_mode=False) == (True, "no_label_site")
 
 
 def test_has_label_site_detects_kr():
@@ -93,3 +98,27 @@ def test_annotate_traps_keeps_positives_and_flags_traps(monkeypatch):
     assert not out.loc[2, "domain_drop"]
     # genuine but out-of-window dropped
     assert out.loc[3, "domain_drop"] and out.loc[3, "domain_reason"] == "heavy_out_of_window"
+
+
+@pytest.mark.parametrize(
+    ("heavy_type", "expected_drop"),
+    [
+        (HeavyType.SILAC, True),
+        (HeavyType.CHEAVY, False),
+        (HeavyType.NHEAVY, False),
+    ],
+)
+def test_annotate_no_kr_trap_is_label_aware(
+        monkeypatch, heavy_type, expected_drop):
+    import tools.trap_domain_filter as mod
+
+    monkeypatch.setattr(mod, "classify_peptide", lambda seq, target: "L4")
+    df = pd.DataFrame([{
+        "sequence": "ACDEFGHILMNPQSTVWY",
+        "label_type": "negative",
+        "heavy_out_of_range": 0,
+    }])
+    out = mod.annotate_traps(df, _FakeTarget(), heavy_type=heavy_type)
+    assert bool(out.loc[0, "domain_drop"]) is expected_drop
+    if expected_drop:
+        assert out.loc[0, "domain_reason"] == "no_label_site"

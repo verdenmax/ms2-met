@@ -33,7 +33,8 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from spectrum.entrapment_classifier import classify_peptide, load_target_fasta
-from spectrum.psm_info import has_label_site  # noqa: F401  used by annotate_traps; re-exported for tests
+from spectrum.labeling import HeavyType, parse_heavy_type
+from spectrum.psm_info import has_label_site  # noqa: F401 re-exported for tests
 
 logger = logging.getLogger(__name__)
 
@@ -41,15 +42,18 @@ logger = logging.getLogger(__name__)
 HOMOLOG_DROP_LEVELS = frozenset({"L0", "L1"})
 
 
-def beyond_tool_limit(level: str, heavy_out_of_range,
-                      has_kr: bool = True) -> tuple[bool, str | None]:
+def beyond_tool_limit(
+    level: str,
+    heavy_out_of_range,
+    has_label_site_for_mode: bool = True,
+) -> tuple[bool, str | None]:
     """Decide whether a trap PSM is beyond the SILAC tool's limit (spec §12).
 
     Args:
         level: entrapment level "L0"/"L1"/"L4" from entrapment_classifier.
         heavy_out_of_range: 0/1 (or bool); 1 => heavy precursor not acquired.
-        has_kr: whether the peptide carries a label site (K/R). False =>
-            no heavy partner => SILAC inapplicable (class 4).
+        has_label_site_for_mode: whether the peptide carries a label site for
+            the selected chemistry. False means no heavy partner (class 4).
 
     Returns:
         (drop, reason). reason is "homolog_L0"/"homolog_L1" (class 1),
@@ -60,14 +64,18 @@ def beyond_tool_limit(level: str, heavy_out_of_range,
     """
     if level in HOMOLOG_DROP_LEVELS:
         return True, f"homolog_{level}"
-    if not has_kr:
+    if not has_label_site_for_mode:
         return True, "no_label_site"
     if int(heavy_out_of_range) == 1:
         return True, "heavy_out_of_window"
     return False, None
 
 
-def annotate_traps(df: pd.DataFrame, target_index) -> pd.DataFrame:
+def annotate_traps(
+    df: pd.DataFrame,
+    target_index,
+    heavy_type: HeavyType = HeavyType.SILAC,
+) -> pd.DataFrame:
     """Add `entrap_level` / `domain_drop` / `domain_reason` columns for trap
     rows (label_type == 'negative'). Positives get level 'target', no drop."""
     out = df.copy()
@@ -78,8 +86,8 @@ def annotate_traps(df: pd.DataFrame, target_index) -> pd.DataFrame:
             continue
         lvl = classify_peptide(str(row["sequence"]), target_index)
         hor = row.get("heavy_out_of_range", 0)
-        has_kr = has_label_site(row["sequence"])
-        drop, reason = beyond_tool_limit(lvl, hor, has_kr)
+        label_site_present = has_label_site(row["sequence"], heavy_type)
+        drop, reason = beyond_tool_limit(lvl, hor, label_site_present)
         levels.append(lvl); drops.append(drop); reasons.append(reason)
     out["entrap_level"] = levels
     out["domain_drop"] = drops
@@ -94,12 +102,16 @@ def main():
     ap.add_argument("--human-fasta", required=True,
                     help="human proteome FASTA (target for L0/L1)")
     ap.add_argument("--output", required=True, help="cleaned features.csv")
+    ap.add_argument(
+        "--labeling", default="silac",
+        help="metabolic labeling: silac, c13/13c/cheavy, n15/15n/nheavy")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)
 
     df = pd.read_csv(args.features)
     target = load_target_fasta(args.human_fasta)
-    ann = annotate_traps(df, target)
+    ann = annotate_traps(
+        df, target, heavy_type=parse_heavy_type(args.labeling))
 
     traps = ann[ann.label_type == "negative"]
     dropped = traps[traps.domain_drop]
