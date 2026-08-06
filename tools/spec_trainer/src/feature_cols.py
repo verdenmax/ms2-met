@@ -12,7 +12,7 @@ import pandas as pd
 # META columns that are not features themselves (PSM identification + label).
 # 与 tools/eval_baseline.py:37-41 保持一致。
 META_COLUMNS = {
-    "sequence", "charge", "raw_title1", "raw_title2",
+    "sequence", "charge", "raw_title1", "raw_title2", "labeling",
     "protein_names", "label", "label_type",
     "precursor_mz", "sequence_len", "rt",
     # Hard-negative builder provenance. These columns are for leak-free

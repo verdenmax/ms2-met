@@ -10,15 +10,105 @@ from scipy.stats import pearsonr
 from numpy import interp
 
 from spectrum.psm_info import PSMInfo
-from spectrum.psm_info import HeavyType
-from spectrum.psm_info import get_SILAC_increase_mass
 from spectrum.psm_info import get_theoretical_isotope_ratios
+from spectrum.labeling import (
+    HeavyType,
+    canonical_labeling_name,
+    get_heavy_increase_mass,
+    parse_heavy_type,
+)
 from spectrum.dia_data import DIAData
 
 from workflows.q1a_helpers import Q1aAccumulator, is_split_window, SHIFT_EPSILON
 
 from constant.keys import ConfigKeys
 from configparser import ConfigParser
+
+
+def resolve_workflow_heavy_type(config: ConfigParser) -> HeavyType:
+    """Resolve the feature-extraction labeling, defaulting to SILAC."""
+    raw = "silac"
+    if config.has_section(ConfigKeys.GENERAL):
+        raw = config[ConfigKeys.GENERAL].get(
+            ConfigKeys.LABELING, "silac")
+    return parse_heavy_type(raw)
+
+
+def _extract_isotope_features(
+    dia_data: DIAData,
+    heavy_xic: np.ndarray,
+    *,
+    center_rt: float,
+    heavy_precursor_mz: float,
+    charge: int,
+    sequence: str,
+    xic_cycle_window: int,
+    mass_tol_ppm: float,
+    heavy_type: HeavyType,
+) -> dict:
+    """Extract isotope evidence only where the current model is valid.
+
+    Uniform 13C/15N envelopes depend on labeling enrichment/purity, which is
+    not configured by this project. Returning NaN prevents a placeholder zero
+    from masquerading as a measured correlation.
+    """
+    model_valid = heavy_type is HeavyType.SILAC
+    has_heavy_signal = (
+        len(heavy_xic) > 0
+        and np.any(np.asarray(heavy_xic["intensity"]) > 0)
+    )
+    mass_shift_error = 0.0
+    if has_heavy_signal:
+        apex_idx = int(np.argmax(heavy_xic["intensity"]))
+        mass_shift_error = float(heavy_xic["ppm_error"][apex_idx])
+
+    if not model_valid:
+        return {
+            "isotope_correlation": float("nan"),
+            "isotope_model_valid": 0,
+            "mass_shift_error": mass_shift_error,
+        }
+    if not has_heavy_signal:
+        return {
+            "isotope_correlation": 0.0,
+            "isotope_model_valid": 1,
+            "mass_shift_error": 0.0,
+        }
+
+    apex_idx = int(np.argmax(heavy_xic["intensity"]))
+    apex_rt = float(heavy_xic["rt"][apex_idx])
+    isotope_spacing = 1.003355 / charge
+    heavy_m1_xic = dia_data.xic_peaks_extreact(
+        center_rt, xic_cycle_window,
+        heavy_precursor_mz + isotope_spacing, mass_tol_ppm)
+    heavy_m2_xic = dia_data.xic_peaks_extreact(
+        center_rt, xic_cycle_window,
+        heavy_precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
+    if len(heavy_m1_xic) > 0:
+        heavy_m1_xic = heavy_m1_xic[np.argsort(heavy_m1_xic["rt"])]
+    if len(heavy_m2_xic) > 0:
+        heavy_m2_xic = heavy_m2_xic[np.argsort(heavy_m2_xic["rt"])]
+
+    m0_int = float(heavy_xic["intensity"][apex_idx])
+    m1_int = (float(interp(
+        apex_rt, heavy_m1_xic["rt"], heavy_m1_xic["intensity"]))
+        if len(heavy_m1_xic) > 0 else 0.0)
+    m2_int = (float(interp(
+        apex_rt, heavy_m2_xic["rt"], heavy_m2_xic["intensity"]))
+        if len(heavy_m2_xic) > 0 else 0.0)
+    observed = np.array([m0_int, m1_int, m2_int])
+    theoretical = np.array(get_theoretical_isotope_ratios(sequence))
+    observed_norm = np.linalg.norm(observed)
+    theoretical_norm = np.linalg.norm(theoretical)
+    correlation = (
+        float(np.dot(observed, theoretical)
+              / (observed_norm * theoretical_norm))
+        if observed_norm > 0 and theoretical_norm > 0 else 0.0)
+    return {
+        "isotope_correlation": correlation,
+        "isotope_model_valid": 1,
+        "mass_shift_error": mass_shift_error,
+    }
 
 
 def _is_empty_xic_pair(light_xic: np.ndarray, heavy_xic: np.ndarray) -> bool:
@@ -57,6 +147,7 @@ def multi_batch_work(
         ConfigKeys.XIC_CYCLE_WINDOW, fallback=3)
     light_fragment_shape = config[ConfigKeys.GENERAL].getboolean(
         ConfigKeys.LIGHT_FRAGMENT_SHAPE, fallback=True)
+    heavy_type = resolve_workflow_heavy_type(config)
 
     light_xic = dia_data1.xic_peaks_extreact(
         psm1._rt, xic_cycle_window,
@@ -131,47 +222,17 @@ def multi_batch_work(
         features["precursor_smoothness"] = precursor_score["smoothness"]
         features["precursor_xic_empty"] = 0
 
-    # 同位素模式匹配 + 质量偏移验证
-    isotope_spacing = 1.003355 / psm1._charge
-    if len(heavy_xic) > 0 and np.max(heavy_xic["intensity"]) > 0:
-        apex_idx = np.argmax(heavy_xic["intensity"])
-        apex_rt = heavy_xic["rt"][apex_idx]
-
-        heavy_m1_xic = dia_data2.xic_peaks_extreact(
-            psm2._rt, xic_cycle_window,
-            psm2._precursor_mz + isotope_spacing, mass_tol_ppm)
-        heavy_m2_xic = dia_data2.xic_peaks_extreact(
-            psm2._rt, xic_cycle_window,
-            psm2._precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
-
-        # Sort by rt for np.interp monotonicity (see calc_xic_score).
-        if len(heavy_m1_xic) > 0:
-            heavy_m1_xic = heavy_m1_xic[np.argsort(heavy_m1_xic["rt"])]
-        if len(heavy_m2_xic) > 0:
-            heavy_m2_xic = heavy_m2_xic[np.argsort(heavy_m2_xic["rt"])]
-
-        # 在 M0 apex RT 处统一取各同位素峰强度
-        m0_int = float(heavy_xic["intensity"][apex_idx])
-        m1_int = (float(interp(apex_rt, heavy_m1_xic["rt"],
-                                heavy_m1_xic["intensity"]))
-                  if len(heavy_m1_xic) > 0 else 0.0)
-        m2_int = (float(interp(apex_rt, heavy_m2_xic["rt"],
-                                heavy_m2_xic["intensity"]))
-                  if len(heavy_m2_xic) > 0 else 0.0)
-
-        obs = np.array([m0_int, m1_int, m2_int])
-        theo = np.array(get_theoretical_isotope_ratios(psm1._sequence))
-        obs_n = np.linalg.norm(obs)
-        theo_n = np.linalg.norm(theo)
-        features["isotope_correlation"] = (
-            float(np.dot(obs, theo) / (obs_n * theo_n))
-            if obs_n > 0 and theo_n > 0 else 0.0)
-
-        features["mass_shift_error"] = float(
-            heavy_xic["ppm_error"][apex_idx])
-    else:
-        features["isotope_correlation"] = 0.0
-        features["mass_shift_error"] = 0.0
+    features.update(_extract_isotope_features(
+        dia_data2,
+        heavy_xic,
+        center_rt=float(psm2._rt),
+        heavy_precursor_mz=float(psm2._precursor_mz),
+        charge=psm1._charge,
+        sequence=psm1._sequence,
+        xic_cycle_window=xic_cycle_window,
+        mass_tol_ppm=mass_tol_ppm,
+        heavy_type=heavy_type,
+    ))
 
     pearsons_map = {
         "b": [],
@@ -208,7 +269,7 @@ def multi_batch_work(
 
     # --- Q1a setup: classify co/split-isolation for accumulator ---
     w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
-    heavy_precursor_mz, fragment_ions = psm1.get_heavy_info(HeavyType.SILAC)
+    heavy_precursor_mz, fragment_ions = psm1.get_heavy_info(heavy_type)
     w_heavy_for_q1a = dia_data2.get_window_info(heavy_precursor_mz)
     q1a_acc = Q1aAccumulator(
         split_window=is_split_window(w_light_for_q1a, w_heavy_for_q1a))
@@ -409,7 +470,13 @@ def multi_batch_work(
     features["kr_count"] = psm1._sequence.count('K') + \
         psm1._sequence.count('R')
     features["modification_count"] = len(psm1._modify)
-    features["total_silac_shift"] = get_SILAC_increase_mass(psm1._sequence)
+    total_label_shift = get_heavy_increase_mass(
+        psm1._sequence, heavy_type)
+    features["total_label_shift"] = total_label_shift
+    # Deprecated compatibility alias. It is deliberately assigned from the
+    # canonical value so there is only one mass calculation.
+    features["total_silac_shift"] = total_label_shift
+    features["labeling"] = canonical_labeling_name(heavy_type)
 
     # DIA 窗口感知特征
     win_info = dia_data1.get_window_info(psm1._precursor_mz)
@@ -477,6 +544,7 @@ def single_pair_work(
         ConfigKeys.XIC_CYCLE_WINDOW, fallback=3)
     light_fragment_shape = config[ConfigKeys.GENERAL].getboolean(
         ConfigKeys.LIGHT_FRAGMENT_SHAPE, fallback=True)
+    heavy_type = resolve_workflow_heavy_type(config)
 
     light_xic = dia_data.xic_peaks_extreact(
         psm._rt, xic_cycle_window,
@@ -484,7 +552,7 @@ def single_pair_work(
 
     # --- Q1a setup (single get_heavy_info call shared with fragment loop) ---
     w_light_for_q1a = dia_data.get_window_info(psm._precursor_mz)
-    heavy_precursor_mz, fragment_ions = psm.get_heavy_info(HeavyType.SILAC)
+    heavy_precursor_mz, fragment_ions = psm.get_heavy_info(heavy_type)
     w_heavy_for_q1a = dia_data.get_window_info(heavy_precursor_mz)
     q1a_acc = Q1aAccumulator(
         split_window=is_split_window(w_light_for_q1a, w_heavy_for_q1a))
@@ -549,47 +617,17 @@ def single_pair_work(
         features["precursor_smoothness"] = precursor_score["smoothness"]
         features["precursor_xic_empty"] = 0
 
-    # 同位素模式匹配 + 质量偏移验证
-    isotope_spacing = 1.003355 / psm._charge
-    if len(heavy_xic) > 0 and np.max(heavy_xic["intensity"]) > 0:
-        apex_idx = np.argmax(heavy_xic["intensity"])
-        apex_rt = heavy_xic["rt"][apex_idx]
-
-        heavy_m1_xic = dia_data.xic_peaks_extreact(
-            psm._rt, xic_cycle_window,
-            heavy_precursor_mz + isotope_spacing, mass_tol_ppm)
-        heavy_m2_xic = dia_data.xic_peaks_extreact(
-            psm._rt, xic_cycle_window,
-            heavy_precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
-
-        # Sort by rt for np.interp monotonicity (see calc_xic_score).
-        if len(heavy_m1_xic) > 0:
-            heavy_m1_xic = heavy_m1_xic[np.argsort(heavy_m1_xic["rt"])]
-        if len(heavy_m2_xic) > 0:
-            heavy_m2_xic = heavy_m2_xic[np.argsort(heavy_m2_xic["rt"])]
-
-        # 在 M0 apex RT 处统一取各同位素峰强度
-        m0_int = float(heavy_xic["intensity"][apex_idx])
-        m1_int = (float(interp(apex_rt, heavy_m1_xic["rt"],
-                                heavy_m1_xic["intensity"]))
-                  if len(heavy_m1_xic) > 0 else 0.0)
-        m2_int = (float(interp(apex_rt, heavy_m2_xic["rt"],
-                                heavy_m2_xic["intensity"]))
-                  if len(heavy_m2_xic) > 0 else 0.0)
-
-        obs = np.array([m0_int, m1_int, m2_int])
-        theo = np.array(get_theoretical_isotope_ratios(psm._sequence))
-        obs_n = np.linalg.norm(obs)
-        theo_n = np.linalg.norm(theo)
-        features["isotope_correlation"] = (
-            float(np.dot(obs, theo) / (obs_n * theo_n))
-            if obs_n > 0 and theo_n > 0 else 0.0)
-
-        features["mass_shift_error"] = float(
-            heavy_xic["ppm_error"][apex_idx])
-    else:
-        features["isotope_correlation"] = 0.0
-        features["mass_shift_error"] = 0.0
+    features.update(_extract_isotope_features(
+        dia_data,
+        heavy_xic,
+        center_rt=float(psm._rt),
+        heavy_precursor_mz=float(heavy_precursor_mz),
+        charge=psm._charge,
+        sequence=psm._sequence,
+        xic_cycle_window=xic_cycle_window,
+        mass_tol_ppm=mass_tol_ppm,
+        heavy_type=heavy_type,
+    ))
 
     is_same_ms2 = dia_data.check_in_same_ms2(
         psm._precursor_mz, heavy_precursor_mz)
@@ -849,7 +887,11 @@ def single_pair_work(
     features["kr_count"] = psm._sequence.count('K') + \
         psm._sequence.count('R')
     features["modification_count"] = len(psm._modify)
-    features["total_silac_shift"] = get_SILAC_increase_mass(psm._sequence)
+    total_label_shift = get_heavy_increase_mass(psm._sequence, heavy_type)
+    features["total_label_shift"] = total_label_shift
+    # Deprecated compatibility alias; see multi_batch_work above.
+    features["total_silac_shift"] = total_label_shift
+    features["labeling"] = canonical_labeling_name(heavy_type)
 
     if heavy_in_raw:
         features["heavy_in_raw"] = 1

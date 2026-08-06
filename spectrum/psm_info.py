@@ -2,14 +2,19 @@ import logging
 import os
 import numpy as np
 import random
-from enum import Enum
 from pyteomics import mass
 from typing import Tuple
 
+from spectrum.labeling import (
+    HeavyType,
+    MASS_DELTA_C13_C12,
+    MASS_DELTA_N15_N14,
+    get_heavy_increase_mass,
+    get_silac_increase_mass,
+    has_label_site,
+)
 
-# UniMod-canonical heavy-isotope mass deltas
-MASS_DELTA_C13_C12 = 1.003355   # ¹³C − ¹²C
-MASS_DELTA_N15_N14 = 0.997035   # ¹⁵N − ¹⁴N
+
 PROTON_MASS = 1.00727646677
 
 
@@ -20,12 +25,6 @@ _UNIMOD_XML_PATH = os.path.join(
 )
 with open(_UNIMOD_XML_PATH, 'rb') as f:
     unimods = mass.Unimod(source=f)
-
-
-class HeavyType(Enum):
-    SILAC = 1
-    CHEAVY = 2
-    NHEAVY = 3
 
 
 class PSMInfo:
@@ -232,55 +231,7 @@ class PSMInfo:
 
 def get_SILAC_increase_mass(sequence: str):
     """ 计算这个序列中SILAC 重标应该增加多少重量 """
-    increase_mass = 0
-
-    # 遍历肽段序列中的每个氨基酸
-    for amino_acid in sequence:
-        if amino_acid == 'K':  # 赖氨酸，加上 8.014204 C(-6)13C(6)N(-2)15N(2)
-            increase_mass += 8.014204
-        elif amino_acid == 'R':  # 精氨酸，加上 10.008275  C(-6)N(-4)13C(6)15N(4)
-            increase_mass += 10.008275
-    return increase_mass
-
-
-def get_heavy_increase_mass(
-    sequence: str,
-    heavy_type: HeavyType,
-) -> float:
-    """ 根据重标类型，计算出这个 sequence 增加了多少质量"""
-
-    if heavy_type == HeavyType.SILAC:
-        return get_SILAC_increase_mass(sequence)
-
-    increase_mass = 0
-    composition = mass.Composition(sequence)
-
-    if heavy_type == HeavyType.CHEAVY:
-        increase_mass += composition['C'] * MASS_DELTA_C13_C12
-    elif heavy_type == HeavyType.NHEAVY:
-        increase_mass += composition['N'] * MASS_DELTA_N15_N14
-
-    return increase_mass
-
-
-def has_label_site(sequence: str,
-                   heavy_type: HeavyType = HeavyType.SILAC) -> bool:
-    """Whether the peptide carries a metabolic-label site under heavy_type
-    (i.e. whether light/heavy SILAC-style validation is even defined for it).
-
-    SILAC labels only K/R, so a peptide with no K/R has no heavy partner
-    (heavy == light) and is unvalidatable. CHEAVY (¹³C) / NHEAVY (¹⁵N) are
-    whole-atom metabolic labeling — every peptide contains carbon and
-    nitrogen (the N-Cα-C backbone), so every peptide is labeled. Empty
-    sequence has no label site.
-    """
-    seq = str(sequence).upper()
-    if not seq:
-        return False
-    if heavy_type == HeavyType.SILAC:
-        return any(aa in "KR" for aa in seq)
-    # CHEAVY / NHEAVY: every peptide has C and N -> always labeled.
-    return True
+    return get_silac_increase_mass(sequence)
 
 
 def get_theoretical_isotope_ratios(sequence: str) -> list:

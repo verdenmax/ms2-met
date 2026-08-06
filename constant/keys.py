@@ -30,6 +30,7 @@ class ConfigKeys(metaclass=ConstantsClass):
     XIC_CYCLE_WINDOW = "xic_cycle_window"
     RESULT_FILE = "result_file"
     FEATURE_TYPE = "feature_type"
+    LABELING = "labeling"
     RANDOM_SEED = "random_seed"
     # 轻标【碎片】峰形特征开关（默认 on）。off 时跳过 all_light_* 碎片缺陷列，
     # 便于消融。母离子轻标形状不受此开关影响。见

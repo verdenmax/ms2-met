@@ -43,6 +43,7 @@ from spectrum.entrapment_classifier import (
     classify_peptide,
     load_target_fasta,
 )
+from spectrum.labeling import parse_heavy_type, supports_modified_peptide
 from spectrum.psm_info import (
     HeavyType,
     PROTON_MASS,
@@ -119,23 +120,6 @@ class AssemblyConfig:
     rt_bin_width: float = 5.0
 
 
-def _parse_heavy_type(value: str) -> HeavyType:
-    aliases = {
-        "silac": HeavyType.SILAC,
-        "c13": HeavyType.CHEAVY,
-        "13c": HeavyType.CHEAVY,
-        "cheavy": HeavyType.CHEAVY,
-        "n15": HeavyType.NHEAVY,
-        "15n": HeavyType.NHEAVY,
-        "nheavy": HeavyType.NHEAVY,
-    }
-    key = str(value).strip().lower()
-    if key not in aliases:
-        raise ValueError(
-            f"unknown labeling {value!r}; expected one of {sorted(aliases)}")
-    return aliases[key]
-
-
 def _csv_list(value: str) -> tuple[str, ...]:
     return tuple(x.strip() for x in str(value).split(",") if x.strip())
 
@@ -153,7 +137,7 @@ def load_query_config(path: str) -> QueryBuildConfig:
         contaminant_fasta=s.get("contaminant_fasta", "").strip() or None,
         output_manifest=s["output_manifest"],
         output_fasta=s["output_fasta"],
-        labeling=_parse_heavy_type(s.get("labeling", "silac")),
+        labeling=parse_heavy_type(s.get("labeling", "silac")),
         confirmation_column=s.get(
             "confirmation_column", "heavy_confirmed").strip(),
         require_confirmation=s.getboolean(
@@ -187,7 +171,7 @@ def load_assembly_config(path: str) -> AssemblyConfig:
         query_manifest=s["query_manifest"],
         target_fasta=s["target_fasta"],
         contaminant_fasta=s.get("contaminant_fasta", "").strip() or None,
-        labeling=_parse_heavy_type(s.get("labeling", "silac")),
+        labeling=parse_heavy_type(s.get("labeling", "silac")),
         output_features=s["output_features"],
         output_audit=s["output_audit"],
         heldout_features=_csv_list(s.get("heldout_features", "")),
@@ -296,6 +280,24 @@ def _has_modification(row: pd.Series) -> bool:
         text = str(value).strip()
         return text not in {"", "[]", "nan", "None"}
     return False
+
+
+def _validate_supported_modifications(
+    named_frames: Sequence[tuple[str, pd.DataFrame]],
+    labeling: HeavyType,
+) -> None:
+    """Reject rows whose PTM atoms are outside the uniform-label model."""
+    if supports_modified_peptide(labeling):
+        return
+    for name, frame in named_frames:
+        if frame.empty:
+            continue
+        modified = frame.apply(_has_modification, axis=1)
+        if bool(modified.any()):
+            raise ValueError(
+                f"modified C13/N15 rows are unsupported in {name}: "
+                f"{int(modified.sum())} row(s); PTM elemental compositions "
+                "are not included in label shifts")
 
 
 def _stable_id(*parts: object, prefix: str = "") -> str:
@@ -490,6 +492,12 @@ def generate_queries(cfg: QueryBuildConfig) -> dict:
         raise ValueError("per-parent query counts must be >=0")
     if cfg.shuffle_per_parent + cfg.markov_per_parent == 0:
         raise ValueError("at least one synthetic generator must be enabled")
+    if (not cfg.exclude_modified
+            and not supports_modified_peptide(cfg.labeling)):
+        raise ValueError(
+            "modified C13/N15 peptides are unsupported because PTM "
+            "elemental compositions are not included in label shifts; "
+            "set exclude_modified=true")
 
     input_df = _read_table(cfg.positives)
     parents = _parent_records(input_df, cfg)
@@ -987,12 +995,18 @@ def _deduplicate_training(df: pd.DataFrame) -> pd.DataFrame:
 def assemble_training_set(cfg: AssemblyConfig) -> dict:
     """Assemble independent PSM rows into a leak-audited training CSV."""
     positives_raw = _read_many(cfg.positive_features)
-    positives = _positive_rows(
-        positives_raw, cfg.confirmation_column, cfg.require_confirmation)
     gold_raw = _read_many(cfg.gold_features)
-    gold = _gold_rows(gold_raw)
     silver_raw = _read_many(cfg.silver_features)
     heldout = _read_many(cfg.heldout_features)
+
+    _validate_supported_modifications((
+        ("positive features", positives_raw),
+        ("Gold features", gold_raw),
+        ("Silver features", silver_raw),
+    ), cfg.labeling)
+    positives = _positive_rows(
+        positives_raw, cfg.confirmation_column, cfg.require_confirmation)
+    gold = _gold_rows(gold_raw)
 
     split_report = _check_heldout_disjoint(
         [positives, gold, silver_raw], heldout, cfg.require_heldout)

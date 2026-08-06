@@ -26,6 +26,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from spectrum.light_result import LightResult
+from spectrum.labeling import parse_heavy_type
 from spectrum.psm_info import PSMInfo, HeavyType, has_label_site
 from spectrum.species_marker import matches_species_marker
 
@@ -512,13 +513,6 @@ def filter_by_entrapment(
     return kept
 
 
-_LABELING_ALIASES = {
-    "silac": HeavyType.SILAC,
-    "c13": HeavyType.CHEAVY, "13c": HeavyType.CHEAVY, "cheavy": HeavyType.CHEAVY,
-    "n15": HeavyType.NHEAVY, "15n": HeavyType.NHEAVY, "nheavy": HeavyType.NHEAVY,
-}
-
-
 def _parse_labeling(config: configparser.ConfigParser) -> HeavyType:
     """Read [extract] labeling (default 'silac'); map to HeavyType.
 
@@ -528,11 +522,10 @@ def _parse_labeling(config: configparser.ConfigParser) -> HeavyType:
     raw = "silac"
     if config.has_section("extract"):
         raw = config["extract"].get("labeling", "silac")
-    key = str(raw).strip().lower()
-    if key not in _LABELING_ALIASES:
-        raise ValueError(
-            f"非法 [extract] labeling={raw!r}（合法: {sorted(_LABELING_ALIASES)}）")
-    return _LABELING_ALIASES[key]
+    try:
+        return parse_heavy_type(raw)
+    except ValueError as exc:
+        raise ValueError(f"非法 [extract] labeling={raw!r}: {exc}") from exc
 
 
 def filter_by_label_site(psms: list, heavy_type: HeavyType) -> list:

@@ -17,7 +17,11 @@ import manager.data_manager as data_manager
 from workflows.flow_utils import data_to_npz
 from workflows.flow_utils import process_batch_pair_shuffle
 from workflows.flow_utils import process_batch_single, process_batch_pair
-from workflows.single_work import multi_batch_work
+from workflows.single_work import (
+    multi_batch_work,
+    resolve_workflow_heavy_type,
+)
+from spectrum.labeling import canonical_labeling_name
 from workflows.feature_postfilter import filter_heavy_out_of_range
 from manager.light_result_manager import LightResultManager
 from spectrum.psm_info import PSMInfo
@@ -447,6 +451,14 @@ class PairFlow:
 
     def run(self) -> None:
         logging.info(f"运行任务 {self.workname}")
+
+        # Validate chemistry before loading large raw/search artifacts and
+        # canonicalize the value inherited by worker processes.
+        heavy_type = resolve_workflow_heavy_type(self._config)
+        canonical_labeling = canonical_labeling_name(heavy_type)
+        self._config.set(
+            ConfigKeys.GENERAL, ConfigKeys.LABELING, canonical_labeling)
+        logging.info("代谢标记模式: %s", canonical_labeling)
 
         # 加载DIA-NN 结果，加载 Data manager
         self.load()

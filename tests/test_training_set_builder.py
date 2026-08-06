@@ -84,6 +84,30 @@ def test_generate_queries_requires_independent_heavy_confirmation(tmp_path):
         ))
 
 
+@pytest.mark.parametrize("labeling", [HeavyType.CHEAVY, HeavyType.NHEAVY])
+def test_generate_rejects_modified_uniform_label_mode(tmp_path, labeling):
+    fasta = tmp_path / "target.fasta"
+    _write_fasta(fasta)
+    positives = tmp_path / "positive.csv"
+    pd.DataFrame([{
+        "sequence": "ACDEFGHIK",
+        "charge": 2,
+        "label": 1,
+        "heavy_confirmed": 1,
+        "modification_count": 1,
+    }]).to_csv(positives, index=False)
+
+    with pytest.raises(ValueError, match="modified.*C13/N15|C13/N15.*modified"):
+        generate_queries(QueryBuildConfig(
+            positives=str(positives),
+            target_fasta=str(fasta),
+            output_manifest=str(tmp_path / "q.tsv"),
+            output_fasta=str(tmp_path / "q.fasta"),
+            labeling=labeling,
+            exclude_modified=False,
+        ))
+
+
 def _feature_row(sequence, raw, label, *, light=100.0, heavy=80.0,
                  light_frags=5, heavy_frags=3, confirmed=1):
     return {
@@ -213,6 +237,45 @@ def test_assemble_rejects_raw_overlap_with_heldout(tmp_path):
             query_manifest=str(manifest),
             target_fasta=str(fasta),
             heldout_features=(str(heldout),),
+            output_features=str(tmp_path / "out.csv"),
+            output_audit=str(tmp_path / "audit.json"),
+        ))
+
+
+@pytest.mark.parametrize("labeling", [HeavyType.CHEAVY, HeavyType.NHEAVY])
+def test_assemble_rejects_modified_uniform_label_rows(tmp_path, labeling):
+    fasta = tmp_path / "target.fasta"
+    _write_fasta(fasta)
+    positives_path = tmp_path / "positive.csv"
+    silver_path = tmp_path / "silver.csv"
+    heldout_path = tmp_path / "heldout.csv"
+    manifest_path = tmp_path / "manifest.tsv"
+
+    positive = _feature_row("ACDEFGHIK", "train_raw", 1)
+    positive["modification_count"] = 1
+    pd.DataFrame([positive]).to_csv(positives_path, index=False)
+    pd.DataFrame([
+        _feature_row("VVVVAAAAK", "train_raw", 0, confirmed=0),
+    ]).to_csv(silver_path, index=False)
+    pd.DataFrame([
+        _feature_row("ACDEFGHIK", "heldout_raw", 1),
+    ]).to_csv(heldout_path, index=False)
+    pd.DataFrame([{
+        "query_id": "Q1", "parent_id": "P1",
+        "sequence": "VVVVAAAAK", "charge": 2,
+        "generator": SOURCE_SHUFFLE,
+        "negative_source": SOURCE_SHUFFLE,
+    }]).to_csv(manifest_path, sep="\t", index=False)
+
+    with pytest.raises(ValueError, match="modified C13/N15"):
+        assemble_training_set(AssemblyConfig(
+            positive_features=(str(positives_path),),
+            gold_features=(),
+            silver_features=(str(silver_path),),
+            query_manifest=str(manifest_path),
+            target_fasta=str(fasta),
+            labeling=labeling,
+            heldout_features=(str(heldout_path),),
             output_features=str(tmp_path / "out.csv"),
             output_audit=str(tmp_path / "audit.json"),
         ))
