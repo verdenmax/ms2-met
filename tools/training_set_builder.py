@@ -43,7 +43,11 @@ from spectrum.entrapment_classifier import (
     classify_peptide,
     load_target_fasta,
 )
-from spectrum.labeling import parse_heavy_type, supports_modified_peptide
+from spectrum.labeling import (
+    canonical_labeling_name,
+    parse_heavy_type,
+    supports_modified_peptide,
+)
 from spectrum.psm_info import (
     HeavyType,
     PROTON_MASS,
@@ -110,7 +114,7 @@ class AssemblyConfig:
         "charge",
         "precursor_mz",
         "sequence_len",
-        "total_silac_shift",
+        "total_label_shift",
         "psm_is_split_window",
         "rt",
     )
@@ -195,7 +199,7 @@ def load_assembly_config(path: str) -> AssemblyConfig:
         seed=s.getint("seed", fallback=42),
         distribution_columns=_csv_list(s.get(
             "distribution_columns",
-            "charge,precursor_mz,sequence_len,total_silac_shift,"
+            "charge,precursor_mz,sequence_len,total_label_shift,"
             "psm_is_split_window,rt")),
         precursor_mz_bin_width=s.getfloat(
             "precursor_mz_bin_width", fallback=50.0),
@@ -581,7 +585,7 @@ def generate_queries(cfg: QueryBuildConfig) -> dict:
                     "parent_sequence": sequence,
                     "parent_precursor_mz": parent["precursor_mz"],
                     "parent_label_shift": parent["label_shift"],
-                    "labeling": cfg.labeling.name,
+                    "labeling": canonical_labeling_name(cfg.labeling),
                     "negative_source": generator,
                     "negative_confidence": "silver",
                 })
@@ -692,6 +696,11 @@ def _filter_silver_signal(
     if missing:
         raise ValueError(
             f"silver features missing physical-signal columns: {missing}")
+    range_columns = {"heavy_in_raw", "heavy_out_of_range"} & set(df.columns)
+    if not range_columns:
+        raise ValueError(
+            "silver features require acquisition-range evidence: "
+            "heavy_in_raw or heavy_out_of_range")
     mask = (
         pd.to_numeric(df["precursor_light_max_int"], errors="coerce")
         .gt(cfg.min_light_precursor_intensity)
@@ -798,6 +807,7 @@ def _distribution_keys(
     widths = {
         "precursor_mz": cfg.precursor_mz_bin_width,
         "sequence_len": cfg.sequence_len_bin_width,
+        "total_label_shift": cfg.total_shift_bin_width,
         "total_silac_shift": cfg.total_shift_bin_width,
         "rt": cfg.rt_bin_width,
     }
@@ -816,16 +826,72 @@ def _distribution_keys(
     return keys, used
 
 
+def _resolve_distribution_columns(
+    positives: pd.DataFrame,
+    silver: pd.DataFrame,
+    cfg: AssemblyConfig,
+) -> tuple[tuple[str, ...], str | None, bool]:
+    """Validate matching fields and resolve the SILAC-only legacy alias."""
+    requested = list(cfg.distribution_columns)
+    uniform_label = cfg.labeling in (HeavyType.CHEAVY, HeavyType.NHEAVY)
+    if uniform_label and "total_silac_shift" in requested:
+        raise ValueError(
+            "C13/N15 assembly requires total_label_shift; "
+            "pre-fix total_silac_shift values were calculated as SILAC")
+
+    used_legacy_shift = False
+    if "total_label_shift" in requested:
+        canonical_available = all(
+            "total_label_shift" in frame.columns
+            for frame in (positives, silver)
+        )
+        if not canonical_available:
+            legacy_available = all(
+                "total_silac_shift" in frame.columns
+                for frame in (positives, silver)
+            )
+            if uniform_label:
+                raise ValueError(
+                    "C13/N15 assembly requires total_label_shift in both "
+                    "positive and Silver features; legacy total_silac_shift "
+                    "was calculated with SILAC chemistry")
+            if legacy_available:
+                requested = [
+                    "total_silac_shift" if c == "total_label_shift" else c
+                    for c in requested
+                ]
+                used_legacy_shift = True
+                logger.warning(
+                    "using legacy total_silac_shift for SILAC distribution "
+                    "matching; regenerate features to get total_label_shift")
+
+    missing_positive = [c for c in requested if c not in positives.columns]
+    missing_silver = [c for c in requested if c not in silver.columns]
+    if missing_positive or missing_silver:
+        raise ValueError(
+            "configured distribution columns must exist in both tables; "
+            f"positive missing={missing_positive}, "
+            f"silver missing={missing_silver}")
+
+    shift_column = next(
+        (c for c in requested
+         if c in {"total_label_shift", "total_silac_shift"}),
+        None,
+    )
+    return tuple(requested), shift_column, used_legacy_shift
+
+
 def _match_silver_distribution(
     positives: pd.DataFrame,
     silver: pd.DataFrame,
     cfg: AssemblyConfig,
+    distribution_columns: Sequence[str],
 ) -> tuple[pd.DataFrame, dict]:
     if silver.empty:
         return silver.copy(), {
             "input": 0, "kept": 0, "used_columns": []}
     common_columns = [
-        c for c in cfg.distribution_columns
+        c for c in distribution_columns
         if c in positives.columns and c in silver.columns
     ]
     pos_keys, used = _distribution_keys(positives, common_columns, cfg)
@@ -937,12 +1003,15 @@ def _annotate_sources(
     positives: pd.DataFrame,
     gold: pd.DataFrame,
     silver: pd.DataFrame,
+    labeling: HeavyType,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    labeling_name = canonical_labeling_name(labeling)
     p = positives.copy()
     p["label"] = 1
     p["label_type"] = "positive"
     p["negative_source"] = SOURCE_POSITIVE
     p["negative_confidence"] = "gold"
+    p["labeling"] = labeling_name
     p["parent_id"] = [
         _stable_id(seq, charge, prefix="P")
         for seq, charge in zip(p["sequence"], p["charge"])
@@ -955,6 +1024,7 @@ def _annotate_sources(
         g["label_type"] = "negative"
         g["negative_source"] = SOURCE_GOLD
         g["negative_confidence"] = "gold"
+        g["labeling"] = labeling_name
         g["parent_id"] = pd.NA
         g["group_id"] = [
             _stable_id(seq, charge, raw, prefix="G")
@@ -969,7 +1039,37 @@ def _annotate_sources(
         s["label_type"] = "negative"
         s["negative_confidence"] = "silver"
         s["group_id"] = s["parent_id"]
+        s["labeling"] = labeling_name
     return p, g, s
+
+
+def _validate_manifest_labeling(
+    manifest: pd.DataFrame,
+    assembly_labeling: HeavyType,
+) -> pd.DataFrame:
+    """Canonicalize and enforce the generate/assemble chemistry contract."""
+    if "labeling" not in manifest.columns:
+        raise ValueError("query manifest missing columns: ['labeling']")
+    canonical_values: list[str] = []
+    for value in manifest["labeling"]:
+        try:
+            canonical_values.append(canonical_labeling_name(
+                parse_heavy_type(value)))
+        except ValueError as exc:
+            raise ValueError(
+                f"query manifest has invalid labeling {value!r}: {exc}") from exc
+    unique = sorted(set(canonical_values))
+    if len(unique) != 1:
+        raise ValueError(
+            f"query manifest must contain exactly one labeling; got {unique}")
+    expected = canonical_labeling_name(assembly_labeling)
+    if unique[0] != expected:
+        raise ValueError(
+            f"manifest labeling {unique[0]!r} does not match assembly "
+            f"labeling {expected!r}")
+    out = manifest.copy()
+    out["labeling"] = canonical_values
+    return out
 
 
 def _deduplicate_training(df: pd.DataFrame) -> pd.DataFrame:
@@ -1011,12 +1111,13 @@ def assemble_training_set(cfg: AssemblyConfig) -> dict:
     split_report = _check_heldout_disjoint(
         [positives, gold, silver_raw], heldout, cfg.require_heldout)
 
-    manifest = pd.read_csv(cfg.query_manifest, sep="\t")
-    required_manifest = {
+    manifest = _validate_manifest_labeling(
+        pd.read_csv(cfg.query_manifest, sep="\t"), cfg.labeling)
+    required_manifest = (
         "query_id", "parent_id", "sequence", "charge",
-        "generator", "negative_source",
-    }
-    missing_manifest = sorted(required_manifest - set(manifest.columns))
+        "generator", "negative_source", "labeling",
+    )
+    missing_manifest = sorted(set(required_manifest) - set(manifest.columns))
     if missing_manifest:
         raise ValueError(
             f"query manifest missing columns: {missing_manifest}")
@@ -1035,7 +1136,7 @@ def assemble_training_set(cfg: AssemblyConfig) -> dict:
     )
     # The manifest is authoritative for provenance.
     for column in ("query_id", "parent_id", "generator",
-                   "negative_source", "generator_seed"):
+                   "negative_source", "generator_seed", "labeling"):
         manifest_col = f"{column}_manifest"
         if manifest_col in silver:
             silver[column] = silver[manifest_col]
@@ -1050,13 +1151,17 @@ def assemble_training_set(cfg: AssemblyConfig) -> dict:
         silver_signal, target, contaminant)
     gold, gold_domain_report = _filter_gold_domain(
         gold, target, contaminant, cfg.labeling)
+    distribution_columns, shift_column, used_legacy_shift = (
+        _resolve_distribution_columns(positives, silver_clean, cfg))
     silver_matched, distribution_report = _match_silver_distribution(
-        positives, silver_clean, cfg)
+        positives, silver_clean, cfg, distribution_columns)
+    distribution_report["shift_column"] = shift_column
+    distribution_report["used_legacy_shift"] = used_legacy_shift
 
     positives, gold, silver_matched = _annotate_sources(
-        positives, gold, silver_matched)
+        positives, gold, silver_matched, cfg.labeling)
     audit = _metadata_audit(
-        positives, silver_matched, cfg.distribution_columns, cfg.seed)
+        positives, silver_matched, distribution_columns, cfg.seed)
     combined = _deduplicate_training(pd.concat(
         [positives, gold, silver_matched],
         ignore_index=True, sort=False))
@@ -1083,6 +1188,7 @@ def assemble_training_set(cfg: AssemblyConfig) -> dict:
         "target_exclusion": exclusion_report,
         "distribution_matching": distribution_report,
         "metadata_generator_audit": audit,
+        "labeling": canonical_labeling_name(cfg.labeling),
         "output_features": cfg.output_features,
     }
     with open(cfg.output_audit, "w", encoding="utf-8") as fh:
