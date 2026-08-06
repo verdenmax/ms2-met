@@ -1,8 +1,8 @@
 # ms2-met
 
-> 利用代谢标记 (SILAC) 发展的 DIA MS2 检验技术 —— 对搜索引擎的鉴定结果做**正交独立验证**与特征提取。
+> 利用代谢标记（SILAC、全 ¹³C、全 ¹⁵N）发展的 DIA MS2 检验技术 —— 对搜索引擎的鉴定结果做**正交独立验证**与特征提取。
 >
-> Independent, orthogonal MS2 validation & feature extraction for DIA search results, powered by metabolic (SILAC) labeling.
+> Independent, orthogonal DIA MS2 validation and feature extraction powered by metabolic labeling (SILAC, uniform ¹³C, or uniform ¹⁵N).
 
 📖 **可视化使用说明 / Visual usage guide:** open [`docs/usage.html`](docs/usage.html)
 （顶部可切换 **A 终端风 / C 科研风** 两种风格 · toggle between Terminal / Science themes）
@@ -13,13 +13,18 @@
 
 搜索引擎（DIA-NN / AlphaDIA / pFind）靠匹配理论谱图鉴定肽段，质控主流是 target-decoy (TDA)。
 **ms2-met 提供一条正交验证**：同一肽段的轻标 / 重标两种形式 RT 相近、XIC 峰形相似。对一条轻标鉴定，
-按序列算出**重标 m/z**（K +8.014, R +10.008），在 DIA 谱图里找重标证据 —— 若轻 / 重标 XIC 峰形高度相关
+按配置的标记化学计算**重标 m/z**，在 DIA 谱图里找重标证据 —— 若轻 / 重标 XIC 峰形高度相关
 （Pearson 高）则鉴定可信，否则疑似假阳性。最终把相关性等特征输出到 CSV，供训练 / 分析。
 
-A search-engine identification of a *light* peptide implies a *heavy* twin (+8.014 on K, +10.008 on R).
-ms2-met computes the heavy m/z, extracts its XIC from the DIA run, and scores the light-vs-heavy
+A search-engine identification of a *light* peptide implies a chemistry-specific *heavy* twin.
+ms2-met computes its precursor/fragment m/z values, extracts XICs from the DIA run, and scores the light-vs-heavy
 peak-shape correlation. High correlation ⇒ trustworthy ID; low ⇒ likely false positive. Features are
 written to a CSV for downstream training / analysis.
+
+Uniform ¹³C/¹⁵N mode currently supports unmodified peptides. PTM elemental
+composition and a purity-aware uniform-label isotope-envelope model are not
+implemented; unsupported modified PSMs fail explicitly, and the isotope
+correlation feature is marked invalid instead of emitting a fabricated value.
 
 ---
 
@@ -91,6 +96,7 @@ python -m tools.training_set_builder assemble --config training_set_builder.ini
 |---|---|
 | `search_engine_type` | `0` 自定义 JSON / `1` DIA-NN / `2` AlphaDIA / `3` pFind |
 | `feature_type` | `0` 同文件配对（陷阱库负例）/ `1` 轻重标双文件 |
+| `labeling` | `silac`（默认）、`c13`/`13c`/`cheavy`、`n15`/`15n`/`nheavy` |
 | `mass_tol_ppm` | 质量容差（ppm），缺省 `10` |
 | `xic_cycle_window` | XIC 提取的周期半窗 / XIC half-window in cycles |
 | `centroid_enabled` / `centroid_rel_threshold` | 加载 mzML 时是否质心化 + 阈值（推荐 `1e-3`） |

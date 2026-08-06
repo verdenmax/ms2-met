@@ -13,6 +13,7 @@ from tools.training_set_builder import (
     SOURCE_MARKOV,
     SOURCE_POSITIVE,
     SOURCE_SHUFFLE,
+    _validate_manifest_labeling,
     assemble_training_set,
     generate_queries,
 )
@@ -68,6 +69,12 @@ def test_generate_queries_writes_two_generator_manifest_and_fasta(tmp_path):
     fasta_text = query_fasta.read_text(encoding="utf-8")
     assert fasta_text.count(">SYNTH_") == 2
     assert (tmp_path / "queries.tsv.summary.json").exists()
+
+
+def test_manifest_rejects_mixed_labeling_modes():
+    manifest = pd.DataFrame({"labeling": ["silac", "13c"]})
+    with pytest.raises(ValueError, match="exactly one labeling"):
+        _validate_manifest_labeling(manifest, HeavyType.SILAC)
 
 
 def test_generate_queries_requires_independent_heavy_confirmation(tmp_path):
@@ -268,15 +275,13 @@ def test_assemble_filters_signal_matches_distribution_and_tracks_parent(tmp_path
         heldout_features=(str(heldout_path),),
         output_features=str(output),
         output_audit=str(audit),
-        distribution_columns=("charge", "precursor_mz", "sequence_len",
-                              "total_silac_shift",
-                              "psm_is_split_window", "rt"),
         seed=3,
     ))
 
     out = pd.read_csv(output)
     assert summary["silver_signal_filter"]["input"] == 2
     assert summary["silver_signal_filter"]["kept"] == 1
+    assert summary["distribution_matching"]["used_legacy_shift"] is True
     assert set(out["negative_source"]) == {
         SOURCE_POSITIVE, SOURCE_GOLD, SOURCE_SHUFFLE}
     synthetic = out[out["negative_source"] == SOURCE_SHUFFLE].iloc[0]

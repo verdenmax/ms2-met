@@ -187,3 +187,23 @@ def test_workflow_labeling_defaults_to_silac_and_rejects_unknown():
     assert resolve_workflow_heavy_type(_config()) is HeavyType.SILAC
     with pytest.raises(ValueError, match="unknown labeling"):
         resolve_workflow_heavy_type(_config("itraq"))
+
+
+def test_pair_flow_rejects_unknown_labeling_before_loading(tmp_path, monkeypatch):
+    from workflows.pair_flow import PairFlow
+
+    flow = PairFlow(
+        workname="invalid-labeling",
+        config=_config("itraq"),
+        work_path=str(tmp_path / "work"),
+    )
+    loaded = False
+
+    def fake_load():
+        nonlocal loaded
+        loaded = True
+
+    monkeypatch.setattr(flow, "load", fake_load)
+    with pytest.raises(ValueError, match="unknown labeling"):
+        flow.run()
+    assert loaded is False

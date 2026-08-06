@@ -50,6 +50,14 @@ EXCLUDED_EXTRA = {
 }
 
 
+def prefer_canonical_shift_feature(columns):
+    """Drop the deprecated shift alias when the canonical feature exists."""
+    result = list(columns)
+    if "total_label_shift" in result and "total_silac_shift" in result:
+        result.remove("total_silac_shift")
+    return result
+
+
 def resolve_feature_cols(explicit, sample_csv_paths, target_col):
     """Resolve final feature column list.
 
@@ -90,13 +98,13 @@ def resolve_feature_cols(explicit, sample_csv_paths, target_col):
     first_df = pd.read_csv(sample_csv_paths[0], nrows=0) if sample_csv_paths else None
     ordered = list(first_df.columns) if first_df is not None else []
 
-    result = [
+    result = prefer_canonical_shift_feature([
         c for c in ordered
         if c in intersection
         and c not in META_COLUMNS
         and c not in EXCLUDED_EXTRA
         and c != target_col
-    ]
+    ])
     if not result:
         raise ValueError(
             f"resolve_feature_cols returned 0 features from "

@@ -2,7 +2,7 @@
 
 特征分组:
   - sequence_only: 仅肽段序列属性（modification_count, kr_count, sequence_len,
-    valid_fragment_ions_num, total_silac_shift, window_width, precursor_centering,
+    valid_fragment_ions_num, total_label_shift, window_width, precursor_centering,
     precursor_mz, charge）
   - silac_only:    仅 SILAC 配对类（precursor_*, all_*, b_*, y_*, isotope_correlation,
     mass_shift_error, frag_corr_weighted, matched_intensity_percent）
@@ -29,6 +29,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from tools.eval_baseline import derive_binary_label
+from tools.spec_trainer.src.feature_cols import prefer_canonical_shift_feature
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s")
@@ -37,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 SEQUENCE_FEATURES = {
     "modification_count", "kr_count", "sequence_len",
-    "valid_fragment_ions_num", "total_silac_shift",
+    "valid_fragment_ions_num", "total_label_shift", "total_silac_shift",
     "window_width", "precursor_centering",
     "heavy_in_raw",
 }
@@ -127,7 +128,8 @@ def main():
     df = df[mask].reset_index(drop=True)
     y = y[mask].reset_index(drop=True)
 
-    all_feats = [c for c in df.columns if c not in ID_COLUMNS]
+    all_feats = prefer_canonical_shift_feature(
+        [c for c in df.columns if c not in ID_COLUMNS])
     groups = split_features(all_feats)
 
     logger.info("=== Feature groups ===")

@@ -6,6 +6,9 @@ target_fasta = /path/to/target_proteome.fasta
 # Optional second exclusion index.
 contaminant_fasta =
 
+# Must match [assembly] labeling. Accepted canonical values are
+# silac, c13, and n15 (aliases 13c/cheavy and 15n/nheavy are accepted).
+# Uniform C13/N15 currently require unmodified peptides.
 labeling = silac
 confirmation_column = heavy_confirmed
 require_confirmation = true
@@ -41,6 +44,7 @@ query_manifest = ./datasets/synthetic_queries.tsv
 
 target_fasta = /path/to/target_proteome.fasta
 contaminant_fasta =
+# Must describe the same chemistry used to create query_manifest.
 labeling = silac
 
 # Immutable real test rows are used only for a raw-overlap leakage check.
@@ -60,7 +64,7 @@ min_heavy_precursor_intensity = 0
 
 # Keep all unique rows; cap each Silver source within every positive bin.
 silver_per_positive_per_source = 1.0
-distribution_columns = charge, precursor_mz, sequence_len, total_silac_shift, psm_is_split_window, rt
+distribution_columns = charge, precursor_mz, sequence_len, total_label_shift, psm_is_split_window, rt
 precursor_mz_bin_width = 50
 sequence_len_bin_width = 3
 total_shift_bin_width = 20

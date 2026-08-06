@@ -30,6 +30,10 @@ FDR estimation.
   positive's group to prevent cross-fold leakage.
 - Provenance columns are excluded from model features.
 - Synthetic q-values/counts are not interpreted as FDR.
+- Query generation and assembly must use the same canonical labeling value:
+  `silac`, `c13`, or `n15`.
+- Uniform C13/N15 currently supports unmodified peptides only. Modified rows
+  fail explicitly because PTM C/N atoms are not represented by the mass model.
 
 ## Query generators
 
@@ -59,9 +63,21 @@ After external search and normal ms2-met extraction, a Silver candidate must:
 - be in the acquired heavy range;
 - still classify as L4 against target and contaminant FASTAs.
 
+At least one explicit acquisition-range field (`heavy_in_raw` or
+`heavy_out_of_range`) is required. Its absence is a schema error, not evidence
+that the candidate was acquired.
+
 Candidates are capped per generator inside positive-distribution bins. The
 audit JSON reports filter counts, binning columns, standardized mean
 differences, and an OOF metadata-only generator-signature AUC.
+The canonical distribution feature is `total_label_shift`. Legacy
+`total_silac_shift` is accepted only for SILAC tables; pre-fix C13/N15 values
+are rejected because they were calculated with SILAC chemistry.
+
+For uniform C13/N15, the current natural-abundance isotope-envelope feature is
+not scientifically calibrated without labeling enrichment/purity. Feature
+extraction therefore writes `isotope_correlation=NaN` and
+`isotope_model_valid=0` rather than treating a placeholder zero as evidence.
 
 ## Output labels
 

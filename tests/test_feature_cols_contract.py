@@ -57,6 +57,19 @@ def test_hard_negative_provenance_is_always_metadata():
     expected = {
         "rt", "negative_source", "negative_confidence", "query_id",
         "parent_id", "group_id", "generator", "generator_seed",
-        "heavy_confirmed",
+        "heavy_confirmed", "labeling",
     }
     assert expected <= META_COLUMNS
+
+
+def test_canonical_shift_feature_replaces_legacy_alias(tmp_path):
+    import pandas as pd
+
+    path = tmp_path / "features.csv"
+    pd.DataFrame(columns=[
+        "label", "physical_feature",
+        "total_label_shift", "total_silac_shift",
+    ]).to_csv(path, index=False)
+    features = resolve_feature_cols([], [str(path)], "label")
+    assert "total_label_shift" in features
+    assert "total_silac_shift" not in features

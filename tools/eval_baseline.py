@@ -27,6 +27,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from spectrum.species_marker import matches_species_marker
+from tools.spec_trainer.src.feature_cols import prefer_canonical_shift_feature
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s")
@@ -94,7 +95,8 @@ def load_features(
 
     y = derive_binary_label(df, marker=marker)
 
-    feature_cols = [c for c in df.columns if c not in META_COLUMNS]
+    feature_cols = prefer_canonical_shift_feature(
+        [c for c in df.columns if c not in META_COLUMNS])
     logger.info("Using %d feature columns", len(feature_cols))
 
     X = df[feature_cols].copy()
