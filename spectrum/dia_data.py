@@ -18,6 +18,11 @@ DEFAULT_VALUE_NO_MOBILITY = 1e-6
 DEFAULT_CENTROID_ENABLED: bool = True
 DEFAULT_CENTROID_REL_THRESHOLD: float = 1e-3
 
+# Fragment XICs pool the charge states supported by the current extraction
+# model.  Prediction-based features import this same constant so observed and
+# predicted intensities have identical charge semantics.
+OBSERVED_FRAGMENT_CHARGES: tuple[int, ...] = (1, 2)
+
 
 def deduplicate_with_tolerance(arr, tolerance=0.1):
     """
@@ -1003,17 +1008,31 @@ class DIAData:
             mz_arr, intensity_arr = self.get_spectrum_by_index(global_idx)
             total_intensity += np.sum(intensity_arr)
 
-            ppm_error = 0.0
+            matched_ppm_errors = []
+            matched_charge_intensities = []
             match_intensity = 0.0
 
-            for charge in range(1, 3):
+            for charge in OBSERVED_FRAGMENT_CHARGES:
                 theo_mz = (ions_mass + charge * protonmass) / charge
                 tot_ppm_error, tot_match_intensity = match_peak_ppm(
                     mz_arr, intensity_arr, theo_mz, mass_tol_ppm
                 )
                 if not np.isnan(tot_ppm_error):
-                    ppm_error += tot_ppm_error
+                    matched_ppm_errors.append(float(tot_ppm_error))
+                    matched_charge_intensities.append(
+                        float(tot_match_intensity))
                 match_intensity += tot_match_intensity
+
+            if matched_ppm_errors:
+                charge_weights = np.asarray(
+                    matched_charge_intensities, dtype="f8")
+                if float(charge_weights.sum()) > 0:
+                    ppm_error = float(np.average(
+                        matched_ppm_errors, weights=charge_weights))
+                else:
+                    ppm_error = float(np.mean(matched_ppm_errors))
+            else:
+                ppm_error = float("nan")
 
             ans.append({
                 "rt": self.rt_values[global_idx],

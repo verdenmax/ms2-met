@@ -222,11 +222,11 @@ def test_extract_ion_numeric_features_emits_max_field():
     assert "demo_std" in out
 
 
-def test_extract_ion_numeric_features_max_empty_list_is_zero():
-    """Empty list -> demo_max = 0.0 (consistent with other defaults)."""
+def test_extract_ion_numeric_features_empty_list_is_missing():
+    """No observed fragment is undefined, not a measured zero defect."""
     from workflows.single_work import extract_ion_numeric_features
     out = extract_ion_numeric_features([], "demo")
-    assert out["demo_max"] == 0.0
+    assert all(np.isnan(value) for value in out.values())
 
 
 def _make_xic(cycles, rts, intensities):
@@ -750,7 +750,31 @@ def test_extract_ion_numeric_features_stats_subset():
 def test_extract_ion_numeric_features_stats_subset_empty():
     from workflows.single_work import extract_ion_numeric_features
     out = extract_ion_numeric_features([], "demo", stats=("mean", "max"))
-    assert out == {"demo_mean": 0.0, "demo_max": 0.0}
+    assert set(out) == {"demo_mean", "demo_max"}
+    assert all(np.isnan(value) for value in out.values())
+
+
+def test_calc_symmetry_splits_apex_between_both_sides():
+    from workflows.single_work import _calc_symmetry
+
+    assert _calc_symmetry(np.array([1.0, 4.0, 1.0])) == pytest.approx(0.0)
+
+
+def test_calc_xic_score_does_not_oversample_short_xics(monkeypatch):
+    from workflows import single_work
+
+    light = _make_xic([0, 1, 2], [10.0, 11.0, 12.0], [1.0, 5.0, 1.0])
+    heavy = _make_xic([0, 1, 2], [10.0, 11.0, 12.0], [2.0, 8.0, 2.0])
+    original = single_work.np.linspace
+    requested = []
+
+    def recording_linspace(start, stop, num, *args, **kwargs):
+        requested.append(num)
+        return original(start, stop, num, *args, **kwargs)
+
+    monkeypatch.setattr(single_work.np, "linspace", recording_linspace)
+    single_work.calc_xic_score(light, heavy)
+    assert requested == [10]
 
 
 def test_extract_ion_numeric_features_default_still_four():
@@ -830,10 +854,10 @@ def test_fragment_shape_acc_roundtrip_with_light():
         "light_n_peaks": 1, "light_smoothness": 0.6, "light_narrow_defect": 0.7,
     }
     _append_fragment_shape(acc, score)
-    _append_empty_fragment_shape(acc)  # second "fragment" all-zero
+    _append_empty_fragment_shape(acc)  # second fragment has no observation
     out = _fragment_shape_aggregates(acc)
     assert out["all_heavy_centering_defect_max"] == 0.9   # worst fragment
-    assert abs(out["all_heavy_centering_defect_mean"] - 0.45) < 1e-9
+    assert out["all_heavy_centering_defect_mean"] == pytest.approx(0.9)
     assert "all_light_n_peaks_max" in out
     # only mean + max emitted
     assert "all_heavy_centering_defect_p50" not in out

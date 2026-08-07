@@ -8,19 +8,22 @@ import os
 
 import pandas as pd
 
+try:
+    # Package import: ``tools.spec_trainer.src.feature_cols``.
+    from .feature_groups import (
+        METADATA_COLUMNS,
+        TRAINING_EXCLUDED_COLUMNS,
+    )
+except ImportError:  # Script entry points put this ``src`` directory on PATH.
+    from feature_groups import (
+        METADATA_COLUMNS,
+        TRAINING_EXCLUDED_COLUMNS,
+    )
+
 
 # META columns that are not features themselves (PSM identification + label).
 # 与 tools/eval_baseline.py:37-41 保持一致。
-META_COLUMNS = {
-    "sequence", "charge", "raw_title1", "raw_title2", "labeling",
-    "protein_names", "label", "label_type",
-    "precursor_mz", "sequence_len", "rt",
-    # Hard-negative builder provenance. These columns are for leak-free
-    # splitting and source audits only; exposing them to a model would make
-    # the synthetic generator itself a label proxy.
-    "negative_source", "negative_confidence", "query_id", "parent_id",
-    "group_id", "generator", "generator_seed", "heavy_confirmed",
-}
+META_COLUMNS = METADATA_COLUMNS
 
 # 额外排除的特征列。理由分两类:
 #
@@ -40,14 +43,7 @@ META_COLUMNS = {
 #     漏检率剧变；同样是 dataset 代理。
 #   - q_value: PSM 鉴定置信度 (来自 pFind FDR)，是 META/分析列而非物理特征。
 #     写入 features.csv 仅供 FDR-binning 分析使用，绝不能成为训练特征。
-EXCLUDED_EXTRA = {
-    "modification_count",
-    "window_width",
-    "fragment_xic_empty_count",
-    "fragment_same_mass_count",
-    "fragment_heavy_absent_count",
-    "q_value",
-}
+EXCLUDED_EXTRA = TRAINING_EXCLUDED_COLUMNS
 
 
 def prefer_canonical_shift_feature(columns):

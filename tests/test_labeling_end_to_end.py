@@ -174,10 +174,38 @@ def test_workflows_use_configured_labeling(configured, expected, workflow_name):
     assert features["labeling"] == canonical_labeling_name(heavy_type)
     if heavy_type is HeavyType.SILAC:
         assert features["isotope_model_valid"] == 1
-        assert features["isotope_correlation"] == 0.0
+        assert np.isnan(features["isotope_correlation"])
     else:
         assert features["isotope_model_valid"] == 0
         assert np.isnan(features["isotope_correlation"])
+
+
+def test_silac_isotope_envelope_removes_fixed_label_atoms():
+    from spectrum.labeling import HeavyType
+    from spectrum.psm_info import get_theoretical_isotope_ratios
+
+    silac = get_theoretical_isotope_ratios(
+        "PEPTIDEK", heavy_type=HeavyType.SILAC)
+    natural = get_theoretical_isotope_ratios(
+        "PEPTIDEK", heavy_type=HeavyType.CHEAVY)
+    assert silac[0] == pytest.approx(1.0)
+    assert silac[1] < natural[1]
+    assert silac[2] < natural[2]
+
+
+def test_isotope_envelope_includes_known_modification_composition():
+    from spectrum.psm_info import get_theoretical_isotope_ratios
+
+    unmodified = get_theoretical_isotope_ratios("PEPTIDEMK")
+    oxidized = get_theoretical_isotope_ratios("PEPTIDEMK", [(7, 35)])
+    assert oxidized[2] > unmodified[2]
+
+
+def test_isotope_envelope_rejects_unknown_modification():
+    from spectrum.psm_info import get_theoretical_isotope_ratios
+
+    with pytest.raises(ValueError, match="Unimod"):
+        get_theoretical_isotope_ratios("PEPTIDEK", [(3, 999999)])
 
 
 def test_workflow_labeling_defaults_to_silac_and_rejects_unknown():
@@ -187,6 +215,21 @@ def test_workflow_labeling_defaults_to_silac_and_rejects_unknown():
     assert resolve_workflow_heavy_type(_config()) is HeavyType.SILAC
     with pytest.raises(ValueError, match="unknown labeling"):
         resolve_workflow_heavy_type(_config("itraq"))
+
+
+def test_precursor_window_position_is_clamped_to_physical_interval():
+    from workflows.single_work import single_pair_work
+
+    class _ToleranceEdgeDIA(_EmptyRecordingDIA):
+        def get_window_info(self, mz):
+            return {
+                "lower": mz - 1.0, "upper": mz + 1.0,
+                "width": 2.0, "centering": 1.05,
+            }
+
+    features = single_pair_work(
+        _RecordingPSM(), _ToleranceEdgeDIA(), _config("silac"))
+    assert features["precursor_centering"] == 1.0
 
 
 def test_pair_flow_rejects_unknown_labeling_before_loading(tmp_path, monkeypatch):

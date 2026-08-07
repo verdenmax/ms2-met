@@ -24,8 +24,14 @@ def match_peak_ppm(
     # 计算误差范围内所有峰的强度之和
     total_intensity = np.sum(matched_intensities)
 
-    # 找出强度最大的峰的索引（用于返回其ppm误差）
-    ppm_error = np.average(matched_ppm_errors)
+    # A tolerance window may contain more than one centroid.  Report the
+    # centroid of the matched ion cluster, not the unweighted mean of peak
+    # positions (which lets tiny noise peaks move the error arbitrarily).
+    if total_intensity > 0:
+        ppm_error = np.average(
+            matched_ppm_errors, weights=matched_intensities)
+    else:
+        ppm_error = np.average(matched_ppm_errors)
 
     return np.float32(ppm_error), np.float32(total_intensity)
 

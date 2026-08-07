@@ -42,6 +42,7 @@ def _extract_isotope_features(
     heavy_precursor_mz: float,
     charge: int,
     sequence: str,
+    modifications,
     xic_cycle_window: int,
     mass_tol_ppm: float,
     heavy_type: HeavyType,
@@ -57,7 +58,7 @@ def _extract_isotope_features(
         len(heavy_xic) > 0
         and np.any(np.asarray(heavy_xic["intensity"]) > 0)
     )
-    mass_shift_error = 0.0
+    mass_shift_error = float("nan")
     if has_heavy_signal:
         apex_idx = int(np.argmax(heavy_xic["intensity"]))
         mass_shift_error = float(heavy_xic["ppm_error"][apex_idx])
@@ -68,11 +69,23 @@ def _extract_isotope_features(
             "isotope_model_valid": 0,
             "mass_shift_error": mass_shift_error,
         }
+    try:
+        theoretical = np.array(get_theoretical_isotope_ratios(
+            sequence, modifications, heavy_type), dtype="f8")
+    except ValueError:
+        logging.warning(
+            "Cannot construct isotope envelope for sequence=%s mods=%s",
+            sequence, modifications, exc_info=True)
+        return {
+            "isotope_correlation": float("nan"),
+            "isotope_model_valid": 0,
+            "mass_shift_error": mass_shift_error,
+        }
     if not has_heavy_signal:
         return {
-            "isotope_correlation": 0.0,
+            "isotope_correlation": float("nan"),
             "isotope_model_valid": 1,
-            "mass_shift_error": 0.0,
+            "mass_shift_error": float("nan"),
         }
 
     apex_idx = int(np.argmax(heavy_xic["intensity"]))
@@ -97,7 +110,6 @@ def _extract_isotope_features(
         apex_rt, heavy_m2_xic["rt"], heavy_m2_xic["intensity"]))
         if len(heavy_m2_xic) > 0 else 0.0)
     observed = np.array([m0_int, m1_int, m2_int])
-    theoretical = np.array(get_theoretical_isotope_ratios(sequence))
     observed_norm = np.linalg.norm(observed)
     theoretical_norm = np.linalg.norm(theoretical)
     correlation = (
@@ -229,6 +241,7 @@ def multi_batch_work(
         heavy_precursor_mz=float(psm2._precursor_mz),
         charge=psm1._charge,
         sequence=psm1._sequence,
+        modifications=psm1._modify,
         xic_cycle_window=xic_cycle_window,
         mass_tol_ppm=mass_tol_ppm,
         heavy_type=heavy_type,
@@ -261,6 +274,7 @@ def multi_batch_work(
     fragment_n_peaks_list = []
     fragment_smoothnesses = []
     fragment_xic_empty_count = 0
+    attempted_fragment_ions = 0
 
     # P1-1 hoist (Units-I1, 2026-06-03 audit): captured during fragment
     # loop, used once after loop for matched_intensity_percent denominator.
@@ -276,6 +290,7 @@ def multi_batch_work(
 
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
+        attempted_fragment_ions += 1
 
         # NOTE: 这里应该分情况
         # 如果两个母离子在不同的区间，则均可
@@ -305,30 +320,26 @@ def multi_batch_work(
             light_xic=light_ions_xic, heavy_xic=heavy_ions_xic,
         )
 
-        if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
-            # P1-2 (Silent-I1, 2026-06-03 audit): append default zeros to
-            # ALL per-fragment lists so aggregates have consistent
-            # denominator with valid_fragment_ions_num. Previously only
-            # 4 lists were appended; ~10 others were missing entries,
-            # making all_*_mean/p50/std/max compute over a smaller
-            # implicit N.
-            pearsons_map[ions_type].append(0)
-            pearsons_map["all"].append(0)
-            fragment_intensities.append(0.0)
-            fragment_cosines.append(0.0)
-            fragment_snrs.append(0.0)
-            fragment_apex_deltas.append(0.0)
-            fragment_mz_errs.append(0.0)
-            fragment_light_cycle_offsets.append(0)
-            fragment_light_cycle_offsets_signed.append(0)
-            fragment_heavy_cycle_offsets.append(0)
-            fragment_heavy_cycle_offsets_signed.append(0)
-            fragment_base_to_apex_ratios.append(0.0)
+        if _is_empty_xic_pair(light_ions_xic, heavy_ions_xic):
+            # Missing evidence is not a measured zero or perfect alignment.
+            # Keep one NaN per attempted fragment so list alignment is stable
+            # while aggregate helpers count only actually observed pairs.
+            missing = float("nan")
+            pearsons_map[ions_type].append(missing)
+            pearsons_map["all"].append(missing)
+            fragment_intensities.append(missing)
+            fragment_cosines.append(missing)
+            fragment_snrs.append(missing)
+            fragment_apex_deltas.append(missing)
+            fragment_mz_errs.append(missing)
+            fragment_light_cycle_offsets.append(missing)
+            fragment_light_cycle_offsets_signed.append(missing)
+            fragment_heavy_cycle_offsets.append(missing)
+            fragment_heavy_cycle_offsets_signed.append(missing)
+            fragment_base_to_apex_ratios.append(missing)
             _append_empty_fragment_shape(frag_shape)
-            fragment_n_peaks_list.append(0)
-            fragment_smoothnesses.append(0.0)
-            # fragment_hl_ratios intentionally NOT appended — by design
-            # only contains real (heavy>0 AND light>0) ratios.
+            fragment_n_peaks_list.append(missing)
+            fragment_smoothnesses.append(missing)
             fragment_xic_empty_count += 1
             continue
 
@@ -390,7 +401,7 @@ def multi_batch_work(
         #          label=f"light_{ions_type} {ions_num}",
         #          linewidth=2, markersize=8)
 
-    features["valid_fragment_ions_num"] = len(pearsons_map["all"])
+    features["valid_fragment_ions_num"] = attempted_fragment_ions
     features["fragment_xic_empty_count"] = fragment_xic_empty_count
     # P0-1 schema parity (per 2026-06-03 review): multi_batch_work has
     # no heavy_in_raw / same_ms2 guards so these are always 0; emitted
@@ -412,13 +423,17 @@ def multi_batch_work(
 
     # 强度加权碎片相关性
     all_pearsons = pearsons_map["all"]
-    total_weight = sum(fragment_intensities)
+    weighted_pairs = [
+        (p, w) for p, w in zip(all_pearsons, fragment_intensities)
+        if np.isfinite(p) and np.isfinite(w) and w > 0
+    ]
+    total_weight = sum(w for _, w in weighted_pairs)
     if total_weight > 0:
         features["frag_corr_weighted"] = sum(
-            p * w for p, w in zip(all_pearsons, fragment_intensities)
+            p * w for p, w in weighted_pairs
         ) / total_weight
     else:
-        features["frag_corr_weighted"] = 0.0
+        features["frag_corr_weighted"] = float("nan")
 
     # P1-1, Units-I1 (2026-06-03 audit): hoisted denominator.
     # last_light_all / last_heavy_all are per-PSM constants captured
@@ -427,7 +442,8 @@ def multi_batch_work(
     intensitys_map["all"] = last_light_all + last_heavy_all
 
     features["matched_intensity_percent"] = (
-        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"] if intensitys_map["all"] > 0 else 0.0)
+        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"]
+        if intensitys_map["all"] > 0 else float("nan"))
 
     # 碎片级 apex_delta / mz_err / cosine / snr 汇总
     features.update(extract_ion_numeric_features(
@@ -481,7 +497,8 @@ def multi_batch_work(
     # DIA 窗口感知特征
     win_info = dia_data1.get_window_info(psm1._precursor_mz)
     features["window_width"] = win_info["width"]
-    features["precursor_centering"] = win_info["centering"]
+    features["precursor_centering"] = float(np.clip(
+        win_info["centering"], 0.0, 1.0))
 
     # --- Q1a: finalize and merge features ---
     features.update(q1a_acc.compute_features())
@@ -624,6 +641,7 @@ def single_pair_work(
         heavy_precursor_mz=float(heavy_precursor_mz),
         charge=psm._charge,
         sequence=psm._sequence,
+        modifications=psm._modify,
         xic_cycle_window=xic_cycle_window,
         mass_tol_ppm=mass_tol_ppm,
         heavy_type=heavy_type,
@@ -668,6 +686,7 @@ def single_pair_work(
     fragment_xic_empty_count = 0       # both XICs empty after extraction
     fragment_heavy_absent_count = 0    # heavy precursor not in raw window
     fragment_same_mass_count = 0       # same MS2 window AND no SILAC shift
+    attempted_fragment_ions = 0
 
     # P1-1 hoist (Units-I1, 2026-06-03 audit): captured during fragment
     # loop, used once after loop for matched_intensity_percent denominator.
@@ -690,6 +709,8 @@ def single_pair_work(
         if np.abs(heavy_mass - light_mass) < SHIFT_EPSILON and is_same_ms2:
             fragment_same_mass_count += 1
             continue
+
+        attempted_fragment_ions += 1
 
         # 计算出 light 信息
         light_ions_xic, light_all_intensity = dia_data.xic_ms2_peaks_extract(
@@ -729,30 +750,23 @@ def single_pair_work(
             "heavy_coelut": _heavy_coelut,
         })
 
-        if len(light_ions_xic) == 0 or len(heavy_ions_xic) == 0:
-            # P1-2 (Silent-I1, 2026-06-03 audit): append default zeros to
-            # ALL per-fragment lists so aggregates have consistent
-            # denominator with valid_fragment_ions_num. Previously only
-            # 4 lists were appended; ~10 others were missing entries,
-            # making all_*_mean/p50/std/max compute over a smaller
-            # implicit N.
-            pearsons_map[ions_type].append(0)
-            pearsons_map["all"].append(0)
-            fragment_intensities.append(0.0)
-            fragment_cosines.append(0.0)
-            fragment_snrs.append(0.0)
-            fragment_apex_deltas.append(0.0)
-            fragment_mz_errs.append(0.0)
-            fragment_light_cycle_offsets.append(0)
-            fragment_light_cycle_offsets_signed.append(0)
-            fragment_heavy_cycle_offsets.append(0)
-            fragment_heavy_cycle_offsets_signed.append(0)
-            fragment_base_to_apex_ratios.append(0.0)
+        if _is_empty_xic_pair(light_ions_xic, heavy_ions_xic):
+            missing = float("nan")
+            pearsons_map[ions_type].append(missing)
+            pearsons_map["all"].append(missing)
+            fragment_intensities.append(missing)
+            fragment_cosines.append(missing)
+            fragment_snrs.append(missing)
+            fragment_apex_deltas.append(missing)
+            fragment_mz_errs.append(missing)
+            fragment_light_cycle_offsets.append(missing)
+            fragment_light_cycle_offsets_signed.append(missing)
+            fragment_heavy_cycle_offsets.append(missing)
+            fragment_heavy_cycle_offsets_signed.append(missing)
+            fragment_base_to_apex_ratios.append(missing)
             _append_empty_fragment_shape(frag_shape)
-            fragment_n_peaks_list.append(0)
-            fragment_smoothnesses.append(0.0)
-            # fragment_hl_ratios intentionally NOT appended — by design
-            # only contains real (heavy>0 AND light>0) ratios.
+            fragment_n_peaks_list.append(missing)
+            fragment_smoothnesses.append(missing)
             fragment_xic_empty_count += 1
             continue
 
@@ -809,7 +823,7 @@ def single_pair_work(
         })
 
     # plot_light_heavy_contract(ion_data)
-    features["valid_fragment_ions_num"] = len(pearsons_map["all"])
+    features["valid_fragment_ions_num"] = attempted_fragment_ions
     # P0-1 (fix per 2026-06-03 review): 3 orthogonal skip-cause columns.
     features["fragment_xic_empty_count"] = fragment_xic_empty_count
     features["fragment_heavy_absent_count"] = fragment_heavy_absent_count
@@ -829,13 +843,17 @@ def single_pair_work(
 
     # 强度加权碎片相关性
     all_pearsons = pearsons_map["all"]
-    total_weight = sum(fragment_intensities)
+    weighted_pairs = [
+        (p, w) for p, w in zip(all_pearsons, fragment_intensities)
+        if np.isfinite(p) and np.isfinite(w) and w > 0
+    ]
+    total_weight = sum(w for _, w in weighted_pairs)
     if total_weight > 0:
         features["frag_corr_weighted"] = sum(
-            p * w for p, w in zip(all_pearsons, fragment_intensities)
+            p * w for p, w in weighted_pairs
         ) / total_weight
     else:
-        features["frag_corr_weighted"] = 0.0
+        features["frag_corr_weighted"] = float("nan")
 
     # P1-1, Units-I1 (2026-06-03 audit): hoisted denominator.
     # last_light_all / last_heavy_all are per-PSM constants captured
@@ -844,7 +862,8 @@ def single_pair_work(
     intensitys_map["all"] = last_light_all + last_heavy_all
 
     features["matched_intensity_percent"] = (
-        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"] if intensitys_map["all"] > 0 else 0.0)
+        (intensitys_map["b"] + intensitys_map["y"]) / intensitys_map["all"]
+        if intensitys_map["all"] > 0 else float("nan"))
 
     # 碎片级 apex_delta / mz_err / cosine / snr 汇总
     features.update(extract_ion_numeric_features(
@@ -901,7 +920,8 @@ def single_pair_work(
     # DIA 窗口感知特征
     win_info = dia_data.get_window_info(psm._precursor_mz)
     features["window_width"] = win_info["width"]
-    features["precursor_centering"] = win_info["centering"]
+    features["precursor_centering"] = float(np.clip(
+        win_info["centering"], 0.0, 1.0))
 
     features.update(q1a_acc.compute_features())
 
@@ -1060,13 +1080,13 @@ def extract_ion_pearson_features(ions_pearsons: []) -> dict:
     if count == 0:
         return {
             "count": 0,
-            "p25": 0,
-            "p50": 0,
-            "p75": 0,
-            "mean": 0,
-            "std": 0,
-            "min": 0,
-            "high_ratio": 0,
+            "p25": float("nan"),
+            "p50": float("nan"),
+            "p75": float("nan"),
+            "mean": float("nan"),
+            "std": float("nan"),
+            "min": float("nan"),
+            "high_ratio": float("nan"),
         }
 
     p25 = np.clip(np.percentile(clean_vals, 25), 0, 1)
@@ -1108,7 +1128,7 @@ def extract_ion_numeric_features(
         "max": lambda a: float(np.max(a)),
     }
     if len(clean_vals) == 0:
-        return {f"{prefix}_{s}": 0.0 for s in stats}
+        return {f"{prefix}_{s}": float("nan") for s in stats}
     arr = np.asarray(clean_vals, dtype="f8")
     return {f"{prefix}_{s}": funcs[s](arr) for s in stats}
 
@@ -1136,8 +1156,11 @@ def _calc_symmetry(intensity: np.ndarray) -> float:
     if total <= 0 or np.isnan(total):
         return 0.0
     apex_idx = np.nanargmax(intensity)
-    left_area = float(np.nansum(intensity[:apex_idx + 1]))
-    right_area = float(np.nansum(intensity[apex_idx + 1:]))
+    apex_area = float(intensity[apex_idx])
+    # Split the apex equally between both sides. Assigning it wholly to the
+    # left made a perfectly symmetric narrow peak appear asymmetric.
+    left_area = float(np.nansum(intensity[:apex_idx])) + apex_area / 2.0
+    right_area = float(np.nansum(intensity[apex_idx + 1:])) + apex_area / 2.0
     return abs(left_area - right_area) / total
 
 
@@ -1533,7 +1556,8 @@ def calc_xic_score(
             result["heavy_apex_cycle_offset_signed"] = h_sig
         return result
 
-    common_rt = np.linspace(rt_start, rt_end, 100)
+    n_points = min(100, max(len(light_xic), len(heavy_xic), 10))
+    common_rt = np.linspace(rt_start, rt_end, n_points)
     inten1_interp = interp(common_rt, light_xic["rt"], light_xic["intensity"])
     inten2_interp = interp(common_rt, heavy_xic["rt"], heavy_xic["intensity"])
 
@@ -1652,9 +1676,9 @@ def _append_fragment_shape(acc: dict, ion_score: dict) -> None:
 
 
 def _append_empty_fragment_shape(acc: dict) -> None:
-    """Append zeros for a fragment whose XIC pair was empty."""
+    """Append missing values for a fragment whose XIC pair was empty."""
     for k in acc:
-        acc[k].append(0.0)
+        acc[k].append(float("nan"))
 
 
 def _fragment_shape_aggregates(acc: dict) -> dict:

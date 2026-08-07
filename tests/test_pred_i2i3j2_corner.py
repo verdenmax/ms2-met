@@ -202,6 +202,14 @@ def test_j2_intensity_ratio_divides_by_sum_heavy_over_F():
     assert out["unexpected_heavy_intensity_ratio"] == pytest.approx(0.6)
 
 
+def test_j2_intensity_ratio_is_missing_when_predicted_heavy_sum_is_zero():
+    floor = 0.0
+    recs = [_rec("y", 1, 10.0, 0.0), _rec("y", 2, 10.0, 50.0)]
+    pred = {_key("y", 1): 1.0}
+    out = compute_speclib_i2_i3_j2(recs, pred, 6, SEQ_LEN, floor)
+    assert math.isnan(out["unexpected_heavy_intensity_ratio"])
+
+
 # --------------------------------------------------------------------------
 # top_k cutoff: a predicted fragment beyond top_k is a cand (predicted), so
 # it must NOT count as W even though it's dropped from F.

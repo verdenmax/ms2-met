@@ -98,6 +98,28 @@ def test_heavy_absent_when_empty_xic():
     assert is_signal_present_heavy(light, heavy, intensity_floor=100) is False
 
 
+def test_peak_width_is_fwhm_not_entire_extraction_window():
+    from workflows.q1a_helpers import _peak_width
+
+    narrow = _xic([0, 1, 2, 3, 4], [0, 0, 10, 0, 0])
+    assert _peak_width(narrow) == pytest.approx(1.0)
+
+
+def test_heavy_apex_uses_global_cycle_when_available():
+    from workflows.q1a_helpers import is_signal_present_heavy
+
+    dtype = [("rt", "f8"), ("intensity", "f8"), ("cycle_idx", "i4")]
+    light = np.zeros(5, dtype=dtype)
+    heavy = np.zeros(5, dtype=dtype)
+    light["rt"] = heavy["rt"] = np.arange(5.0)
+    light["cycle_idx"] = [10, 11, 12, 13, 14]
+    heavy["cycle_idx"] = [11, 12, 13, 14, 15]
+    light["intensity"] = heavy["intensity"] = [20, 200, 500, 200, 20]
+    assert is_signal_present_heavy(light, heavy) is True
+    heavy["cycle_idx"] += 2
+    assert is_signal_present_heavy(light, heavy) is False
+
+
 # ----------------------------------------------------------------------
 # Window separability
 # ----------------------------------------------------------------------

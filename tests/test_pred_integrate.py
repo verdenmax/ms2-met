@@ -65,6 +65,21 @@ def test_fragment_without_prediction_is_excluded():
     assert math.isnan(out["spec_pattern_SA_y"])
 
 
+def test_prediction_intensity_uses_same_charge_pool_as_observed_ms2():
+    seq_len = 8
+    recs = [_rec("y", 1, 1.0, 3.0), _rec("y", 2, 1.0, 1.0)]
+    first = frag_pos_for_ion("y", 1, seq_len)
+    second = frag_pos_for_ion("y", 2, seq_len)
+    pred = {
+        frag_key("y", first, 1): 1.0,
+        frag_key("y", first, 2): 2.0,
+        frag_key("y", second, 2): 1.0,
+    }
+    out = compute_speclib_i1(recs, pred, top_k=6, seq_len=seq_len)
+    assert out["n_fragments_in_F"] == 2
+    assert out["spec_pattern_SA_y"] == pytest.approx(1.0)
+
+
 def test_spearman_rank_order_is_scale_invariant():
     # Same RANK order, wildly different magnitudes between predicted and
     # observed-heavy -> Spearman = 1.0 per ion type, while the magnitude-

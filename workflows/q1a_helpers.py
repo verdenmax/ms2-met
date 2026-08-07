@@ -24,8 +24,9 @@ from scipy.stats import pearsonr
 # Three-condition signal-present thresholds (spec §4.2 implementation
 # decisions, locked 2026-05-19; defaults may be tuned later via config).
 DEFAULT_INTENSITY_FLOOR = 100.0
-DEFAULT_APEX_DELTA_FRACTION = 0.3   # heavy apex within 0.3 * light_peak_width
+DEFAULT_APEX_DELTA_FRACTION = 0.3   # legacy XIC fallback: fraction of FWHM
 DEFAULT_PEARSON_MIN = 0.5
+DEFAULT_MAX_APEX_CYCLE_DELTA = 1
 
 # Below this absolute m/z difference (Da), light and heavy fragment
 # masses are considered equal (i.e. the fragment carries no K/R, so
@@ -55,12 +56,35 @@ def is_signal_present_light(xic, intensity_floor: float = DEFAULT_INTENSITY_FLOO
 
 
 def _peak_width(xic) -> float:
-    """Span of rt values in the XIC (used as a denominator for
-    apex_delta normalization). Returns 0 for empty/single-point XICs."""
-    if xic is None or len(xic) < 2:
+    """Interpolated full width at half maximum in RT units."""
+    if xic is None or len(xic) < 3:
         return 0.0
-    rts = np.asarray(xic["rt"], dtype="f8")
-    return float(rts.max() - rts.min())
+    order = np.argsort(xic["rt"])
+    rts = np.asarray(xic["rt"][order], dtype="f8")
+    intensities = np.asarray(xic["intensity"][order], dtype="f8")
+    if not np.all(np.isfinite(rts)) or not np.any(np.isfinite(intensities)):
+        return 0.0
+    apex = int(np.nanargmax(intensities))
+    apex_intensity = float(intensities[apex])
+    if apex_intensity <= 0 or apex == 0 or apex == len(intensities) - 1:
+        return 0.0
+    half = apex_intensity / 2.0
+
+    def crossing(i: int, j: int) -> float:
+        y0, y1 = float(intensities[i]), float(intensities[j])
+        if not np.isfinite(y0) or not np.isfinite(y1) or y0 == y1:
+            return float(rts[i])
+        fraction = (half - y0) / (y1 - y0)
+        return float(rts[i] + fraction * (rts[j] - rts[i]))
+
+    left = next((crossing(i, i + 1) for i in range(apex - 1, -1, -1)
+                 if intensities[i] < half <= intensities[i + 1]), None)
+    right = next((crossing(i, i + 1)
+                  for i in range(apex, len(intensities) - 1)
+                  if intensities[i] >= half > intensities[i + 1]), None)
+    if left is None or right is None or right <= left:
+        return 0.0
+    return float(right - left)
 
 
 def is_signal_present_heavy(
@@ -69,10 +93,12 @@ def is_signal_present_heavy(
     intensity_floor: float = DEFAULT_INTENSITY_FLOOR,
     apex_delta_fraction: float = DEFAULT_APEX_DELTA_FRACTION,
     pearson_min: float = DEFAULT_PEARSON_MIN,
+    max_apex_cycle_delta: int = DEFAULT_MAX_APEX_CYCLE_DELTA,
 ) -> bool:
     """Heavy 'present' iff three conditions all hold:
       1. heavy max intensity > intensity_floor
-      2. |heavy_apex_rt - light_apex_rt| < apex_delta_fraction * light_peak_width
+      2. apex cycle difference <= max_apex_cycle_delta; legacy arrays without
+         cycle_idx fall back to an apex-RT threshold based on true FWHM
       3. pearsonr(aligned_light, aligned_heavy) > pearson_min
     """
     if heavy_xic is None or len(heavy_xic) == 0:
@@ -89,14 +115,26 @@ def is_signal_present_heavy(
     if not np.isfinite(heavy_max) or heavy_max <= intensity_floor:
         return False
 
-    light_apex_rt = float(light_xic["rt"][np.nanargmax(light_xic["intensity"])])
-    heavy_apex_rt = float(heavy_xic["rt"][np.nanargmax(heavy_xic["intensity"])])
-    apex_delta = abs(heavy_apex_rt - light_apex_rt)
-    light_pw = _peak_width(light_xic)
-    if light_pw <= 0:
-        return False  # No peak shape; can't validate coelution
-    if apex_delta >= apex_delta_fraction * light_pw:
-        return False
+    light_apex_idx = int(np.nanargmax(light_xic["intensity"]))
+    heavy_apex_idx = int(np.nanargmax(heavy_xic["intensity"]))
+    light_names = light_xic.dtype.names or ()
+    heavy_names = heavy_xic.dtype.names or ()
+    if "cycle_idx" in light_names and "cycle_idx" in heavy_names:
+        light_cycle = int(light_xic["cycle_idx"][light_apex_idx])
+        heavy_cycle = int(heavy_xic["cycle_idx"][heavy_apex_idx])
+        if light_cycle < 0 or heavy_cycle < 0:
+            return False
+        if abs(heavy_cycle - light_cycle) > max_apex_cycle_delta:
+            return False
+    else:
+        light_apex_rt = float(light_xic["rt"][light_apex_idx])
+        heavy_apex_rt = float(heavy_xic["rt"][heavy_apex_idx])
+        apex_delta = abs(heavy_apex_rt - light_apex_rt)
+        light_pw = _peak_width(light_xic)
+        if light_pw <= 0:
+            return False  # No peak shape; can't validate coelution
+        if apex_delta > apex_delta_fraction * light_pw:
+            return False
 
     # Pearson correlation on shared rt grid (defensive sort first, mirrors calc_xic_score)
     light_sorted = light_xic[np.argsort(light_xic["rt"])]
@@ -185,11 +223,13 @@ class Q1aAccumulator:
         intensity_floor: float = DEFAULT_INTENSITY_FLOOR,
         apex_delta_fraction: float = DEFAULT_APEX_DELTA_FRACTION,
         pearson_min: float = DEFAULT_PEARSON_MIN,
+        max_apex_cycle_delta: int = DEFAULT_MAX_APEX_CYCLE_DELTA,
     ):
         self.split_window = split_window
         self.intensity_floor = intensity_floor
         self.apex_delta_fraction = apex_delta_fraction
         self.pearson_min = pearson_min
+        self.max_apex_cycle_delta = max_apex_cycle_delta
         # Bucket counters: keys are (mechanism, ion_type, outcome)
         # mechanism ∈ {"shifted", "unshifted_separable"}
         # ion_type ∈ {"b", "y"}
@@ -236,6 +276,7 @@ class Q1aAccumulator:
             intensity_floor=self.intensity_floor,
             apex_delta_fraction=self.apex_delta_fraction,
             pearson_min=self.pearson_min,
+            max_apex_cycle_delta=self.max_apex_cycle_delta,
         )
         outcome = "TP" if heavy_present else "FN"
 

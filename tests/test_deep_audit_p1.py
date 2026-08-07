@@ -107,23 +107,15 @@ def test_matched_intensity_percent_independent_of_fragment_count_multi_batch():
         label="multi_batch_work")
 
 
-def test_fragment_empty_branch_aggregates_no_nan_when_all_empty():
-    """When all fragments hit empty-XIC, aggregates must be 0.0 (not NaN)
-    because all per-fragment lists are appended with zeros (P1-2, Silent-I1)."""
+def test_fragment_empty_branch_aggregates_are_missing_when_all_empty():
+    """An all-empty fragment set has no measured shape or alignment."""
     from workflows.single_work import single_pair_work
     psm = _MultiFragPSM(n_fragments=3)
     dia = _FakeDIA(force_empty=True)
     cfg = _minimal_config()
     features = single_pair_work(psm, dia, cfg)
 
-    # All 3 fragments empty -> all aggregates should be 0.0, not NaN.
     # Pick representative aggregates from each per-fragment list family.
-    # Fragment-level aggregates that must be present and 0.0 (not NaN)
-    # when all fragments hit empty-XIC. List was cleaned up in P1-2
-    # review fix (2026-06-03): all_mz_avg_err_mean → all_mz_err_mean;
-    # dropped all_apex_delta_signed_mean (signed variant only emitted
-    # for cycle offsets and at precursor level, not for fragment
-    # apex_delta aggregates).
     for key in (
         "all_apex_delta_mean",
         "all_mz_err_mean",
@@ -139,15 +131,15 @@ def test_fragment_empty_branch_aggregates_no_nan_when_all_empty():
         assert key in features, (
             f"P1-2 test contract: '{key}' missing from features dict. "
             f"If column renamed, update this test.")
-        v = features[key]
-        assert not (isinstance(v, float) and np.isnan(v)), (
-            f"P1-2: {key} should be 0.0 (not NaN) when all fragments "
-            f"hit empty-XIC branch; got {v}. Likely cause: per-fragment "
-            f"list not appended in empty branch.")
+        assert np.isnan(features[key]), (
+            f"{key} should be missing when all fragment XICs are empty")
+    assert features["valid_fragment_ions_num"] == 3
+    assert features["all_count"] == 0
+    assert features["fragment_xic_empty_count"] == 3
 
 
-def test_fragment_empty_branch_aggregates_no_nan_multi_batch():
-    """Same parity test for multi_batch_work (P1-2)."""
+def test_fragment_empty_branch_aggregates_are_missing_multi_batch():
+    """Same missing-evidence semantics for multi_batch_work."""
     from workflows.single_work import multi_batch_work
     psm = _MultiFragPSM(n_fragments=3)
     dia = _FakeDIA(force_empty=True)
@@ -163,9 +155,10 @@ def test_fragment_empty_branch_aggregates_no_nan_multi_batch():
         assert key in features, (
             f"P1-2 test contract: '{key}' missing from multi_batch_work "
             f"features dict.")
-        v = features[key]
-        assert not (isinstance(v, float) and np.isnan(v)), (
-            f"P1-2 multi_batch_work: {key} should be 0.0 not NaN; got {v}")
+        assert np.isnan(features[key])
+    assert features["valid_fragment_ions_num"] == 3
+    assert features["all_count"] == 0
+    assert features["fragment_xic_empty_count"] == 3
 
 
 class _MixedFragDIA(_FakeDIA):
@@ -196,20 +189,10 @@ def test_mixed_empty_and_valid_fragments_list_parity():
     per-fragment list lengths must match valid_fragment_ions_num (P1-2).
 
     Strategy: trigger empty-XIC for the FIRST fragment of 3, valid for
-    the other 2. valid_fragment_ions_num counts all 3 (the fragments
-    that reached the XIC extraction stage). With the P1-2 fix, the
-    empty fragment appends 0 to all per-fragment lists, so aggregates
-    are computed over 3 fragments. Without the fix, only 2 would be
-    aggregated for the missing lists.
-
-    We verify by computing the expected all_apex_delta_mean: 0 (empty
-    fragment) + 0 (real, both peaks at rt=10.0 -> apex_delta=0) + 0
-    = 0 / 3 = 0. That's the same as without the fix (0+0/2 = 0).
-    So we use n_peaks instead: empty fragment's n_peaks=0; valid
-    fragment's n_peaks > 0 because the XIC has a real peak.
-    Without fix: n_peaks_mean = (n_real + n_real) / 2 = real value.
-    With fix: n_peaks_mean = (0 + n_real + n_real) / 3 = real * 2/3.
-    Ratio: with fix is smaller than without fix.
+    the other 2. valid_fragment_ions_num counts all 3 attempted pairs,
+    while observed b/y/all counts and aggregates ignore the missing pair.
+    A NaN placeholder preserves per-fragment list alignment without turning
+    missing evidence into a numerical zero.
 
     Instead of asserting exact values (brittle), we monkey-patch
     extract_ion_numeric_features to capture the list lengths.

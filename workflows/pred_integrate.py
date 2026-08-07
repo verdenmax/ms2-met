@@ -11,6 +11,7 @@ import numpy as np
 
 from workflows.pred_features import spectral_angle, spearman_sim, _weighted_pearson
 from workflows.pred_store import frag_key, frag_pos_for_ion
+from spectrum.dia_data import OBSERVED_FRAGMENT_CHARGES
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,19 @@ def _nan_i1() -> dict:
     return d
 
 
+def _predicted_fragment_intensity(
+        pred_frags: dict, ion_type: str, fragment_position: int,
+) -> float | None:
+    """Sum finite predicted intensity over the observed charge pool."""
+    values = [
+        pred_frags.get(frag_key(ion_type, fragment_position, charge))
+        for charge in OBSERVED_FRAGMENT_CHARGES
+    ]
+    finite = [float(value) for value in values
+              if value is not None and np.isfinite(value)]
+    return float(sum(finite)) if finite else None
+
+
 def compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict:
     """I1 intensity-pattern features for one PSM (spec 4.3, per ion-type 7).
 
@@ -51,8 +65,9 @@ def compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict:
     cands = []
     for r in frag_records:
         fp = frag_pos_for_ion(r["ion_type"], r["ion_num"], seq_len)
-        pi = pred_frags.get(frag_key(r["ion_type"], fp, 1))
-        if pi is None or not np.isfinite(pi):
+        pi = _predicted_fragment_intensity(
+            pred_frags, r["ion_type"], fp)
+        if pi is None:
             continue
         cands.append({**r, "pred": float(pi)})
     if not cands:
@@ -138,8 +153,9 @@ def compute_speclib_i2_i3_j2(frag_records, pred_frags, top_k, seq_len,
     cands, W = [], []
     for r in frag_records:
         fp = frag_pos_for_ion(r["ion_type"], r["ion_num"], seq_len)
-        pi = pred_frags.get(frag_key(r["ion_type"], fp, 1))
-        if pi is None or not np.isfinite(pi):
+        pi = _predicted_fragment_intensity(
+            pred_frags, r["ion_type"], fp)
+        if pi is None:
             W.append(r)
         else:
             cands.append({**r, "pred": float(pi)})
@@ -182,8 +198,9 @@ def compute_speclib_i2_i3_j2(frag_records, pred_frags, top_k, seq_len,
             w_present = [r for r in W if r["heavy_apex"] > presence_floor]
             out["unexpected_heavy_fraction"] = len(w_present) / len(W)
             heavy_F = sum(r["heavy_apex"] for r in F)
-            out["unexpected_heavy_intensity_ratio"] = (
-                sum(r["heavy_apex"] for r in w_present) / (heavy_F + 1e-9))
+            if heavy_F > 0:
+                out["unexpected_heavy_intensity_ratio"] = (
+                    sum(r["heavy_apex"] for r in w_present) / heavy_F)
     return out
 
 
@@ -210,8 +227,9 @@ def compute_speclib_adaptive(frag_records, pred_frags, top_k, seq_len,
     cands = []
     for r in frag_records:
         fp = frag_pos_for_ion(r["ion_type"], r["ion_num"], seq_len)
-        pi = pred_frags.get(frag_key(r["ion_type"], fp, 1))
-        if pi is not None and np.isfinite(pi):
+        pi = _predicted_fragment_intensity(
+            pred_frags, r["ion_type"], fp)
+        if pi is not None:
             cands.append({**r, "pred": float(pi)})
     if not cands:
         return _nan_adaptive()
@@ -272,8 +290,9 @@ def compute_speclib_coelut(frag_records, pred_frags, top_k, seq_len,
     cands = []
     for r in frag_records:
         fp = frag_pos_for_ion(r["ion_type"], r["ion_num"], seq_len)
-        pi = pred_frags.get(frag_key(r["ion_type"], fp, 1))
-        if pi is not None and np.isfinite(pi):
+        pi = _predicted_fragment_intensity(
+            pred_frags, r["ion_type"], fp)
+        if pi is not None:
             cands.append({**r, "pred": float(pi)})
     if not cands:
         logger.debug("coelut: no fragment matched a prediction -> NaN")

@@ -151,6 +151,7 @@ def test_ms2_xic_returns_cycle_idx_field():
     # Center is MS2 at rt=35 (global idx 3, cycle 1).
     # Window=1 -> 1 left + center + 1 right = 3 entries; cycles [0,1,2].
     assert list(xic["cycle_idx"]) == [0, 1, 2]
+    assert np.all(np.isnan(xic["ppm_error"]))
 
 
 def test_ms2_xic_empty_path_still_has_cycle_idx_in_dtype():
@@ -165,6 +166,31 @@ def test_ms2_xic_empty_path_still_has_cycle_idx_in_dtype():
         mass_tol_ppm=np.float32(10.0))
     assert "cycle_idx" in xic.dtype.names
     assert len(xic) == 0
+
+
+def test_ms2_xic_pools_charge_states_and_weights_ppm_by_intensity():
+    d = DIAData.__new__(DIAData)
+    d.ms2_indexs = np.array([0], dtype=np.int32)
+    d.ms2_indexs_rt = np.array([10.0], dtype=np.float32)
+    d.rt_values = np.array([10.0], dtype=np.float32)
+    d._precursor_lower_mz = np.array([499.0])
+    d._precursor_upper_mz = np.array([501.0])
+    proton = 1.00727646677
+    ion_mass = 200.0
+    charge1 = ion_mass + proton
+    charge2 = (ion_mass + 2 * proton) / 2
+    mz = np.array([charge1 * (1 + 10e-6), charge2 * (1 - 10e-6)])
+    intensity = np.array([10.0, 30.0])
+    d.get_spectrum_by_index = lambda _: (mz, intensity)
+    d._ms2_cycle_idx = lambda _: 7
+
+    xic, _ = d.xic_ms2_peaks_extract(
+        rt=np.float32(10.0), xic_cycle_window=0,
+        precursor_mz=np.float32(500.0), ions_mass=np.float32(ion_mass),
+        mass_tol_ppm=np.float32(20.0))
+
+    assert xic["intensity"][0] == pytest.approx(40.0)
+    assert xic["ppm_error"][0] == pytest.approx(-5.0, abs=0.05)
 
 
 def test_ms2_xic_finds_window_beyond_5_scans():

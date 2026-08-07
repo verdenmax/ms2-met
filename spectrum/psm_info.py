@@ -234,19 +234,55 @@ def get_SILAC_increase_mass(sequence: str):
     return get_silac_increase_mass(sequence)
 
 
-def get_theoretical_isotope_ratios(sequence: str) -> list:
-    """计算肽段的理论同位素分布比例 [M0, M1, M2]（Poisson 近似）。
-    基于各元素的重同位素天然丰度，用 Poisson 模型估算 M+1/M+2 相对于 M0 的比值。
+def get_theoretical_isotope_ratios(
+    sequence: str,
+    modifications=(),
+    heavy_type: HeavyType = HeavyType.SILAC,
+) -> list[float]:
+    """Return theoretical nominal [M0, M1, M2] ratios.
+
+    Known Unimod compositions are included.  For SILAC, the labelled C/N
+    atoms on K and R are fixed heavy atoms and therefore do not contribute to
+    the *residual natural-isotope* envelope around the heavy monoisotopic
+    peak.  The three-bin convolution also includes the important +2
+    contributions from 18O and 34S, which the previous Poisson-M+1 shortcut
+    omitted.
     """
     comp = mass.Composition(sequence)
-    # 各元素对 M+1 峰的贡献（主要重同位素天然丰度）
-    lam = (comp.get('C', 0) * 0.01109 +   # 13C
-           comp.get('H', 0) * 0.000115 +  # 2H
-           comp.get('N', 0) * 0.00364 +   # 15N
-           comp.get('O', 0) * 0.00038 +   # 17O
-           comp.get('S', 0) * 0.0079)     # 33S
-    # Poisson 近似: P(k) ∝ λ^k / k!
-    return [1.0, lam, lam * lam / 2.0]
+    for _, modification_id in modifications:
+        try:
+            modification = unimods.by_id(int(modification_id))
+            mod_comp = modification["composition"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"unknown or composition-less Unimod id {modification_id}"
+            ) from exc
+        comp += mod_comp
+
+    if heavy_type is HeavyType.SILAC:
+        comp["C"] -= 6 * (sequence.count("K") + sequence.count("R"))
+        comp["N"] -= 2 * sequence.count("K") + 4 * sequence.count("R")
+
+    if any(float(count) < 0 for count in comp.values()):
+        raise ValueError(f"invalid isotope composition for {sequence!r}: {comp}")
+
+    # Per-atom probabilities grouped by nominal mass shift. Values follow
+    # standard terrestrial abundances; bins above +2 are deliberately
+    # truncated because the feature observes only M0/M1/M2.
+    isotope_probabilities = {
+        "C": (0.9893, 0.0107, 0.0),
+        "H": (0.999885, 0.000115, 0.0),
+        "N": (0.99636, 0.00364, 0.0),
+        "O": (0.99757, 0.00038, 0.00205),
+        "S": (0.9499, 0.0075, 0.0425),
+    }
+    envelope = np.array([1.0, 0.0, 0.0], dtype="f8")
+    for element, probabilities in isotope_probabilities.items():
+        for _ in range(int(comp.get(element, 0))):
+            envelope = np.convolve(envelope, probabilities)[:3]
+    if envelope[0] <= 0 or not np.all(np.isfinite(envelope)):
+        raise ValueError(f"invalid theoretical isotope envelope: {envelope}")
+    return (envelope / envelope[0]).tolist()
 
 
 def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5,
