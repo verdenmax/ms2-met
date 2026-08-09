@@ -201,6 +201,10 @@ help:
 	@echo "  make train-cv-neg20-all 6 个 neg20 CV 实验"
 	@echo "  make train-cv-all       所有 30 个 CV 实验（clean → neg05 → … → neg20）"
 	@echo ""
+	@echo "  Formal MS1/MS2 ablation（共同队列 + 注册表特征组）："
+	@echo "  make train-ablation-neg20-2da FEATURE_ROOT=/path/to/results  2da 预跑（7 组）"
+	@echo "  make train-ablation-neg20 FEATURE_ROOT=/path/to/results      三数据集（21 组）"
+	@echo ""
 	@echo "  make clean-train        清理 runs/spec_trainer/ 训练产出"
 	@echo "  make clean           旧式清理（checkpoint.pkl 等）"
 	@echo ""
@@ -1064,6 +1068,7 @@ train-cv-2da: runs/baseline_2da_clean/features.csv
 # ---------- CV 全矩阵(in-sample + cross_test ensemble)----------
 .PHONY: train-cv-clean-all train-cv-neg05-all train-cv-neg10-all
 .PHONY: train-cv-neg15-all train-cv-neg20-all train-cv-all
+.PHONY: train-ablation-neg20-2da train-ablation-neg20
 
 CV_CLEAN_YAMLS := cv_in_2da_clean cv_in_5da_clean cv_in_normal_clean \
                   cv_cross_test_2da_clean cv_cross_test_5da_clean cv_cross_test_normal_clean
@@ -1071,6 +1076,52 @@ CV_NEG05_YAMLS := $(subst _clean,_neg05,$(CV_CLEAN_YAMLS))
 CV_NEG10_YAMLS := $(subst _clean,_neg10,$(CV_CLEAN_YAMLS))
 CV_NEG15_YAMLS := $(subst _clean,_neg15,$(CV_CLEAN_YAMLS))
 CV_NEG20_YAMLS := $(subst _clean,_neg20,$(CV_CLEAN_YAMLS))
+
+# Formal paired ablation. FEATURE_ROOT points at the directory containing
+# baseline_{2da,5da,normal}_neg20/features.csv. Generated configs and outputs
+# stay under the repository so the external feature snapshot is never copied
+# or modified.
+FEATURE_ROOT ?= runs
+ABLATION_OUTPUT_ROOT ?= runs/spec_trainer/ablation/neg20
+ABLATION_CONFIG_DIR ?= $(ABLATION_OUTPUT_ROOT)/configs
+ABLATION_ARMS := context_only ms1_only ms2_observed_only ms2_all \
+                 ms1_ms2_no_prediction evidence_all full
+
+train-ablation-neg20-2da:
+	@mkdir -p "$(ABLATION_OUTPUT_ROOT)"
+	$(PY) tools/spec_trainer/gen_ablation_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(ABLATION_OUTPUT_ROOT)" \
+	    --config-dir "$(ABLATION_CONFIG_DIR)" \
+	    --fdr neg20 --datasets 2da
+	@for arm in $(ABLATION_ARMS); do \
+		name="ablation_2da_neg20_$$arm"; \
+		echo "==================== CV $$name ===================="; \
+		$(PY) tools/spec_trainer/src/cv_train.py \
+		    --config "$(ABLATION_CONFIG_DIR)/$$name.yaml" \
+		    --name "$$name" \
+		    --logpath "$(ABLATION_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+	done
+	@echo "[done] train-ablation-neg20-2da (7 paired CV experiments)"
+
+train-ablation-neg20:
+	@mkdir -p "$(ABLATION_OUTPUT_ROOT)"
+	$(PY) tools/spec_trainer/gen_ablation_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(ABLATION_OUTPUT_ROOT)" \
+	    --config-dir "$(ABLATION_CONFIG_DIR)" \
+	    --fdr neg20 --datasets 2da 5da normal
+	@for dataset in 2da 5da normal; do \
+		for arm in $(ABLATION_ARMS); do \
+			name="ablation_$${dataset}_neg20_$$arm"; \
+			echo "==================== CV $$name ===================="; \
+			$(PY) tools/spec_trainer/src/cv_train.py \
+			    --config "$(ABLATION_CONFIG_DIR)/$$name.yaml" \
+			    --name "$$name" \
+			    --logpath "$(ABLATION_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+		done; \
+	done
+	@echo "[done] train-ablation-neg20 (21 paired CV experiments)"
 
 train-cv-clean-all: $(CLEAN_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results

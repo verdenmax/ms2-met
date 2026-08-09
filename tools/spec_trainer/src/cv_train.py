@@ -19,7 +19,8 @@ import yaml
 from cv_core import (average_proba, audit_labels, evaluate_at_threshold,
                      evaluate_oof, fnr_at_fpr5, make_cv_splits,
                      threshold_at_fpr)
-from feature_cols import resolve_feature_cols
+from cohort import apply_training_cohort
+from feature_cols import resolve_configured_feature_cols
 
 
 def read_dataframe(train_files):
@@ -152,7 +153,7 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
     Returns (oof_proba, fold_metrics, model_paths). lightgbm imported here.
     """
     # df: unused here; kept for call-site symmetry (caller uses it for label audit)
-    from sklearn.metrics import roc_auc_score
+    from sklearn.metrics import average_precision_score, roc_auc_score
     from models.model_manager import ModelManager
 
     n_folds = int(cfg["training"].get("cv_folds", 5))
@@ -194,11 +195,18 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
         te_y, te_p = y.iloc[te_idx].values, oof[te_idx]
         if len(set(te_y.tolist())) < 2:               # 该折单类 → auc 无定义
             fold_metrics.append({"fold": k, "auc": float("nan"),
+                                 "pr_auc_pos": float("nan"),
+                                 "pr_auc_neg": float("nan"),
                                  "fnr_at_fpr5": float("nan"),
                                  "split_counts": counts})
         else:
             fold_metrics.append({"fold": k,
                                  "auc": float(roc_auc_score(te_y, te_p)),
+                                 "pr_auc_pos": float(
+                                     average_precision_score(te_y, te_p)),
+                                 "pr_auc_neg": float(
+                                     average_precision_score(
+                                         1 - te_y, 1.0 - te_p)),
                                  "fnr_at_fpr5": float(fnr_at_fpr5(te_y, te_p)),
                                  "split_counts": counts})
 
@@ -219,11 +227,18 @@ def main(argv=None):
 
     target_col = cfg["data"]["target_col"]
     train_files = cfg["data"]["train_files"]
-    df = read_dataframe(train_files)
-    feature_cols = resolve_feature_cols(
-        cfg["data"].get("feature_cols"), train_files, target_col)
+    raw_train_df = read_dataframe(train_files)
+    df, train_cohort_audit = apply_training_cohort(
+        raw_train_df, cfg["data"].get("cohort"), target_col=target_col)
+    feature_cols = resolve_configured_feature_cols(
+        cfg["data"], train_files, target_col)
     X = df[feature_cols]
     y = df[target_col]
+    logging.info(
+        "training cohort %s: %s -> %s; arm=%s, n_features=%d",
+        train_cohort_audit["name"], train_cohort_audit["before"],
+        train_cohort_audit["after"],
+        cfg["data"].get("feature_arm", "legacy_auto"), len(feature_cols))
 
     group_col = cfg["data"].get("group_col")
     if group_col and group_col in df.columns:
@@ -255,9 +270,12 @@ def main(argv=None):
     }
 
     test_files = cfg["data"].get("test_files")
+    test_cohort_audit = None
     if test_files and set(test_files) != set(train_files):
         # cross_test 模式：ensemble 给外部测试集打分，在外部测试集评估/审计
-        test_df = read_dataframe(test_files)
+        raw_test_df = read_dataframe(test_files)
+        test_df, test_cohort_audit = apply_training_cohort(
+            raw_test_df, cfg["data"].get("cohort"), target_col=target_col)
         eval_df = test_df
         eval_y = test_df[target_col]
         # position-matched: feature_cols order must equal training's df[feature_cols]
@@ -286,6 +304,10 @@ def main(argv=None):
         eval_proba = oof
         summary = evaluate_oof(eval_y, eval_proba)
         aucs = [m["auc"] for m in fold_metrics if not np.isnan(m["auc"])]
+        pr_aucs_pos = [m["pr_auc_pos"] for m in fold_metrics
+                       if not np.isnan(m["pr_auc_pos"])]
+        pr_aucs_neg = [m["pr_auc_neg"] for m in fold_metrics
+                       if not np.isnan(m["pr_auc_neg"])]
         fnrs = [m["fnr_at_fpr5"] for m in fold_metrics
                 if not np.isnan(m["fnr_at_fpr5"])]
         summary.update({
@@ -293,6 +315,14 @@ def main(argv=None):
             "fold_metrics": fold_metrics,
             "auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
             "auc_std": float(np.std(aucs)) if aucs else float("nan"),
+            "pr_auc_pos_mean": float(np.mean(pr_aucs_pos))
+            if pr_aucs_pos else float("nan"),
+            "pr_auc_pos_std": float(np.std(pr_aucs_pos))
+            if pr_aucs_pos else float("nan"),
+            "pr_auc_neg_mean": float(np.mean(pr_aucs_neg))
+            if pr_aucs_neg else float("nan"),
+            "pr_auc_neg_std": float(np.std(pr_aucs_neg))
+            if pr_aucs_neg else float("nan"),
             "fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
             "fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
         })
@@ -306,6 +336,19 @@ def main(argv=None):
         "n_neg": int((eval_y == 0).sum()),
         "name": args.name,
     })
+    summary["experiment"] = {
+        "feature_arm": cfg["data"].get("feature_arm"),
+        "cohort": train_cohort_audit["name"],
+        "drop_features": list(cfg["data"].get("drop_features") or []),
+        "n_features": len(feature_cols),
+        "feature_cols": feature_cols,
+        "train_cohort": train_cohort_audit,
+        "test_cohort": test_cohort_audit,
+        "train_missing_rate": {
+            column: float(df[column].isna().mean())
+            for column in feature_cols
+        },
+    }
     os.makedirs(os.path.dirname(result_path) or ".", exist_ok=True)
     with open(result_path, "w") as f:
         json.dump(summary, f, indent=2)
@@ -353,7 +396,7 @@ def evaluate_cross_test(model_paths, X, y):
     lightgbm imported lazily.
     """
     import lightgbm as lgb
-    from sklearn.metrics import roc_auc_score
+    from sklearn.metrics import average_precision_score, roc_auc_score
     y = np.asarray(y)
     probas = [lgb.Booster(model_file=p).predict(X) for p in model_paths]
     ens = average_proba(probas)
@@ -362,16 +405,34 @@ def evaluate_cross_test(model_paths, X, y):
     for k, p in enumerate(probas):
         if one_class:
             per_fold.append({"fold": k, "auc": float("nan"),
+                             "pr_auc_pos": float("nan"),
+                             "pr_auc_neg": float("nan"),
                              "fnr_at_fpr5": float("nan")})
         else:
             per_fold.append({"fold": k,
                              "auc": float(roc_auc_score(y, p)),
+                             "pr_auc_pos": float(
+                                 average_precision_score(y, p)),
+                             "pr_auc_neg": float(
+                                 average_precision_score(1 - y, 1.0 - p)),
                              "fnr_at_fpr5": float(fnr_at_fpr5(y, p))})
     aucs = [m["auc"] for m in per_fold if not np.isnan(m["auc"])]
+    pr_aucs_pos = [m["pr_auc_pos"] for m in per_fold
+                   if not np.isnan(m["pr_auc_pos"])]
+    pr_aucs_neg = [m["pr_auc_neg"] for m in per_fold
+                   if not np.isnan(m["pr_auc_neg"])]
     fnrs = [m["fnr_at_fpr5"] for m in per_fold if not np.isnan(m["fnr_at_fpr5"])]
     agg = {
         "test_auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
         "test_auc_std": float(np.std(aucs)) if aucs else float("nan"),
+        "test_pr_auc_pos_mean": float(np.mean(pr_aucs_pos))
+        if pr_aucs_pos else float("nan"),
+        "test_pr_auc_pos_std": float(np.std(pr_aucs_pos))
+        if pr_aucs_pos else float("nan"),
+        "test_pr_auc_neg_mean": float(np.mean(pr_aucs_neg))
+        if pr_aucs_neg else float("nan"),
+        "test_pr_auc_neg_std": float(np.std(pr_aucs_neg))
+        if pr_aucs_neg else float("nan"),
         "test_fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
         "test_fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
     }

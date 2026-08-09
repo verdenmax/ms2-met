@@ -86,6 +86,25 @@ python -m tools.training_set_builder generate --config training_set_builder.ini
 python -m tools.training_set_builder assemble --config training_set_builder.ini
 ```
 
+正式的 MS1/MS2 消融使用同一 eligibility 共同队列、按 `sequence`
+分组的 5 折 CV，以及注册表中的固定特征组。先在 2da 上预跑，再运行三种
+采集条件的完整 neg20 矩阵：
+
+```bash
+cd /path/to/ms2-met
+
+make train-ablation-neg20-2da \
+  FEATURE_ROOT=/path/to/ms2-met-runs-08-08
+
+make train-ablation-neg20 \
+  FEATURE_ROOT=/path/to/ms2-met-runs-08-08
+```
+
+`FEATURE_ROOT` 必须直接包含 `baseline_2da_neg20/`、
+`baseline_5da_neg20/` 和 `baseline_normal_neg20/`。外部特征文件只读；生成的
+配置、模型和 JSON 结果位于 `runs/spec_trainer/ablation/neg20/`。历史
+`train-cv-neg20-all` 不执行正式 feature-arm 消融。
+
 依赖安装 / install deps: `pip install -r requirements.txt`（本机推荐用 conda 管理环境）。
 
 ---

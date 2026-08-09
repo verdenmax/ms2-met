@@ -157,8 +157,10 @@ def test_main_writes_outputs(tmp_path):
     summary = cv_train.main(["--config", str(cfg_path), "--name", "toy",
                              "--logpath", str(tmp_path / "log.txt")])
     res = json.loads((tmp_path / "r.cv.json").read_text())
-    assert "auc" in res and "fnr_at_fpr5" in res
+    assert ("auc" in res and "pr_auc_pos" in res and "pr_auc_neg" in res
+            and "fnr_at_fpr5" in res)
     assert len(res["fold_metrics"]) == 5 and "auc_mean" in res
+    assert "pr_auc_pos_mean" in res and "pr_auc_neg_mean" in res
     assert "fnr_at_fpr5_mean" in res and "fnr_at_fpr5_std" in res
     assert res["operating_point"]["target_fpr"] == 0.10
     assert res["operating_point"]["threshold_source"] == "train_oof"
@@ -166,6 +168,45 @@ def test_main_writes_outputs(tmp_path):
     assert (tmp_path / "r.cv.suspects.csv").exists()     # 派生路径
     assert summary["auc"] == res["auc"]
     assert res["name"] == "toy"
+
+
+@requires_lgb
+def test_main_applies_feature_arm_and_common_cohort(tmp_path):
+    import cv_train, yaml
+    df = _toy_df()
+    for column, value in {
+        "heavy_in_raw": 1,
+        "heavy_out_of_range": 0,
+        "precursor_xic_empty": 0,
+        "q1a_valid": 1,
+        "has_lib_pred": 1,
+        "isotope_model_valid": 1,
+    }.items():
+        df[column] = value
+    df.loc[0, "has_lib_pred"] = 0
+    csv = tmp_path / "feat.csv"
+    df.to_csv(csv, index=False)
+    cfg = _toy_cfg(tmp_path)
+    cfg["data"].update({
+        "train_files": [str(csv)],
+        "feature_arm": "ms1_only",
+        "cohort": "evidence_common",
+        "drop_features": ["spec_pattern_spearman_b", "spec_pattern_SA_b"],
+    })
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+
+    cv_train.main(["--config", str(cfg_path), "--name", "arm",
+                   "--logpath", str(tmp_path / "log.txt")])
+
+    result = json.loads((tmp_path / "r.cv.json").read_text())
+    experiment = result["experiment"]
+    assert experiment["feature_arm"] == "ms1_only"
+    assert experiment["cohort"] == "evidence_common"
+    assert experiment["feature_cols"] == ["precursor_pearson"]
+    assert experiment["n_features"] == 1
+    assert experiment["train_cohort"]["before"]["n_rows"] == len(df)
+    assert experiment["train_cohort"]["after"]["n_rows"] == len(df) - 1
 
 
 @requires_lgb
@@ -207,8 +248,13 @@ def test_evaluate_cross_test(tmp_path):
     # ensemble = 各折预测的均值
     per = [lgb.Booster(model_file=p).predict(Xb) for p in model_paths]
     assert np.allclose(ens, np.mean(per, axis=0))
-    assert len(per_fold) == 5 and "auc" in per_fold[0] and "fnr_at_fpr5" in per_fold[0]
+    assert (len(per_fold) == 5 and "auc" in per_fold[0]
+            and "pr_auc_pos" in per_fold[0]
+            and "pr_auc_neg" in per_fold[0]
+            and "fnr_at_fpr5" in per_fold[0])
     assert {"test_auc_mean", "test_auc_std",
+            "test_pr_auc_pos_mean", "test_pr_auc_pos_std",
+            "test_pr_auc_neg_mean", "test_pr_auc_neg_std",
             "test_fnr_at_fpr5_mean", "test_fnr_at_fpr5_std"} <= set(agg)
     # value-level: per-fold metrics are the real auc/fnr (not swapped)
     from cv_core import fnr_at_fpr5 as _fnr

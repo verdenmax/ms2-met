@@ -11,13 +11,19 @@ import pandas as pd
 try:
     # Package import: ``tools.spec_trainer.src.feature_cols``.
     from .feature_groups import (
+        FEATURE_GROUPS,
         METADATA_COLUMNS,
+        REGISTERED_COLUMNS,
         TRAINING_EXCLUDED_COLUMNS,
+        resolve_experiment_arm,
     )
 except ImportError:  # Script entry points put this ``src`` directory on PATH.
     from feature_groups import (
+        FEATURE_GROUPS,
         METADATA_COLUMNS,
+        REGISTERED_COLUMNS,
         TRAINING_EXCLUDED_COLUMNS,
+        resolve_experiment_arm,
     )
 
 
@@ -108,4 +114,67 @@ def resolve_feature_cols(explicit, sample_csv_paths, target_col):
             f"EXCLUDED_EXTRA / target_col. Check yaml feature_cols or "
             f"add features to the CSV. (P2-7, Silent-I5)"
         )
+    return result
+
+
+def resolve_configured_feature_cols(data_cfg, sample_csv_paths, target_col):
+    """Resolve either a legacy feature list or a formal experiment arm.
+
+    ``feature_arm`` opts into the strict scientific registry. It is mutually
+    exclusive with a non-empty ``feature_cols`` list so a configuration cannot
+    silently claim one ablation arm while training another set. The optional
+    ``drop_features`` list is validated against registered model inputs and is
+    then applied to the resolved arm; entries belonging to another arm are
+    harmless, which allows one shared pruning list across an ablation matrix.
+
+    Configurations without ``feature_arm`` retain the legacy auto-detection
+    behaviour for backward compatibility.
+    """
+    explicit = data_cfg.get("feature_cols")
+    arm = data_cfg.get("feature_arm")
+    drop_features = list(data_cfg.get("drop_features") or [])
+
+    if not arm:
+        if drop_features:
+            raise ValueError(
+                "drop_features requires feature_arm so pruning is tied to a "
+                "registered scientific feature set")
+        return resolve_feature_cols(explicit, sample_csv_paths, target_col)
+
+    if explicit:
+        raise ValueError(
+            "data.feature_arm and non-empty data.feature_cols are mutually "
+            "exclusive")
+
+    if isinstance(sample_csv_paths, str):
+        sample_csv_paths = [sample_csv_paths]
+    if not sample_csv_paths:
+        raise ValueError("feature_arm resolution requires at least one CSV")
+
+    per_file_headers = [
+        list(pd.read_csv(path, nrows=0).columns)
+        for path in sample_csv_paths
+    ]
+    common = set(per_file_headers[0])
+    for header in per_file_headers[1:]:
+        common.intersection_update(header)
+    ordered_common = [c for c in per_file_headers[0] if c in common]
+    selected = resolve_experiment_arm(arm, ordered_common, strict=True)
+
+    model_features = set().union(*FEATURE_GROUPS.values())
+    unknown_drops = set(drop_features) - REGISTERED_COLUMNS
+    invalid_drops = set(drop_features) - model_features
+    if unknown_drops:
+        raise ValueError(
+            f"unknown drop_features: {sorted(unknown_drops)}")
+    if invalid_drops:
+        raise ValueError(
+            "drop_features must name registered model inputs, got: "
+            f"{sorted(invalid_drops)}")
+
+    drop_set = set(drop_features)
+    result = [feature for feature in selected if feature not in drop_set]
+    if not result:
+        raise ValueError(
+            f"feature arm {arm!r} has zero features after drop_features")
     return result

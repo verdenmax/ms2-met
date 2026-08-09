@@ -11,7 +11,10 @@ _SRC = _ROOT / "tools" / "spec_trainer" / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from feature_cols import resolve_feature_cols  # noqa: E402
+from feature_cols import (  # noqa: E402
+    resolve_configured_feature_cols,
+    resolve_feature_cols,
+)
 from feature_groups import (  # noqa: E402
     CONTEXT_FEATURES,
     ELIGIBILITY_FEATURES,
@@ -123,3 +126,35 @@ def test_strict_arm_resolution_rejects_schema_drift():
     with pytest.raises(ValueError, match="mystery_feature"):
         resolve_experiment_arm(
             "ms1_only", ["precursor_pearson", "mystery_feature"])
+
+
+def test_configured_arm_resolves_registry_and_applies_drop_list():
+    data_cfg = {
+        "feature_arm": "ms2_all",
+        "feature_cols": [],
+        "drop_features": ["spec_pattern_spearman_b", "spec_pattern_SA_b"],
+    }
+    features = resolve_configured_feature_cols(
+        data_cfg, [str(_FIXTURE)], "label")
+
+    assert "all_count" in features
+    assert "spec_pattern_SA" in features
+    assert "spec_pattern_spearman_b" not in features
+    assert "spec_pattern_SA_b" not in features
+    assert set(features).isdisjoint(ELIGIBILITY_FEATURES)
+
+
+def test_configured_arm_rejects_explicit_feature_cols():
+    with pytest.raises(ValueError, match="feature_arm.*feature_cols"):
+        resolve_configured_feature_cols(
+            {"feature_arm": "ms1_only",
+             "feature_cols": ["precursor_pearson"]},
+            [str(_FIXTURE)], "label")
+
+
+def test_configured_arm_rejects_unknown_drop_feature():
+    with pytest.raises(ValueError, match="unknown drop_features"):
+        resolve_configured_feature_cols(
+            {"feature_arm": "ms1_only",
+             "drop_features": ["typo_feature"]},
+            [str(_FIXTURE)], "label")

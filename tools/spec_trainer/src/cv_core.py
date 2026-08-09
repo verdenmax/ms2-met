@@ -124,12 +124,22 @@ def fnr_at_fpr5(y_true, y_score):
 
 
 def evaluate_oof(y_true, oof_proba):
-    """Summary metrics on out-of-fold predictions: auc + FNR@FPR5 + working points."""
-    from sklearn.metrics import roc_auc_score
+    """Summary metrics on out-of-fold predictions.
+
+    The two PR-AUC values use average precision, the standard step-wise area
+    summary for a precision-recall curve. ``pr_auc_neg`` treats the minority
+    negative identifications as the event of interest and is therefore the
+    primary imbalance-sensitive metric; ``pr_auc_pos`` is retained for the
+    model's native positive-confidence direction.
+    """
+    from sklearn.metrics import average_precision_score, roc_auc_score
     y_true = np.asarray(y_true)
     oof_proba = np.asarray(oof_proba)
     return {
         "auc": float(roc_auc_score(y_true, oof_proba)),
+        "pr_auc_pos": float(average_precision_score(y_true, oof_proba)),
+        "pr_auc_neg": float(average_precision_score(
+            1 - y_true, 1.0 - oof_proba)),
         "fnr_at_fpr5": float(fnr_at_fpr5(y_true, oof_proba)),
         "working_points": working_points(y_true, oof_proba),
     }

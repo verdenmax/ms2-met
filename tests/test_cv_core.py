@@ -56,10 +56,14 @@ def test_evaluate_oof_perfect_and_reversed():
     perfect = np.r_[np.full(50, 0.9), np.full(50, 0.1)]   # 正高负低
     m = evaluate_oof(y, perfect)
     assert m["auc"] == 1.0
+    assert m["pr_auc_pos"] == 1.0
+    assert m["pr_auc_neg"] == 1.0
     assert m["fnr_at_fpr5"] == 0.0
     assert "neg_recall_95" in m["working_points"]
     m2 = evaluate_oof(y, 1.0 - perfect)                   # 完全反向
     assert m2["auc"] == 0.0
+    assert 0.0 < m2["pr_auc_pos"] < 1.0
+    assert 0.0 < m2["pr_auc_neg"] < 1.0
 
 
 def test_threshold_at_fpr10_is_strict_and_tie_safe():
