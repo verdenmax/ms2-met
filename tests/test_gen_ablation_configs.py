@@ -35,6 +35,8 @@ def test_build_ablation_config_uses_external_root_and_common_cohort(tmp_path):
         "spec_pattern_spearman_b", "spec_pattern_SA_b"]
     assert data["group_col"] == "sequence"
     assert cfg["training"]["cv_folds"] == 5
+    assert cfg["training"]["num_boost_round"] == 2000
+    assert cfg["training"]["early_stopping_rounds"] == 200
 
 
 def test_generate_configs_writes_one_yaml_per_dataset_and_arm(tmp_path):

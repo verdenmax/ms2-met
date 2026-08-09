@@ -60,7 +60,7 @@ def build_ablation_config(*, feature_root, output_root, dataset, fdr, arm):
             },
         },
         "training": {
-            "num_boost_round": 1000,
+            "num_boost_round": 2000,
             "early_stopping_rounds": 200,
             "valid_size": 0.15,
             "cv_folds": 5,
