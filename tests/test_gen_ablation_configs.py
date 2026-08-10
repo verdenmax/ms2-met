@@ -37,6 +37,11 @@ def test_build_ablation_config_uses_external_root_and_common_cohort(tmp_path):
     assert cfg["training"]["cv_folds"] == 5
     assert cfg["training"]["num_boost_round"] == 2000
     assert cfg["training"]["early_stopping_rounds"] == 200
+    assert cfg["training"]["early_stopping_first_metric_only"] is True
+    assert cfg["model"]["params"]["bagging_freq"] == 1
+    assert cfg["model"]["params"]["deterministic"] is True
+    assert "is_unbalance" not in cfg["model"]["params"]
+    assert "scale_pos_weight" not in cfg["model"]["params"]
     assert cfg["evaluation_semantics"]["positive_class"] == \
         "incorrect_identification"
 

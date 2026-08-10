@@ -50,6 +50,9 @@
   可评估队列。
 - 正式 CV 统一删除 `spec_pattern_spearman_b` 与 `spec_pattern_SA_b`；当前
   schema 最终使用 152 个模型特征。
+- `evidence_core` 是可选的 35 特征紧凑臂，避免绝对丰度与 evidence-opportunity
+  计数；`evidence_all` 仍是默认完整基线。正式配置开启
+  `require_complete_arm`，缺少任一预期列会失败，不再取交集后静默缩小。
 - 只有没有 `feature_arm` 的历史配置才使用自动检测：`explicit` 非空则直接
   使用，否则取所有输入表头的交集并剔除 META/EXCLUDED。
 - 剔除三类：
@@ -77,6 +80,13 @@ evidence-only 设置，不能把 `feature_cols: []` 误解为自动使用全部�
 快照生成运行时配置，不复制或修改外部特征文件。默认仍为仓库内 `runs/` 与
 `runs/spec_trainer/`。六个 eligibility 字段会记录在 cohort audit 中，但不会
 成为模型特征。
+
+正式 LightGBM 配置使用 2000 轮上限、AUC-first early stopping、有效的
+`bagging_fraction=0.8 / bagging_freq=1` 和固定随机种子；类别权重保持关闭。
+cross-test 将测试标签导出的 working point 标记为 retrospective oracle，锁定
+判定则使用各成员 outer-OOF 阈值后的多数投票。结果 bundle 还包含 OOF/test
+逐行分数、每折 best iteration、按类别/来源的缺失率、sequence 重叠和环境
+provenance；默认拒绝覆盖已完成 bundle。
 
 ## rescore 多阈值评估（`rescore.py`）
 

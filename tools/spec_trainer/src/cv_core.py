@@ -161,7 +161,8 @@ def audit_labels(df, trust_scores, label_col="label", threshold=0.9,
                  id_cols=("sequence", "charge", "label_type"),
                  diag_cols=("all_p75", "precursor_pearson",
                             "all_cosine_mean",
-                            "all_heavy_shape_irregularity_max")):
+                            "all_heavy_shape_irregularity_max"),
+                 return_total=False):
     """Incorrect references ranked by erroneous model support.
 
     These are false-negative candidates under the canonical convention: known
@@ -170,13 +171,15 @@ def audit_labels(df, trust_scores, label_col="label", threshold=0.9,
     work = df.copy()
     work["trust_score"] = np.asarray(trust_scores)
     errors = work[work[label_col] == 0]
-    suspects = (errors[errors["trust_score"] >= threshold]
-                .sort_values("trust_score", ascending=False)
+    candidates = errors[errors["trust_score"] >= threshold]
+    total = int(len(candidates))
+    suspects = (candidates.sort_values("trust_score", ascending=False)
                 .head(top_n))
     keep = ([c for c in id_cols if c in suspects.columns]
             + ["trust_score"]
             + [c for c in diag_cols if c in suspects.columns])
-    return suspects[keep].reset_index(drop=True)
+    result = suspects[keep].reset_index(drop=True)
+    return (result, total) if return_total else result
 
 
 def average_proba(proba_list):

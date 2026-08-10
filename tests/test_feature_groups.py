@@ -17,6 +17,7 @@ from feature_cols import (  # noqa: E402
 )
 from feature_groups import (  # noqa: E402
     CONTEXT_FEATURES,
+    EVIDENCE_CORE_FEATURES,
     ELIGIBILITY_FEATURES,
     EXPERIMENT_ARMS,
     FEATURE_GROUPS,
@@ -112,6 +113,17 @@ def test_formal_arms_exclude_metadata_training_exclusions_and_flags(arm):
     assert features.isdisjoint(ELIGIBILITY_FEATURES)
 
 
+def test_evidence_core_is_compact_paired_evidence():
+    features = set(resolve_experiment_arm("evidence_core", _fixture_header()))
+    assert features == set(EVIDENCE_CORE_FEATURES)
+    assert len(features) == 35
+    assert {"precursor_pearson", "all_p75", "pred_coverage_wpred"} <= features
+    assert features.isdisjoint({
+        "precursor_light_max_int", "b_count", "y_count", "all_count",
+        "q1a_total_count", "n_fragments_in_F",
+    })
+
+
 def test_resolve_arm_preserves_header_order_and_prefers_canonical_shift():
     header = [
         "label", "total_silac_shift", "precursor_centering",
@@ -158,3 +170,12 @@ def test_configured_arm_rejects_unknown_drop_feature():
             {"feature_arm": "ms1_only",
              "drop_features": ["typo_feature"]},
             [str(_FIXTURE)], "label")
+
+
+def test_complete_arm_rejects_missing_registered_feature(tmp_path):
+    path = tmp_path / "partial.csv"
+    path.write_text("sequence,label,precursor_pearson\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="schema drift.*missing"):
+        resolve_configured_feature_cols(
+            {"feature_arm": "ms1_only", "require_complete_arm": True},
+            [str(path)], "label")

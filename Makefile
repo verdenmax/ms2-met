@@ -27,6 +27,9 @@ PY ?= python3
 FEATURE_ROOT ?= runs
 CV_OUTPUT_ROOT ?= runs/spec_trainer
 CV_CONFIG_DIR ?= $(CV_OUTPUT_ROOT)/configs
+CV_FEATURE_ARM ?= evidence_all
+CV_OVERWRITE ?= 0
+CV_OVERWRITE_FLAG = $(if $(filter 1 true yes,$(CV_OVERWRITE)),--overwrite,)
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -207,10 +210,11 @@ help:
 	@echo "  make train-cv-neg15-all 6 个 neg15 CV 实验"
 	@echo "  make train-cv-neg20-all 6 个 neg20 CV 实验"
 	@echo "  make train-cv-all FEATURE_ROOT=/path/to/results  30 个 evidence_all CV 实验"
+	@echo "  make train-cv-core-all FEATURE_ROOT=/path/to/results  30 个 evidence_core CV 实验"
 	@echo ""
 	@echo "  Formal MS1/MS2 ablation（共同队列 + 注册表特征组）："
-	@echo "  make train-ablation-neg20-2da FEATURE_ROOT=/path/to/results  2da 预跑（7 组）"
-	@echo "  make train-ablation-neg20 FEATURE_ROOT=/path/to/results      三数据集（21 组）"
+	@echo "  make train-ablation-neg20-2da FEATURE_ROOT=/path/to/results  2da 预跑（8 组）"
+	@echo "  make train-ablation-neg20 FEATURE_ROOT=/path/to/results      三数据集（24 组）"
 	@echo ""
 	@echo "  make clean-train        清理 runs/spec_trainer/ 训练产出"
 	@echo "  make clean           旧式清理（checkpoint.pkl 等）"
@@ -1087,16 +1091,17 @@ train-cv-2da: $(FEATURE_ROOT)/baseline_2da_clean/features.csv
 	$(PY) tools/spec_trainer/gen_cv_configs.py \
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(CV_OUTPUT_ROOT)" \
-	    --config-dir "$(CV_CONFIG_DIR)"
+	    --config-dir "$(CV_CONFIG_DIR)" \
+	    --feature-arm "$(CV_FEATURE_ARM)"
 	$(PY) tools/spec_trainer/src/cv_train.py \
 	    --config "$(CV_CONFIG_DIR)/cv_in_2da_clean.yaml" \
 	    --name cv_in_2da_clean \
-	    --logpath "$(CV_OUTPUT_ROOT)/cv_spec.log"
+	    --logpath "$(CV_OUTPUT_ROOT)/logs/cv_in_2da_clean.log" $(CV_OVERWRITE_FLAG)
 	@echo "[done] CV → $(CV_OUTPUT_ROOT)/results/cv_in_2da_clean.cv.json (+ .suspects.csv)"
 
 # ---------- CV 全矩阵(in-sample + cross_test ensemble)----------
 .PHONY: train-cv-clean-all train-cv-neg05-all train-cv-neg10-all
-.PHONY: train-cv-neg15-all train-cv-neg20-all train-cv-all
+.PHONY: train-cv-neg15-all train-cv-neg20-all train-cv-all train-cv-core-all
 .PHONY: train-ablation-neg20-2da train-ablation-neg20
 
 CV_CLEAN_YAMLS := cv_in_2da_clean cv_in_5da_clean cv_in_normal_clean \
@@ -1113,7 +1118,7 @@ CV_NEG20_YAMLS := $(subst _clean,_neg20,$(CV_CLEAN_YAMLS))
 ABLATION_OUTPUT_ROOT ?= runs/spec_trainer/ablation/neg20
 ABLATION_CONFIG_DIR ?= $(ABLATION_OUTPUT_ROOT)/configs
 ABLATION_ARMS := context_only ms1_only ms2_observed_only ms2_all \
-                 ms1_ms2_no_prediction evidence_all full
+		         ms1_ms2_no_prediction evidence_all evidence_core full
 
 train-ablation-neg20-2da:
 	@mkdir -p "$(ABLATION_OUTPUT_ROOT)"
@@ -1128,9 +1133,9 @@ train-ablation-neg20-2da:
 		$(PY) tools/spec_trainer/src/cv_train.py \
 		    --config "$(ABLATION_CONFIG_DIR)/$$name.yaml" \
 		    --name "$$name" \
-		    --logpath "$(ABLATION_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+		    --logpath "$(ABLATION_OUTPUT_ROOT)/logs/$$name.log" $(CV_OVERWRITE_FLAG) || exit 1; \
 	done
-	@echo "[done] train-ablation-neg20-2da (7 paired CV experiments)"
+	@echo "[done] train-ablation-neg20-2da (8 paired CV experiments)"
 
 train-ablation-neg20:
 	@mkdir -p "$(ABLATION_OUTPUT_ROOT)"
@@ -1146,22 +1151,23 @@ train-ablation-neg20:
 			$(PY) tools/spec_trainer/src/cv_train.py \
 			    --config "$(ABLATION_CONFIG_DIR)/$$name.yaml" \
 			    --name "$$name" \
-			    --logpath "$(ABLATION_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+			    --logpath "$(ABLATION_OUTPUT_ROOT)/logs/$$name.log" $(CV_OVERWRITE_FLAG) || exit 1; \
 		done; \
 	done
-	@echo "[done] train-ablation-neg20 (21 paired CV experiments)"
+	@echo "[done] train-ablation-neg20 (24 paired CV experiments)"
 
 train-cv-clean-all: $(CV_CLEAN_FEATURES)
 	@mkdir -p "$(CV_OUTPUT_ROOT)"
 	$(PY) tools/spec_trainer/gen_cv_configs.py \
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(CV_OUTPUT_ROOT)" \
-	    --config-dir "$(CV_CONFIG_DIR)"
+	    --config-dir "$(CV_CONFIG_DIR)" \
+	    --feature-arm "$(CV_FEATURE_ARM)"
 	@for y in $(CV_CLEAN_YAMLS); do \
 		echo "==================== CV $$y ===================="; \
 		$(PY) tools/spec_trainer/src/cv_train.py \
 		    --config "$(CV_CONFIG_DIR)/$$y.yaml" --name $$y \
-		    --logpath "$(CV_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+		    --logpath "$(CV_OUTPUT_ROOT)/logs/$$y.log" $(CV_OVERWRITE_FLAG) || exit 1; \
 	done
 	@echo "[done] train-cv-clean-all (6 CV experiments)"
 
@@ -1170,12 +1176,13 @@ train-cv-neg05-all: $(CV_NEG05_FEATURES)
 	$(PY) tools/spec_trainer/gen_cv_configs.py \
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(CV_OUTPUT_ROOT)" \
-	    --config-dir "$(CV_CONFIG_DIR)"
+	    --config-dir "$(CV_CONFIG_DIR)" \
+	    --feature-arm "$(CV_FEATURE_ARM)"
 	@for y in $(CV_NEG05_YAMLS); do \
 		echo "==================== CV $$y ===================="; \
 		$(PY) tools/spec_trainer/src/cv_train.py \
 		    --config "$(CV_CONFIG_DIR)/$$y.yaml" --name $$y \
-		    --logpath "$(CV_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+		    --logpath "$(CV_OUTPUT_ROOT)/logs/$$y.log" $(CV_OVERWRITE_FLAG) || exit 1; \
 	done
 	@echo "[done] train-cv-neg05-all (6 CV experiments)"
 
@@ -1184,12 +1191,13 @@ train-cv-neg10-all: $(CV_NEG10_FEATURES)
 	$(PY) tools/spec_trainer/gen_cv_configs.py \
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(CV_OUTPUT_ROOT)" \
-	    --config-dir "$(CV_CONFIG_DIR)"
+	    --config-dir "$(CV_CONFIG_DIR)" \
+	    --feature-arm "$(CV_FEATURE_ARM)"
 	@for y in $(CV_NEG10_YAMLS); do \
 		echo "==================== CV $$y ===================="; \
 		$(PY) tools/spec_trainer/src/cv_train.py \
 		    --config "$(CV_CONFIG_DIR)/$$y.yaml" --name $$y \
-		    --logpath "$(CV_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+		    --logpath "$(CV_OUTPUT_ROOT)/logs/$$y.log" $(CV_OVERWRITE_FLAG) || exit 1; \
 	done
 	@echo "[done] train-cv-neg10-all (6 CV experiments)"
 
@@ -1198,12 +1206,13 @@ train-cv-neg15-all: $(CV_NEG15_FEATURES)
 	$(PY) tools/spec_trainer/gen_cv_configs.py \
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(CV_OUTPUT_ROOT)" \
-	    --config-dir "$(CV_CONFIG_DIR)"
+	    --config-dir "$(CV_CONFIG_DIR)" \
+	    --feature-arm "$(CV_FEATURE_ARM)"
 	@for y in $(CV_NEG15_YAMLS); do \
 		echo "==================== CV $$y ===================="; \
 		$(PY) tools/spec_trainer/src/cv_train.py \
 		    --config "$(CV_CONFIG_DIR)/$$y.yaml" --name $$y \
-		    --logpath "$(CV_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+		    --logpath "$(CV_OUTPUT_ROOT)/logs/$$y.log" $(CV_OVERWRITE_FLAG) || exit 1; \
 	done
 	@echo "[done] train-cv-neg15-all (6 CV experiments)"
 
@@ -1212,12 +1221,13 @@ train-cv-neg20-all: $(CV_NEG20_FEATURES)
 	$(PY) tools/spec_trainer/gen_cv_configs.py \
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(CV_OUTPUT_ROOT)" \
-	    --config-dir "$(CV_CONFIG_DIR)"
+	    --config-dir "$(CV_CONFIG_DIR)" \
+	    --feature-arm "$(CV_FEATURE_ARM)"
 	@for y in $(CV_NEG20_YAMLS); do \
 		echo "==================== CV $$y ===================="; \
 		$(PY) tools/spec_trainer/src/cv_train.py \
 		    --config "$(CV_CONFIG_DIR)/$$y.yaml" --name $$y \
-		    --logpath "$(CV_OUTPUT_ROOT)/cv_spec.log" || exit 1; \
+		    --logpath "$(CV_OUTPUT_ROOT)/logs/$$y.log" $(CV_OVERWRITE_FLAG) || exit 1; \
 	done
 	@echo "[done] train-cv-neg20-all (6 CV experiments)"
 
@@ -1228,6 +1238,12 @@ train-cv-all:
 	$(MAKE) train-cv-neg15-all
 	$(MAKE) train-cv-neg20-all
 	@echo "[done] train-cv-all finished (30 CV experiments)"
+
+train-cv-core-all:
+	$(MAKE) train-cv-all \
+	    CV_FEATURE_ARM=evidence_core \
+	    CV_OUTPUT_ROOT="$(CV_OUTPUT_ROOT)/evidence_core" \
+	    CV_CONFIG_DIR="$(CV_OUTPUT_ROOT)/evidence_core/configs"
 
 train-neg05-all: $(NEG05_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures

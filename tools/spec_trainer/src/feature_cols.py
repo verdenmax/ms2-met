@@ -15,6 +15,7 @@ try:
         METADATA_COLUMNS,
         REGISTERED_COLUMNS,
         TRAINING_EXCLUDED_COLUMNS,
+        experiment_arm_features,
         resolve_experiment_arm,
     )
 except ImportError:  # Script entry points put this ``src`` directory on PATH.
@@ -23,6 +24,7 @@ except ImportError:  # Script entry points put this ``src`` directory on PATH.
         METADATA_COLUMNS,
         REGISTERED_COLUMNS,
         TRAINING_EXCLUDED_COLUMNS,
+        experiment_arm_features,
         resolve_experiment_arm,
     )
 
@@ -177,4 +179,13 @@ def resolve_configured_feature_cols(data_cfg, sample_csv_paths, target_col):
     if not result:
         raise ValueError(
             f"feature arm {arm!r} has zero features after drop_features")
+    if data_cfg.get("require_complete_arm", False):
+        expected = set(experiment_arm_features(arm)) - drop_set
+        missing = sorted(expected - set(result))
+        unexpected = sorted(set(result) - expected)
+        if missing or unexpected:
+            raise ValueError(
+                f"feature arm {arm!r} schema drift: missing={missing}, "
+                f"unexpected={unexpected}; regenerate a complete feature "
+                "snapshot or explicitly disable require_complete_arm")
     return result

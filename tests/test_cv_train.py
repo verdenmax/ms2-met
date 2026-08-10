@@ -34,6 +34,8 @@ def test_read_dataframe_concat(tmp_path):
     pd.DataFrame({"x": [3]}).to_csv(b, index=False)
     df = cv_train.read_dataframe([str(a), str(b)])
     assert list(df["x"]) == [1, 2, 3]
+    assert list(df["__source_row"]) == [0, 1, 0]
+    assert set(df["__source_file"]) == {str(a.resolve()), str(b.resolve())}
 
 
 def _toy_df(n_groups=40, per=5, seed=0):
@@ -54,10 +56,15 @@ def _toy_cfg(tmp_path):
         "data": {"feature_cols": [], "target_col": "label", "group_col": "sequence"},
         "model": {"type": "lightgbm", "params": {
             "objective": "binary", "num_leaves": 7, "learning_rate": 0.1,
-            "min_data_in_leaf": 5, "verbose": -1}},
+            "metric": ["auc", "binary_logloss"],
+            "bagging_fraction": 0.8, "bagging_freq": 1,
+            "seed": 42, "feature_fraction_seed": 42, "bagging_seed": 42,
+            "data_random_seed": 42, "deterministic": True,
+            "force_col_wise": True, "min_data_in_leaf": 5, "verbose": -1}},
         "training": {"num_boost_round": 40, "early_stopping_rounds": 15,
                      "cv_folds": 5, "cv_seed": 42, "valid_size": 0.25,
-                     "min_class_groups_per_split": 2},
+                     "min_class_groups_per_split": 2,
+                     "early_stopping_first_metric_only": True},
         "operating_point": {"target_fpr": 0.10},
         "audit": {"suspect_threshold": 0.5, "suspect_top_n": 50},
         "output": {"model_path": str(tmp_path / "m.txt"),
@@ -164,11 +171,17 @@ def test_main_writes_outputs(tmp_path):
     assert "error_pr_auc_mean" in res and "error_pr_auc_std" in res
     assert "fnr_at_fpr5_mean" in res and "fnr_at_fpr5_std" in res
     assert res["operating_point"]["target_fpr"] == 0.10
-    assert res["operating_point"]["threshold_source"] == "train_oof"
+    assert res["operating_point"]["threshold_source"] == \
+        "pooled_train_oof_single_member_scores"
     assert res["operating_point"]["positive_class"] == \
         "incorrect_identification"
     assert res["operating_point"]["train_oof_metrics"]["fpr"] <= 0.10
     assert (tmp_path / "r.cv.suspects.csv").exists()     # 派生路径
+    assert (tmp_path / "r.cv.oof.csv").exists()
+    assert not (tmp_path / "r.cv.test_scores.csv").exists()
+    assert res["provenance"]["git_commit"]
+    assert res["fold_dispersion_note"].endswith("confidence interval")
+    assert all(m["best_iteration"] >= 1 for m in res["fold_metrics"])
     assert summary["roc_auc"] == res["roc_auc"]
     assert res["name"] == "toy"
 
@@ -241,36 +254,49 @@ def test_evaluate_cross_test(tmp_path):
     csvA = tmp_path / "a.csv"; dfA.to_csv(csvA, index=False)
     feature_cols = resolve_feature_cols(None, [str(csvA)], "label")
     cfg = _toy_cfg(tmp_path)
-    _, _, model_paths = cv_train.assemble_oof(
+    _, fold_metrics, model_paths = cv_train.assemble_oof(
         dfA, dfA[feature_cols], dfA["label"], dfA["sequence"],
         cfg, feature_cols, str(tmp_path / "m"))
     Xb = dfB[feature_cols].values
     yb = dfB["label"].values
-    ens, per_fold, agg = cv_train.evaluate_cross_test(model_paths, Xb, yb)
+    ens, per_fold, agg = cv_train.evaluate_cross_test(
+        model_paths, dfB[feature_cols], yb, fold_metrics=fold_metrics)
     assert ens.shape == (len(dfB),)
     # ensemble = 各折预测的均值
     per = [lgb.Booster(model_file=p).predict(Xb) for p in model_paths]
     assert np.allclose(ens, np.mean(per, axis=0))
     assert (len(per_fold) == 5 and "roc_auc" in per_fold[0]
             and "error_pr_auc" in per_fold[0]
-            and "fnr_at_fpr5" in per_fold[0])
-    assert {"test_roc_auc_mean", "test_roc_auc_std",
-            "test_error_pr_auc_mean", "test_error_pr_auc_std",
-            "test_fnr_at_fpr5_mean", "test_fnr_at_fpr5_std"} <= set(agg)
+            and "oracle_test_fnr_at_fpr5" in per_fold[0])
+    assert {"member_model_roc_auc_mean", "member_model_roc_auc_std",
+            "member_model_error_pr_auc_mean",
+            "member_model_error_pr_auc_std",
+            "member_model_oracle_fnr_at_fpr5_mean",
+            "member_model_oracle_fnr_at_fpr5_std"} <= set(agg)
+    assert "fpr_10" in agg["locked_operating_points"]
+    locked = agg["locked_operating_points"]["fpr_10"]
+    assert locked["method"] == "fold_calibrated_majority_vote"
+    assert len(locked["member_error_thresholds"]) == 5
     # value-level: per-fold metrics are the real auc/fnr (not swapped)
     from cv_core import fnr_at_fpr5 as _fnr
     from sklearn.metrics import roc_auc_score as _auc
     assert np.isclose(per_fold[0]["roc_auc"], _auc(yb, per[0]))
-    assert np.isclose(per_fold[0]["fnr_at_fpr5"], _fnr(yb, per[0]))
-    assert np.isclose(agg["test_roc_auc_mean"],
+    assert np.isclose(
+        per_fold[0]["oracle_test_fnr_at_fpr5"], _fnr(yb, per[0]))
+    assert np.isclose(agg["member_model_roc_auc_mean"],
                       np.mean([m["roc_auc"] for m in per_fold]))
     # single-class external y -> per-fold + agg NaN, but ensemble still scores
     import numpy as _np
     ens1, pf1, agg1 = cv_train.evaluate_cross_test(
-        model_paths, Xb, _np.ones(len(dfB)))
+        model_paths, dfB[feature_cols], _np.ones(len(dfB)),
+        fold_metrics=fold_metrics)
     assert (_np.isnan(pf1[0]["roc_auc"])
-            and _np.isnan(agg1["test_roc_auc_mean"]))
+            and _np.isnan(agg1["member_model_roc_auc_mean"]))
     assert _np.isfinite(ens1).all()
+
+    with pytest.raises(ValueError, match="feature schema mismatch"):
+        cv_train.evaluate_cross_test(
+            model_paths, dfB[list(reversed(feature_cols))], yb)
 
 
 @requires_lgb
@@ -288,16 +314,73 @@ def test_main_cross_test_mode(tmp_path):
                              "--logpath", str(tmp_path / "log.txt")])
     res = json.loads((tmp_path / "r.cv.json").read_text())
     assert res["mode"] == "cross_test"
-    assert len(res["test_per_fold"]) == 5
-    assert "test_roc_auc_mean" in res and "train_oof_roc_auc" in res
+    assert len(res["member_model_retrospective_metrics"]) == 5
+    assert "member_model_roc_auc_mean" in res and "train_oof_roc_auc" in res
+    assert "fnr_at_fpr5" not in res
+    assert res["retrospective_test_working_points"][
+        "threshold_source"] == "external_test_labels"
     op = res["operating_point"]
     assert op["target_fpr"] == 0.10
-    assert op["threshold_source"] == "train_oof"
+    assert op["threshold_source"] == \
+        "pooled_train_oof_single_member_scores"
     assert "test_metrics" in op
+    assert op["external_ensemble"]["method"] == \
+        "fold_calibrated_majority_vote"
     assert op["test_metrics"]["n_actual_correct"] == int(
         (dfB["label"] == 1).sum())
     assert res["n_actual_correct"] == int((dfB["label"] == 1).sum())
     assert res["n_actual_error"] == int((dfB["label"] == 0).sum())
     assert res["n_actual_correct"] + res["n_actual_error"] == len(dfB)
     assert (tmp_path / "r.cv.suspects.csv").exists()
+    assert (tmp_path / "r.cv.oof.csv").exists()
+    assert (tmp_path / "r.cv.test_scores.csv").exists()
+    assert res["experiment"]["test_missingness"]["by_class"]
+    assert res["experiment"]["train_test_sequence_overlap"][
+        "test_overlap_fraction"] == 1.0
     assert summary["roc_auc"] == res["roc_auc"]
+
+
+def test_main_fails_closed_when_group_column_is_missing(tmp_path):
+    import cv_train, yaml
+    df = _toy_df().drop(columns="sequence")
+    csv = tmp_path / "feat.csv"
+    df.to_csv(csv, index=False)
+    cfg = _toy_cfg(tmp_path)
+    cfg["data"]["train_files"] = [str(csv)]
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(ValueError, match="refusing.*ungrouped CV"):
+        cv_train.main(["--config", str(cfg_path), "--name", "missing-group",
+                       "--logpath", str(tmp_path / "log.txt")])
+
+
+def test_validate_frame_rejects_bad_labels_and_infinite_features():
+    import cv_train
+    bad_label = pd.DataFrame({
+        "sequence": ["A", "B"], "label": [1, 2], "f": [0.1, 0.2]})
+    with pytest.raises(ValueError, match="only 0.*and 1"):
+        cv_train._validate_frame(
+            bad_label, ["f"], "label", group_col="sequence")
+
+    bad_feature = pd.DataFrame({
+        "sequence": ["A", "B"], "label": [1, 0], "f": [0.1, np.inf]})
+    with pytest.raises(ValueError, match="infinite values"):
+        cv_train._validate_frame(
+            bad_feature, ["f"], "label", group_col="sequence")
+
+
+@requires_lgb
+def test_main_refuses_to_overwrite_completed_bundle(tmp_path):
+    import cv_train, yaml
+    df = _toy_df()
+    csv = tmp_path / "feat.csv"
+    df.to_csv(csv, index=False)
+    cfg = _toy_cfg(tmp_path)
+    cfg["data"]["train_files"] = [str(csv)]
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    argv = ["--config", str(cfg_path), "--name", "once",
+            "--logpath", str(tmp_path / "log.txt")]
+    cv_train.main(argv)
+    with pytest.raises(FileExistsError, match="--overwrite"):
+        cv_train.main(argv)

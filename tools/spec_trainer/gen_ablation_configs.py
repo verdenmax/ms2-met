@@ -19,6 +19,7 @@ ABLATION_ARMS = (
     "ms2_all",
     "ms1_ms2_no_prediction",
     "evidence_all",
+    "evidence_core",
     "full",
 )
 DATASETS = ("2da", "5da", "normal")
@@ -47,6 +48,7 @@ def build_ablation_config(*, feature_root, output_root, dataset, fdr, arm):
             "cohort": "evidence_common",
             "target_col": "label",
             "group_col": "sequence",
+            "require_complete_arm": True,
         },
         "model": {
             "type": "lightgbm",
@@ -58,7 +60,14 @@ def build_ablation_config(*, feature_root, output_root, dataset, fdr, arm):
                 "learning_rate": 0.02,
                 "feature_fraction": 0.9,
                 "bagging_fraction": 0.8,
+                "bagging_freq": 1,
                 "min_data_in_leaf": 50,
+                "seed": 42,
+                "feature_fraction_seed": 42,
+                "bagging_seed": 42,
+                "data_random_seed": 42,
+                "deterministic": True,
+                "force_col_wise": True,
                 "verbose": -1,
             },
         },
@@ -69,6 +78,7 @@ def build_ablation_config(*, feature_root, output_root, dataset, fdr, arm):
             "cv_folds": 5,
             "cv_seed": 42,
             "min_class_groups_per_split": 5,
+            "early_stopping_first_metric_only": True,
         },
         "output": {
             "model_path": str(output_root / "models" / f"{name}.txt"),
@@ -80,7 +90,10 @@ def build_ablation_config(*, feature_root, output_root, dataset, fdr, arm):
             "model_score": "trust_score=P(correct_identification)",
             "metric_score": "error_score=1-trust_score",
         },
-        "operating_point": {"target_fpr": 0.10},
+        "operating_point": {
+            "target_fprs": [0.05, 0.10],
+            "primary_target_fpr": 0.10,
+        },
         "audit": {"suspect_threshold": 0.9, "suspect_top_n": 200},
     }
 

@@ -27,7 +27,9 @@ class LGBModel(BaseModel):
         callbacks = [
             # 早停机制
             lgb.early_stopping(
-                stopping_rounds=self.training_params['early_stopping_rounds']),
+                stopping_rounds=self.training_params['early_stopping_rounds'],
+                first_metric_only=self.training_params.get(
+                    'early_stopping_first_metric_only', False)),
             # 每 100 轮输出一次日志
             lgb.log_evaluation(100)
         ]

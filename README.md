@@ -120,6 +120,26 @@ make train-cv-all \
 `FEATURE_ROOT` 必须直接包含 15 个 `baseline_<dataset>_<fdr>/features.csv`。
 运行时配置写到 `CV_OUTPUT_ROOT/configs/`，模型和结果分别写到
 `CV_OUTPUT_ROOT/models/` 与 `CV_OUTPUT_ROOT/results/`；输入特征快照只读。
+已有结果默认不会被覆盖；确认需要重跑时显式增加 `CV_OVERWRITE=1`。每个实验
+使用独立日志，并保存 OOF 逐样本分数、cross-test 逐样本 ensemble 分数、
+缺失模式、sequence 重叠和运行环境 provenance。
+
+`evidence_all` 是 152 特征的完整证据基线。另提供预先冻结的 35 特征
+`evidence_core`，去掉绝对丰度、碎片机会计数及大部分重复统计量：
+
+```bash
+make train-cv-core-all \
+  FEATURE_ROOT=/path/to/ms2-met-runs-08-08 \
+  CV_OUTPUT_ROOT=/path/to/cv-output
+```
+
+cross-test 的 ROC-AUC/error PR-AUC 使用外部 ensemble 连续分数。测试标签上
+重新选择固定 FPR 阈值的结果只出现在
+`retrospective_test_working_points`，明确标记为回顾性 oracle；可部署固定
+判定使用每个成员模型各自 outer-OOF 校准的阈值，再进行多数投票，结果位于
+`operating_points.fpr_{5,10}.external_ensemble.test_metrics`。若训练与测试
+sequence 有重叠，该实验只能解释为采集条件 domain holdout，而不是未见肽段
+泛化。
 
 ### Evaluation convention / 评价指标口径
 
@@ -133,8 +153,9 @@ error_score = 1 - trust_score
 
 因此，假阳性（FP）是正确鉴定被误判为错误，假阴性（FN）是错误鉴定被
 误判为正确；FPR 是正确鉴定的误报率，FNR 是错误鉴定的漏检率。结果 JSON
-以 `error_identification_positive_v1` 标记该语义，报告 `roc_auc`、
-`error_pr_auc`、`fnr_at_fpr5` 和 `error_recall_at_fpr10`。缺少该标记的历史
+以 `error_identification_positive_v1` 标记该语义。内部 OOF 报告 `roc_auc`、
+`error_pr_auc`、`fnr_at_fpr5` 和 `error_recall_at_fpr10`；cross-test 的固定
+FPR 指标按上述 retrospective/locked 两种来源分开命名。缺少该标记的历史
 JSON 使用旧口径，不能仅修改字段名称后与新结果混用。
 
 依赖安装 / install deps: `pip install -r requirements.txt`（本机推荐用 conda 管理环境）。

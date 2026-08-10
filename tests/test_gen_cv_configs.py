@@ -28,19 +28,33 @@ def test_to_cv_config_in_sample():
     assert cv["training"]["cv_folds"] == 5 and cv["training"]["cv_seed"] == 42
     assert cv["training"]["valid_size"] == 0.15
     assert cv["training"]["min_class_groups_per_split"] == 5
-    assert cv["operating_point"] == {"target_fpr": 0.10}
+    assert cv["operating_point"] == {
+        "target_fprs": [0.05, 0.10], "primary_target_fpr": 0.10}
     assert cv["evaluation_semantics"]["positive_class"] == \
         "incorrect_identification"
     assert cv["data"]["feature_arm"] == "evidence_all"
     assert cv["data"]["cohort"] == "evidence_common"
     assert cv["data"]["drop_features"] == list(FORMAL_DROP_FEATURES)
     assert cv["data"]["feature_cols"] == []
+    assert "test_size" not in cv["data"]
+    assert cv["data"]["require_complete_arm"] is True
     assert cv["audit"] == {"suspect_threshold": 0.9, "suspect_top_n": 200}
     assert cv["output"]["model_path"] == "runs/spec_trainer/models/cv_in_2da_clean.txt"
     assert cv["output"]["result_path"] == "runs/spec_trainer/results/cv_in_2da_clean.cv.json"
     assert "figures_dir" not in cv["output"]
     assert cv["data"]["train_files"] == _src_in()["data"]["train_files"]   # 保留
-    assert cv["training"]["num_boost_round"] == 1000                       # 保留
+    assert cv["training"]["num_boost_round"] == 2000
+    assert cv["training"]["early_stopping_first_metric_only"] is True
+    assert cv["model"]["params"]["bagging_freq"] == 1
+    assert cv["model"]["params"]["deterministic"] is True
+    assert "is_unbalance" not in cv["model"]["params"]
+    assert "scale_pos_weight" not in cv["model"]["params"]
+
+
+def test_to_cv_config_supports_compact_evidence_core():
+    from gen_cv_configs import to_cv_config
+    cv = to_cv_config(_src_in(), "in_2da_clean", feature_arm="evidence_core")
+    assert cv["data"]["feature_arm"] == "evidence_core"
 
 
 def test_to_cv_config_cross_test_preserves_test_files():
@@ -115,7 +129,9 @@ def test_make_train_cv_all_uses_external_roots(tmp_path):
     assert f'--feature-root "{feature_root}"' in output
     assert f'--output-root "{output_root}"' in output
     assert f'--config-dir "{output_root}/configs"' in output
+    assert '--feature-arm "evidence_all"' in output
     assert f'--config "{output_root}/configs/$y.yaml"' in output
+    assert f'--logpath "{output_root}/logs/$y.log"' in output
     assert "--config tools/spec_trainer/config/$y.yaml" not in output
 
 

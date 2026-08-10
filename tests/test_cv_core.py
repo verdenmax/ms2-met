@@ -116,6 +116,10 @@ def test_audit_labels_errors_only_sorted_filtered():
     assert "trust_score" in suspects.columns
     assert list(suspects["trust_score"]) == [0.97, 0.92]
     assert len(audit_labels(df, trust, threshold=0.9, top_n=1)) == 1
+    capped, total = audit_labels(
+        df, trust, threshold=0.9, top_n=1, return_total=True)
+    assert len(capped) == 1
+    assert total == 2
 
 
 def test_average_proba():

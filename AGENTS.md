@@ -61,6 +61,20 @@ statistical evaluation convention.
 - ROC plots, PR metrics, confusion matrices, rescore tables, ablation results,
   cross-test results, logs, tests, and prose must all use the same convention.
 
+### Cross-test threshold contract
+
+- External-test labels may be used to describe a retrospective ROC working
+  point, but those fields must live under `retrospective_test_working_points`
+  and state that they are oracle/non-deployable.
+- Do not apply a threshold calibrated on single-member OOF scores directly to
+  an averaged ensemble score. Formal cross-test decisions use per-member
+  outer-OOF thresholds followed by majority vote, and report the externally
+  observed confusion matrix under `operating_points.*.external_ensemble`.
+- Fold/model standard deviations are descriptive dispersion, not independent
+  test replicates or confidence intervals.
+- A dataset-held-out experiment with overlapping peptide sequences is domain
+  holdout, not unseen-peptide generalization; record the overlap explicitly.
+
 ### Historical-result compatibility
 
 - A result file without

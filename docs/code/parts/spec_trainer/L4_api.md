@@ -24,6 +24,23 @@
 
 - `resolve_holdout(X_train, y_train, train_files, test_files, test_size, feature_cols, target_col, loader) -> (X_train, X_test, y_train, y_test)`：优先级——① `test_files` 非空且异于 `train_files` → 用 `loader(test_files, feature_cols, target_col)` 加载；② `test_size>0` → `train_test_split(stratify=y, random_state=42)`；③ 否则抛 `ValueError`（拒绝 in-sample 评估）。
 
+## tools/spec_trainer/src/cv_train.py
+
+- `read_dataframe(paths) -> DataFrame`：合并特征表，并增加只用于审计的
+  `__source_file/__source_row`，不作为模型输入。
+- `assemble_oof(..., return_fold_ids=False)`：按 sequence 分组完成外层 CV 和
+  分组早停；保存每折模型、OOF 分数、best iteration，以及每个成员模型在自身
+  outer-OOF 上得到的 FPR5/FPR10 校准阈值。
+- `predict_ensemble(model_paths, X)`：返回成员 trust score 均值；DataFrame
+  输入会严格验证列名及顺序。
+- `evaluate_cross_test(..., fold_metrics=None, return_details=False)`：连续
+  ensemble 分数用于 ROC-AUC/error PR-AUC；外部标签重选工作点明确标记为
+  retrospective oracle。传入 fold calibration 时，锁定判定采用逐成员阈值和
+  多数投票，不把单模型 OOF 阈值应用到平均分数。
+- `main(argv=None)`：默认拒绝覆盖已有 bundle；`--overwrite` 显式允许重跑。
+  原子写入 JSON、suspects、OOF/test 逐样本分数；JSON 还记录缺失模式、来源
+  分层指标、sequence overlap、每折迭代数、配置/Git/依赖/input fingerprint。
+
 ## tools/spec_trainer/src/models/base_model.py
 
 - `class BaseModel(ABC)`
@@ -40,7 +57,7 @@
 
 - `class LGBModel(BaseModel)`
   - `__init__(self, model_params, training_params, feature_names)`。
-  - `fit(...)`：构 `lgb.Dataset(feature_name=feature_names)`，可选验证集，回调 `early_stopping(training_params['early_stopping_rounds'])` + `log_evaluation(100)`，`num_boost_round=training_params['num_boost_round']`。
+  - `fit(...)`：构 `lgb.Dataset(feature_name=feature_names)`，可选验证集，回调 `early_stopping(training_params['early_stopping_rounds'], first_metric_only=...)` + `log_evaluation(100)`，`num_boost_round=training_params['num_boost_round']`；正式配置仅由第一项 AUC 控制早停。
   - `predict_proba(X)` → `model.predict(X)`；`predict(X)` → `(proba>0.5).astype(int)`。
   - `save(path)`：`save_model`（文本 .txt）。
   - `_raw_feature_importance(...)`：返回 gain array（顺序同 `feature_name`）。

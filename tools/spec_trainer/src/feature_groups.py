@@ -201,6 +201,34 @@ FORMAL_DROP_FEATURES = (
 )
 
 
+# Compact, pre-declared paired-evidence arm.  It deliberately avoids absolute
+# light/heavy abundance and evidence-opportunity counts (for example b_count,
+# q1a_total_count, and n_fragments_in_F), and keeps one robust representative
+# from highly correlated summary families.  This is an optional compact model;
+# evidence_all remains the formal complete-evidence baseline.
+EVIDENCE_CORE_FEATURES = frozenset({
+    # MS1 observed agreement
+    "precursor_pearson", "precursor_apex_delta", "precursor_mz_avg_err",
+    "precursor_intensity_ratio", "precursor_cosine", "precursor_snr",
+    "precursor_peak_width_ratio", "isotope_correlation", "mass_shift_error",
+    "precursor_light_centering_defect", "precursor_heavy_centering_defect",
+    "precursor_heavy_shape_irregularity", "precursor_heavy_narrow_defect",
+    # MS2 observed agreement
+    "all_p75", "frag_corr_weighted", "matched_intensity_percent",
+    "all_apex_delta_p50", "all_mz_err_p50", "all_cosine_p50",
+    "all_snr_p50", "all_log_lh_ratio_mad",
+    "all_heavy_centering_defect_max",
+    "all_heavy_shape_irregularity_max", "all_heavy_narrow_defect_max",
+    "q1a_recall", "q1a_recall_shifted",
+    # MS2 library-prediction agreement
+    "spec_pattern_SA", "spec_pattern_spearman",
+    "spec_pattern_LH_consistency", "pred_hl_ratio_mad",
+    "pred_coverage_wpred",
+    "pred_both_present_fraction", "pred_coverage_coelut",
+    "frag_offtime_fraction", "spec_pattern_SA_coelut",
+})
+
+
 # Formal ablation arms. Eligibility flags are deliberately absent: experiments
 # must construct a common evaluable cohort before resolving an arm.
 EXPERIMENT_ARMS = {
@@ -211,9 +239,22 @@ EXPERIMENT_ARMS = {
     "ms1_ms2_no_prediction": ("ms1_observed", "ms2_observed"),
     "evidence_all": (
         "ms1_observed", "ms2_observed", "ms2_predicted"),
+    "evidence_core": (),
     "full": ("context", "ms1_observed", "ms2_observed",
              "ms2_predicted"),
 }
+
+
+def experiment_arm_features(arm: str) -> frozenset[str]:
+    """Return the complete registered feature set declared by one arm."""
+    if arm not in EXPERIMENT_ARMS:
+        raise ValueError(
+            f"unknown experiment arm {arm!r}; expected one of "
+            f"{sorted(EXPERIMENT_ARMS)}")
+    if arm == "evidence_core":
+        return EVIDENCE_CORE_FEATURES
+    groups = EXPERIMENT_ARMS[arm]
+    return frozenset().union(*(FEATURE_GROUPS[name] for name in groups))
 
 
 @dataclass(frozen=True)
@@ -357,8 +398,7 @@ def resolve_experiment_arm(
             f"unregistered={list(audit.unregistered_columns)}, "
             f"ungrouped_model={list(audit.ungrouped_model_columns)}")
 
-    selected_groups = EXPERIMENT_ARMS[arm]
-    allowed = set().union(*(FEATURE_GROUPS[name] for name in selected_groups))
+    allowed = experiment_arm_features(arm)
     result = [column for column in available_columns if column in allowed]
     if "total_label_shift" in result and "total_silac_shift" in result:
         result.remove("total_silac_shift")
