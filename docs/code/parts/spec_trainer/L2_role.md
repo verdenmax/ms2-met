@@ -26,7 +26,8 @@
 
 ## 输入 / 输出
 
-- 输入：YAML 配置（`config/*.yaml`）、特征表 `runs/baseline_{ds}_{fdr}/features.csv`（含 `label` 列）。
+- 输入：YAML 配置、`FEATURE_ROOT/baseline_{ds}_{fdr}/features.csv`（含
+  `label` 列）；正式 CV 运行时配置由生成器按指定根目录创建。
 - 输出：
   - 模型 `runs/spec_trainer/models/<name>.txt`（LightGBM 文本；其余后端用 joblib）。
   - 报告 `runs/spec_trainer/results/<name>.json`（带语义版本的 error-positive

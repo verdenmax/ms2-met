@@ -53,6 +53,24 @@ tree_method: hist XGBoost 默认使用 exact 树构建方法，而 LightGBM 使�
 
 `results/exp1_report.json`
 
+## 正式 CV 矩阵
+
+`train-cv-*` 固定使用 `evidence_all` 特征组，只包含 MS1 observed、MS2
+observed 和 MS2 predicted。Context 仅用于消融对照，不进入正式模型；六个
+eligibility flags 只用于 `evidence_common` 队列过滤，也不进入模型。两个质量
+审计未通过的预测特征 `spec_pattern_spearman_b` 和 `spec_pattern_SA_b` 同样
+排除。在当前特征 schema 下最终为 152 个模型输入。
+
+```bash
+make train-cv-all \
+  FEATURE_ROOT=/path/to/feature-snapshot \
+  CV_OUTPUT_ROOT=/path/to/cv-output
+```
+
+`FEATURE_ROOT` 控制 15 个输入目录；`CV_OUTPUT_ROOT` 控制运行时配置、模型、
+JSON、suspects 和日志的输出位置。默认值分别为 `runs` 和
+`runs/spec_trainer`。
+
 ## CV 决策阈值
 
 为兼容现有数据和模型，CSV 仍保存 `label=1`（正确鉴定），模型仍输出

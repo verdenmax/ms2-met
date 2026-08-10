@@ -105,6 +105,22 @@ make train-ablation-neg20 \
 配置、模型和 JSON 结果位于 `runs/spec_trainer/ablation/neg20/`。历史
 `train-cv-neg20-all` 不执行正式 feature-arm 消融。
 
+正式的 30 实验 CV 矩阵（clean/neg05/neg10/neg15/neg20，各含三个内部 CV
+和三个跨条件测试）固定使用 `evidence_all`：MS1 observed + MS2 observed +
+MS2 predicted，不含 context 和 eligibility flags。所有实验先应用
+`evidence_common` 共同队列，并删除经质量审计不采用的
+`spec_pattern_spearman_b`、`spec_pattern_SA_b`：
+
+```bash
+make train-cv-all \
+  FEATURE_ROOT=/path/to/ms2-met-runs-08-08 \
+  CV_OUTPUT_ROOT=/path/to/ms2-met-runs-08-08/spec_trainer/cv-evidence-all
+```
+
+`FEATURE_ROOT` 必须直接包含 15 个 `baseline_<dataset>_<fdr>/features.csv`。
+运行时配置写到 `CV_OUTPUT_ROOT/configs/`，模型和结果分别写到
+`CV_OUTPUT_ROOT/models/` 与 `CV_OUTPUT_ROOT/results/`；输入特征快照只读。
+
 ### Evaluation convention / 评价指标口径
 
 CSV 与模型为兼容既有数据，仍使用 `label=1` 表示正确鉴定、模型高分表示

@@ -44,7 +44,14 @@
 
 ## 特征列解析（`feature_cols.py`，重点：排除泄露列）
 
-- `explicit` 非空 → 直接用。否则取所有 `sample_csv_paths` 列名的**交集**（schema drift 会告警），顺序按第一个文件。
+- 正式 `train-cv-*` 配置使用注册表中的 `feature_arm: evidence_all`，即
+  MS1 observed + MS2 observed + MS2 predicted；context 与 eligibility flags
+  都不进入模型。`evidence_common` 在选特征前用 eligibility flags 过滤为统一
+  可评估队列。
+- 正式 CV 统一删除 `spec_pattern_spearman_b` 与 `spec_pattern_SA_b`；当前
+  schema 最终使用 152 个模型特征。
+- 只有没有 `feature_arm` 的历史配置才使用自动检测：`explicit` 非空则直接
+  使用，否则取所有输入表头的交集并剔除 META/EXCLUDED。
 - 剔除三类：
   - `META_COLUMNS`：标识/标签列（`sequence/charge/raw_title*/protein_names/label/label_type/precursor_mz/sequence_len`），与 `tools/eval_baseline.py` 一致。
   - `EXCLUDED_EXTRA`：非物理过拟合或跨数据集泄露列——`modification_count`（修饰→负例的伪规则）、`window_width`（=数据集 ID 代理）、`fragment_xic_empty_count`（常量 0）、`fragment_same_mass_count` / `fragment_heavy_absent_count`（被 DIA 窗宽决定，cross_test 下成 dataset 代理）。
@@ -62,11 +69,14 @@
 | `combined_<fdr>` | 三集合并 | `test_size: 0.2` |
 | `exp1/exp2` | 早期示例 | — |
 
-`fdr` ∈ `clean / neg05 / neg10 / neg15 / neg20`（`combined_*` 仅有 `clean / neg05 / neg10` 三档）；`ds` ∈ `2da / 5da / normal`。`feature_cols: []` 一律自动检测。当前 `config/` 共 33 个实验配置（`in_*` 15 + `cross_test_*` 15 + `combined_*` 3）外加 `exp1`/`exp2` 两个早期示例。
+`fdr` ∈ `clean / neg05 / neg10 / neg15 / neg20`；`ds` ∈
+`2da / 5da / normal`。`cv_*.yaml` 由 `gen_cv_configs.py` 生成并固定为上述
+evidence-only 设置，不能把 `feature_cols: []` 误解为自动使用全部列。
 
-> ⚠️ **训练输入路径 / 数据新鲜度（重要）**：所有 yaml 的 `train_files`/`test_files` 与 Makefile `*_FEATURES` 都指向 **`runs/baseline_*/features.csv`**。当前 `runs/` 是**旧快照**（131 列 / 118 特征，无 speclib 扩展、无 `heavy_out_of_range` 过滤，且只有 clean/neg05/neg10 九个目录；`neg15/neg20` 目录无 `features.csv` → 直接跑这些 yaml 会 `FileNotFoundError`）。最新的、已过滤的 142 特征数据在 **`runs_new/`**（gitignore，离线快照），**无任何配置指向它**。要在新数据上重训，二选一：(A) 把所有 yaml + Makefile 的 `runs/baseline_` 改成 `runs_new/baseline_`；或 (B) 重跑提取 `make all`（stage-2 过滤会把 142 列已过滤 CSV 写回 `runs/`，配置无需改）。注意 `make filter` 只删行、**不补 24 个新特征列**，故对旧 `runs/` 仅过滤不可达到 142 特征——必须重新提取。
-
-> 注：`heavy_out_of_range` 不在 META/EXCLUDED 中，仍是一个**特征列**；经 stage-2 过滤后它在数据中恒为 0（其互补列 `heavy_in_raw` 恒为 1），成为零方差常量列——对 LightGBM 无信息（不被分裂），无害但冗余，会以 0 重要性出现在特征重要性图中。
+`make train-cv-all FEATURE_ROOT=<snapshot> CV_OUTPUT_ROOT=<output>` 会根据指定
+快照生成运行时配置，不复制或修改外部特征文件。默认仍为仓库内 `runs/` 与
+`runs/spec_trainer/`。六个 eligibility 字段会记录在 cohort audit 中，但不会
+成为模型特征。
 
 ## rescore 多阈值评估（`rescore.py`）
 

@@ -6,6 +6,11 @@ data:
   test_size: 0.2
   feature_cols: []
   target_col: label
+  feature_arm: evidence_all
+  drop_features:
+  - spec_pattern_spearman_b
+  - spec_pattern_SA_b
+  cohort: evidence_common
   group_col: sequence
 model:
   type: lightgbm

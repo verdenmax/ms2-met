@@ -191,6 +191,16 @@ FEATURE_GROUPS = {
 }
 
 
+# Prediction features excluded from every formal model because their current
+# implementation/quality audit is not reliable enough for scientific use.
+# Keeping this list beside the registry prevents the CV matrix and ablation
+# generator from silently drifting apart.
+FORMAL_DROP_FEATURES = (
+    "spec_pattern_spearman_b",
+    "spec_pattern_SA_b",
+)
+
+
 # Formal ablation arms. Eligibility flags are deliberately absent: experiments
 # must construct a common evaluable cohort before resolving an arm.
 EXPERIMENT_ARMS = {

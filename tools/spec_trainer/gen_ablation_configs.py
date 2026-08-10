@@ -6,6 +6,11 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from .src.feature_groups import FORMAL_DROP_FEATURES
+except ImportError:  # Direct script execution from tools/spec_trainer.
+    from src.feature_groups import FORMAL_DROP_FEATURES
+
 
 ABLATION_ARMS = (
     "context_only",
@@ -17,10 +22,8 @@ ABLATION_ARMS = (
     "full",
 )
 DATASETS = ("2da", "5da", "normal")
-DEFAULT_DROP_FEATURES = (
-    "spec_pattern_spearman_b",
-    "spec_pattern_SA_b",
-)
+# Backward-compatible public name used by existing tests/importers.
+DEFAULT_DROP_FEATURES = FORMAL_DROP_FEATURES
 
 
 def _experiment_name(dataset, fdr, arm):
