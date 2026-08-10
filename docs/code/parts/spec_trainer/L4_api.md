@@ -50,7 +50,11 @@
   固定 sequence 测试集及可复用 outer/inner fold map。
 - `run_fixed_negpool(config_path, feature_root, dataset, output_root, ...)`：训练
   M5/M10/M20，在相同 E20 测试行及三个错误层上评估，并输出 sequence-cluster
-  paired bootstrap、逐样本分数、manifest、模型和 provenance。
+  paired bootstrap、逐样本分数、manifest、模型和 provenance。`dataset` 可为
+  `combined`，此时统一处理 2da+5da+Normal，并额外输出 per-domain/macro 表。
+- `prepare_combined_fixed_negpool(feature_root, cfg, ...)`：分别审计三个数据集，
+  对 sample ID 加 dataset 命名空间，随后按全局 sequence 和 dataset×tier
+  分层生成唯一的固定测试集及五折 map。
 
 ## tools/spec_trainer/src/models/base_model.py
 

@@ -50,7 +50,7 @@ def _rows(seed=4, complete_core=False):
     return pd.DataFrame(rows)
 
 
-def _write_pools(root, complete_core=False, perturb=False):
+def _write_pools(root, complete_core=False, perturb=False, dataset="2da"):
     source = _rows(complete_core=complete_core)
     included = {
         "neg05": {"correct", "t5"},
@@ -62,9 +62,14 @@ def _write_pools(root, complete_core=False, perturb=False):
         frame = frame.copy().reset_index(drop=True)
         if perturb and pool == "neg05":
             frame.loc[0, "precursor_pearson"] += 1
-        path = root / f"baseline_2da_{pool}" / "features.csv"
+        path = root / f"baseline_{dataset}_{pool}" / "features.csv"
         path.parent.mkdir(parents=True)
         frame.to_csv(path, index=False)
+
+
+def _write_all_dataset_pools(root, complete_core=False):
+    for dataset in ("2da", "5da", "normal"):
+        _write_pools(root, complete_core=complete_core, dataset=dataset)
 
 
 def _cfg(feature_arm="ms1_only", rounds=15):
@@ -130,6 +135,32 @@ def test_prepare_rejects_shared_feature_drift(tmp_path):
             min_test_errors_per_tier=1, split_candidates=8)
 
 
+def test_prepare_combined_uses_global_sequence_split_and_twelve_strata(
+        tmp_path):
+    import fixed_negpool
+
+    _write_all_dataset_pools(tmp_path)
+    prepared = fixed_negpool.prepare_combined_fixed_negpool(
+        tmp_path, _cfg(), min_test_errors_per_tier=1,
+        split_candidates=32)
+    assert set(prepared.frame["dataset"]) == {"2da", "5da", "normal"}
+    assert prepared.frame["sample_id"].is_unique
+    # Test has teeth: local source IDs deliberately collide across datasets,
+    # while namespaced combined IDs must not.
+    assert prepared.frame["source_sample_id"].duplicated().any()
+    per_sequence = prepared.frame.groupby("sequence")["fixed_split"].nunique()
+    assert per_sequence.max() == 1
+    assert len(prepared.validation[
+        "fixed_split"]["test_fraction_by_stratum"]) == 12
+    assert len(prepared.validation[
+        "fixed_split"]["minimum_test_rows_by_stratum"]) == 9
+    assert len(prepared.validation[
+        "fixed_test_dataset_tier_counts"]) == 12
+    train = prepared.frame[prepared.frame["fixed_split"].eq("train")]
+    assert train.groupby("sequence")["outer_fold"].nunique().max() == 1
+    assert set(train["outer_fold"]) == {0, 1}
+
+
 def test_paired_bootstrap_has_all_predeclared_comparisons():
     import fixed_negpool
 
@@ -175,6 +206,27 @@ def test_make_fixed_negpool_2da_uses_runtime_roots(tmp_path):
     assert '--bootstrap-reps "17"' in result.stdout
 
 
+def test_make_fixed_negpool_combined_uses_all_nine_inputs(tmp_path):
+    project_root = Path(__file__).resolve().parents[1]
+    feature_root = tmp_path / "features"
+    output_root = tmp_path / "fixed"
+    for dataset in ("2da", "5da", "normal"):
+        for pool in ("neg05", "neg10", "neg20"):
+            path = feature_root / f"baseline_{dataset}_{pool}" / "features.csv"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+    result = subprocess.run(
+        ["make", "-n", "train-fixed-test-negpool-combined",
+         f"FEATURE_ROOT={feature_root}",
+         f"FIXED_NEGPOOL_OUTPUT_ROOT={output_root}",
+         "FIXED_NEGPOOL_BOOTSTRAPS=19"],
+        cwd=project_root, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert '--dataset combined' in result.stdout
+    assert f'--output-root "{output_root}/combined"' in result.stdout
+    assert '--bootstrap-reps "19"' in result.stdout
+
+
 @requires_lgb
 def test_run_fixed_negpool_writes_complete_paired_bundle(tmp_path):
     import fixed_negpool
@@ -205,3 +257,41 @@ def test_run_fixed_negpool_writes_complete_paired_bundle(tmp_path):
             config_path, feature_root, "2da", output_root,
             min_test_errors_per_tier=1, split_candidates=16,
             bootstrap_reps=1)
+
+
+@requires_lgb
+def test_run_combined_fixed_negpool_writes_domain_outputs(tmp_path):
+    import fixed_negpool
+
+    feature_root = tmp_path / "features"
+    output_root = tmp_path / "combined"
+    _write_all_dataset_pools(feature_root, complete_core=True)
+    config = _cfg(feature_arm="evidence_core", rounds=10)
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+    result = fixed_negpool.run_fixed_negpool(
+        config_path, feature_root, "combined", output_root,
+        min_test_errors_per_tier=1, split_candidates=16,
+        bootstrap_reps=3)
+    assert result["experiment"] == \
+        "combined_fixed_test_nested_negative_pool_v1"
+    assert result["design"]["combined_domain_reporting"] == \
+        "pooled + equal-weight macro + per-dataset"
+    fixed = pd.read_csv(output_root / "fixed_test_summary.csv")
+    assert fixed["model"].tolist() == ["M5", "M10", "M20"]
+    domain = pd.read_csv(output_root / "domain_summary.csv")
+    assert len(domain) == 12
+    assert set(domain["test_dataset"]) == {
+        "2da", "5da", "normal", "macro_equal_weight"}
+    assert len(pd.read_csv(output_root / "domain_tier_summary.csv")) == 27
+    by_domain = pd.read_csv(output_root / "paired_bootstrap_by_domain.csv")
+    assert len(by_domain) == 36
+    assert set(by_domain["test_dataset"]) == {"2da", "5da", "normal"}
+    manifest = pd.read_csv(
+        output_root / "manifests" / "fixed_test_manifest.csv")
+    assert {"dataset", "source_sample_id", "dataset_tier_stratum"} \
+        <= set(manifest)
+    used = yaml.safe_load((output_root / "config_used.yaml").read_text())
+    assert len(used["data"]["train_files"]) == 3
+    assert used["data"]["combined_fixed_test"]["stratification"] == \
+        "dataset_x_negative_tier"

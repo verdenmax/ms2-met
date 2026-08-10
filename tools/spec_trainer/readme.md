@@ -84,6 +84,19 @@ sequence-held-out 测试集，并以同一正确样本、同一 outer/inner fold
 M5/M10/M20。结果包含相同 E20 测试集的主表、分层错误集结果及按 sequence 的
 1000 次配对 bootstrap；可用 `FIXED_NEGPOOL_BOOTSTRAPS=<N>` 调整次数。
 
+合并三种采集条件的固定测试实验：
+
+```bash
+make train-fixed-test-negpool-combined \
+  FEATURE_ROOT=/path/to/feature-snapshot \
+  FIXED_NEGPOOL_OUTPUT_ROOT=/path/to/fixed-negpool-output
+```
+
+该目标使用九个 E5/E10/E20 文件，合并三个 neg20 主表后按全局 sequence 切分，
+并平衡十二个 dataset×tier 层。输出目录为 `combined/`，除 pooled 主表外还包含
+`domain_summary.csv`、`domain_tier_summary.csv` 和
+`paired_bootstrap_by_domain.csv`。
+
 ## CV 决策阈值
 
 为兼容现有数据和模型，CSV 仍保存 `label=1`（正确鉴定），模型仍输出

@@ -53,6 +53,9 @@ _SAMPLE_ID = "sample_id"
 _TIER = "negative_tier"
 _SPLIT = "fixed_split"
 _OUTER_FOLD = "outer_fold"
+_DATASET = "dataset"
+_SOURCE_SAMPLE_ID = "source_sample_id"
+_STRATUM = "dataset_tier_stratum"
 
 
 @dataclass
@@ -265,21 +268,29 @@ def _assign_tiers(master_identity, tables, target_col):
 
 
 def _choose_fixed_test(frame, group_col, test_fraction, seed,
-                       n_candidates=128):
-    """Choose the best deterministic grouped split across four strata."""
+                       n_candidates=128, stratum_col=_TIER,
+                       min_test_by_stratum=None):
+    """Choose the best deterministic grouped split across declared strata."""
     from sklearn.model_selection import GroupShuffleSplit
 
     if not 0.0 < test_fraction < 1.0:
         raise ValueError("test_fraction must be between 0 and 1")
     if n_candidates < 1:
         raise ValueError("split_candidates must be >= 1")
-    strata = frame[_TIER].to_numpy()
-    required = {"correct", *ERROR_TIERS}
-    if set(strata) != required:
+    if stratum_col not in frame:
+        raise ValueError(f"split stratum column {stratum_col!r} is missing")
+    strata = frame[stratum_col].astype(str).to_numpy()
+    required = set(strata)
+    if len(required) < 2:
         raise ValueError(
-            f"prepared cohort must contain strata {sorted(required)}, got "
-            f"{sorted(set(strata))}")
+            f"fixed test requires at least two strata, got {sorted(required)}")
     totals = pd.Series(strata).value_counts()
+    minima = dict(min_test_by_stratum or {})
+    unknown_minima = set(minima) - required
+    if unknown_minima:
+        raise ValueError(
+            f"minimum test counts name unknown strata: "
+            f"{sorted(unknown_minima)}")
     splitter = GroupShuffleSplit(
         n_splits=n_candidates, test_size=test_fraction, random_state=seed)
     best = None
@@ -289,6 +300,9 @@ def _choose_fixed_test(frame, group_col, test_fraction, seed,
         train_counts = pd.Series(strata[train_idx]).value_counts()
         if any(test_counts.get(name, 0) == 0
                or train_counts.get(name, 0) == 0 for name in required):
+            continue
+        if any(test_counts.get(name, 0) < minimum
+               for name, minimum in minima.items()):
             continue
         fractions = test_counts.reindex(totals.index, fill_value=0) / totals
         max_error = float((fractions - test_fraction).abs().max())
@@ -305,9 +319,13 @@ def _choose_fixed_test(frame, group_col, test_fraction, seed,
     audit = {
         "method": "best_of_deterministic_group_shuffle_candidates",
         "group_col": group_col,
+        "stratum_col": stratum_col,
         "seed": seed,
         "test_fraction_target": test_fraction,
         "n_candidates": n_candidates,
+        "minimum_test_rows_by_stratum": {
+            name: int(value) for name, value in minima.items()
+        },
         "n_train": int(len(train_idx)),
         "n_test": int(len(test_idx)),
         "test_fraction_observed": float(len(test_idx) / len(frame)),
@@ -318,15 +336,16 @@ def _choose_fixed_test(frame, group_col, test_fraction, seed,
     return split, audit
 
 
-def _assign_reusable_folds(frame, cfg, group_col):
+def _assign_reusable_folds(frame, cfg, group_col, stratum_col=_TIER):
     """Create outer and inner group assignments once on the E20 train set."""
     training = cfg["training"]
     n_folds = int(training.get("cv_folds", 5))
     seed = int(training.get("cv_seed", 42))
     valid_size = float(training.get("valid_size", 0.15))
     train = frame.loc[frame[_SPLIT].eq("train")].copy().reset_index()
+    categories = sorted(train[stratum_col].astype(str).unique().tolist())
     stratum_codes = pd.Categorical(
-        train[_TIER], categories=["correct", *ERROR_TIERS]).codes
+        train[stratum_col].astype(str), categories=categories).codes
     splits = make_cv_splits(
         stratum_codes, train[group_col].to_numpy(), n_folds=n_folds,
         seed=seed)
@@ -363,12 +382,12 @@ def _assign_reusable_folds(frame, cfg, group_col):
     frame[_OUTER_FOLD] = frame[_OUTER_FOLD].astype(int)
 
     fold_counts = (
-        train.groupby([_OUTER_FOLD, _TIER], sort=True).size()
+        train.groupby([_OUTER_FOLD, stratum_col], sort=True).size()
         .unstack(fill_value=0).to_dict(orient="index")
     )
     return inner_columns, {
         "method": "stratified_group_kfold_on_E20_training_superset",
-        "stratification": _TIER,
+        "stratification": stratum_col,
         "n_folds": n_folds,
         "seed": seed,
         "outer_fold_stratum_counts": {
@@ -508,6 +527,173 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
         validation=validation)
 
 
+def _namespace_sample_ids(frame, dataset):
+    """Make row IDs unique across acquisition datasets without changing groups."""
+    result = frame.copy()
+    source_ids = result[_SAMPLE_ID].astype(str)
+    result[_SOURCE_SAMPLE_ID] = source_ids
+    result[_SAMPLE_ID] = source_ids.map(
+        lambda value: hashlib.sha256(
+            f"{dataset}|{value}".encode("utf-8")).hexdigest())
+    result[_DATASET] = dataset
+    if result[_SAMPLE_ID].duplicated().any():
+        raise ValueError(f"namespaced sample IDs are not unique for {dataset}")
+    return result
+
+
+def _sum_class_counts(audits, side):
+    keys = ("n_rows", "n_correct", "n_error")
+    return {
+        key: int(sum(audit[side][key] for audit in audits.values()))
+        for key in keys
+    }
+
+
+def prepare_combined_fixed_negpool(feature_root, cfg, *,
+                                   test_fraction=0.20,
+                                   min_test_errors_per_tier=100,
+                                   split_candidates=128):
+    """Prepare one globally grouped 2da+5da+normal fixed E20 experiment.
+
+    Each dataset is independently audited for E5/E10/E20 nesting and shared
+    feature equality.  Their neg20 master cohorts are then concatenated and
+    split exactly once by global sequence, balancing the twelve
+    ``dataset x tier`` strata.  Per-dataset split/fold assignments created by
+    the reused preparer are deliberately discarded before the global map is
+    made.
+    """
+    datasets = ("2da", "5da", "normal")
+    group_col = cfg["data"].get("group_col")
+    target_col = cfg["data"]["target_col"]
+    if group_col != "sequence":
+        raise ValueError("combined fixed-negpool requires group_col=sequence")
+
+    prepared_by_dataset = {}
+    for dataset in datasets:
+        logging.info("preparing nested pools for combined dataset=%s", dataset)
+        prepared_by_dataset[dataset] = prepare_fixed_negpool(
+            feature_paths(feature_root, dataset), cfg,
+            test_fraction=test_fraction, min_test_errors_per_tier=1,
+            split_candidates=split_candidates)
+
+    first = prepared_by_dataset[datasets[0]]
+    for dataset, prepared in prepared_by_dataset.items():
+        if prepared.feature_cols != first.feature_cols:
+            raise ValueError(
+                f"combined feature schema differs for dataset {dataset}")
+        if prepared.identity_cols != first.identity_cols:
+            raise ValueError(
+                f"combined identity schema differs for dataset {dataset}")
+
+    frames = []
+    memberships = []
+    for dataset, prepared in prepared_by_dataset.items():
+        generated = [
+            column for column in prepared.frame
+            if column in {_SPLIT, _OUTER_FOLD}
+            or column.startswith("inner_valid_for_fold_")
+        ]
+        frame = _namespace_sample_ids(
+            prepared.frame.drop(columns=generated), dataset)
+        membership = _namespace_sample_ids(
+            prepared.membership.drop(columns=[_SPLIT]), dataset)
+        frames.append(frame)
+        memberships.append(membership)
+
+    cohort = pd.concat(frames, ignore_index=True).copy()
+    membership = pd.concat(memberships, ignore_index=True)
+    if cohort[_SAMPLE_ID].duplicated().any():
+        raise ValueError("combined namespaced sample IDs are not unique")
+    cohort[_STRATUM] = (
+        cohort[_DATASET].astype(str) + "::" + cohort[_TIER].astype(str))
+
+    seed = int(cfg["training"].get("cv_seed", 42))
+    split, split_audit = _choose_fixed_test(
+        cohort, group_col, test_fraction, seed,
+        n_candidates=split_candidates, stratum_col=_STRATUM,
+        min_test_by_stratum={
+            f"{dataset}::{tier}": min_test_errors_per_tier
+            for dataset in datasets for tier in ERROR_TIERS
+        })
+    cohort[_SPLIT] = split
+    test = cohort.loc[cohort[_SPLIT].eq("test")]
+    dataset_tier_counts = test.groupby(
+        [_DATASET, _TIER], sort=True).size().to_dict()
+    insufficient = {
+        f"{dataset}::{tier}": int(
+            dataset_tier_counts.get((dataset, tier), 0))
+        for dataset in datasets for tier in ERROR_TIERS
+        if dataset_tier_counts.get((dataset, tier), 0)
+        < min_test_errors_per_tier
+    }
+    if insufficient:
+        raise ValueError(
+            "combined fixed test has too few error rows in dataset/tier "
+            f"strata {insufficient}; require >= "
+            f"{min_test_errors_per_tier}")
+
+    inner_columns, fold_audit = _assign_reusable_folds(
+        cohort, cfg, group_col, stratum_col=_STRATUM)
+    group_map = _group_fold_manifest(cohort, group_col, inner_columns)
+    split_map = cohort.set_index(_SAMPLE_ID)[_SPLIT]
+    membership[_SPLIT] = membership[_SAMPLE_ID].map(split_map).fillna(
+        "excluded_by_cohort")
+
+    pooled_tier_counts = test.groupby(_TIER, sort=True).size().to_dict()
+    cohort_audits = {
+        dataset: prepared.cohort_audit
+        for dataset, prepared in prepared_by_dataset.items()
+    }
+    cohort_audit = {
+        "name": cfg["data"].get("cohort") or "none",
+        "scope": "combined_2da_5da_normal",
+        "before": _sum_class_counts(cohort_audits, "before"),
+        "after": _sum_class_counts(cohort_audits, "after"),
+        "by_dataset": cohort_audits,
+    }
+    dataset_validation = {
+        dataset: {
+            key: prepared.validation[key]
+            for key in (
+                "identity", "headers_identical", "nesting",
+                "shared_values", "cohort")
+        }
+        for dataset, prepared in prepared_by_dataset.items()
+    }
+    validation = {
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+        "mode": "combined_2da_5da_normal",
+        "identity": {
+            "columns": first.identity_cols,
+            "local_sample_id": "sha256_length_prefixed_identity_fields",
+            "combined_sample_id": "sha256(dataset|local_sample_id)",
+            "grouping": "global_sequence_across_all_datasets",
+        },
+        "datasets": dataset_validation,
+        "cohort": cohort_audit,
+        "fixed_split": split_audit,
+        "fixed_folds": fold_audit,
+        "fixed_test_tier_counts": {
+            key: int(value) for key, value in pooled_tier_counts.items()
+        },
+        "fixed_test_dataset_tier_counts": {
+            f"{dataset}::{tier}": int(value)
+            for (dataset, tier), value in dataset_tier_counts.items()
+        },
+        "min_test_errors_per_dataset_tier": min_test_errors_per_tier,
+    }
+    logging.info(
+        "combined preflight passed: cohort=%s, test dataset/tier=%s",
+        cohort_audit["after"],
+        validation["fixed_test_dataset_tier_counts"])
+    return PreparedFixedNegpool(
+        frame=cohort, membership=membership,
+        group_fold_map=group_map, feature_cols=first.feature_cols,
+        identity_cols=first.identity_cols, cohort_audit=cohort_audit,
+        validation=validation)
+
+
 def _locked_metrics(labels, trust_scores, vote_fractions, weights=None):
     ranking = evaluate_ranking(labels, trust_scores, sample_weight=weights)
     result = dict(ranking)
@@ -535,6 +721,26 @@ def _flat_result_row(model_name, subset, metrics):
         "observed_fpr_at_fpr5": fpr5["fpr"],
         "locked_error_recall_at_fpr10": fpr10["error_recall"],
         "observed_fpr_at_fpr10": fpr10["fpr"],
+    }
+
+
+def _macro_domain_row(model_name, domain_rows):
+    """Equal-dataset-weight macro average; row counts are intentionally blank."""
+    metric_columns = (
+        "roc_auc", "error_pr_auc", "locked_fnr_at_fpr5",
+        "observed_fpr_at_fpr5", "locked_error_recall_at_fpr10",
+        "observed_fpr_at_fpr10")
+    return {
+        "model": model_name,
+        "test_subset": "macro_equal_dataset_weight",
+        "test_dataset": "macro_equal_weight",
+        "n_rows": None,
+        "n_actual_correct": None,
+        "n_actual_error": None,
+        **{
+            column: float(np.mean([row[column] for row in domain_rows]))
+            for column in metric_columns
+        },
     }
 
 
@@ -690,6 +896,8 @@ def _known_outputs(output_root):
         root / "predictions" / "fixed_test_predictions.csv",
         root / "fixed_test_summary.csv", root / "tier_summary.csv",
         root / "paired_bootstrap.csv",
+        root / "domain_summary.csv", root / "domain_tier_summary.csv",
+        root / "paired_bootstrap_by_domain.csv",
     ]
     return paths
 
@@ -708,7 +916,8 @@ def _write_prepared(prepared, output_root):
     _atomic_csv(str(root / "manifests" / "membership.csv"),
                 prepared.membership)
     identity = [
-        _SAMPLE_ID, *prepared.identity_cols, "label", _TIER, _SPLIT,
+        _SAMPLE_ID, _SOURCE_SAMPLE_ID, _DATASET,
+        *prepared.identity_cols, "label", _TIER, _STRATUM, _SPLIT,
         _OUTER_FOLD,
     ]
     fixed = prepared.frame[
@@ -739,11 +948,22 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
     logging.info(
         "starting fixed-negpool experiment: dataset=%s, feature_root=%s",
         dataset, feature_root)
-    paths = feature_paths(feature_root, dataset)
-    prepared = prepare_fixed_negpool(
-        paths, cfg, test_fraction=test_fraction,
-        min_test_errors_per_tier=min_test_errors_per_tier,
-        split_candidates=split_candidates)
+    if dataset == "combined":
+        paths = {
+            f"{source}_{pool}": path
+            for source in ("2da", "5da", "normal")
+            for pool, path in feature_paths(feature_root, source).items()
+        }
+        prepared = prepare_combined_fixed_negpool(
+            feature_root, cfg, test_fraction=test_fraction,
+            min_test_errors_per_tier=min_test_errors_per_tier,
+            split_candidates=split_candidates)
+    else:
+        paths = feature_paths(feature_root, dataset)
+        prepared = prepare_fixed_negpool(
+            paths, cfg, test_fraction=test_fraction,
+            min_test_errors_per_tier=min_test_errors_per_tier,
+            split_candidates=split_candidates)
     _write_prepared(prepared, output_root)
     if prepare_only:
         return {"mode": "prepare_only", **prepared.validation}
@@ -751,7 +971,28 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
     root = Path(output_root)
     os.makedirs(root / "models", exist_ok=True)
     os.makedirs(root / "predictions", exist_ok=True)
-    shutil.copyfile(config_path, root / "config_used.yaml")
+    config_used = root / "config_used.yaml"
+    if dataset == "combined":
+        effective_cfg = copy.deepcopy(cfg)
+        effective_cfg["data"]["train_files"] = [
+            str(feature_paths(feature_root, source)["neg20"])
+            for source in ("2da", "5da", "normal")
+        ]
+        effective_cfg["data"]["test_files"] = []
+        effective_cfg["data"]["combined_fixed_test"] = {
+            "datasets": ["2da", "5da", "normal"],
+            "master_pool": "neg20",
+            "group_col": "sequence",
+            "stratification": "dataset_x_negative_tier",
+            "test_fraction": test_fraction,
+        }
+        config_tmp = f"{config_used}.tmp.{os.getpid()}"
+        with open(config_tmp, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(
+                effective_cfg, handle, sort_keys=False, allow_unicode=True)
+        os.replace(config_tmp, config_used)
+    else:
+        shutil.copyfile(config_path, config_used)
     target_col = cfg["data"]["target_col"]
     group_col = cfg["data"]["group_col"]
     train_master = prepared.frame.loc[
@@ -766,8 +1007,8 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
 
     prediction_identity = [
         column for column in (
-            _SAMPLE_ID, *prepared.identity_cols, target_col, _TIER,
-            _SOURCE_ROW)
+            _SAMPLE_ID, _SOURCE_SAMPLE_ID, _DATASET,
+            *prepared.identity_cols, target_col, _TIER, _SOURCE_ROW)
         if column in test
     ]
     test_predictions = test[prediction_identity].copy()
@@ -775,6 +1016,8 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
     model_summaries = {}
     full_rows = []
     tier_rows = []
+    domain_rows = []
+    domain_tier_rows = []
 
     for model_name, allowed_tiers in MODEL_TIERS.items():
         use = train_master[target_col].eq(1) | train_master[_TIER].isin(
@@ -823,6 +1066,51 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
                 if key != "labels"
             }
 
+        domain_metrics = {}
+        if _DATASET in test:
+            this_model_domain_rows = []
+            for test_dataset in sorted(test[_DATASET].unique()):
+                domain_mask = test[_DATASET].eq(test_dataset).to_numpy()
+                domain_idx = np.flatnonzero(domain_mask)
+                domain_votes = {
+                    key: np.asarray(value)[domain_idx]
+                    for key, value in votes.items()
+                }
+                metrics = _locked_metrics(
+                    test_labels[domain_idx], np.asarray(trust)[domain_idx],
+                    domain_votes)
+                metrics["labels"] = test_labels[domain_idx]
+                row = _flat_result_row(
+                    model_name, "full_E20", metrics)
+                row["test_dataset"] = test_dataset
+                domain_rows.append(row)
+                this_model_domain_rows.append(row)
+                domain_metrics[test_dataset] = {
+                    key: value for key, value in metrics.items()
+                    if key != "labels"
+                }
+
+                for tier in ERROR_TIERS:
+                    tier_mask = domain_mask & (
+                        test[target_col].eq(1)
+                        | test[_TIER].eq(tier)).to_numpy()
+                    tier_idx = np.flatnonzero(tier_mask)
+                    tier_votes = {
+                        key: np.asarray(value)[tier_idx]
+                        for key, value in votes.items()
+                    }
+                    tier_domain_metrics = _locked_metrics(
+                        test_labels[tier_idx],
+                        np.asarray(trust)[tier_idx], tier_votes)
+                    tier_domain_metrics["labels"] = test_labels[tier_idx]
+                    tier_row = _flat_result_row(
+                        model_name, f"correct_plus_{tier}",
+                        tier_domain_metrics)
+                    tier_row["test_dataset"] = test_dataset
+                    domain_tier_rows.append(tier_row)
+            domain_rows.append(_macro_domain_row(
+                model_name, this_model_domain_rows))
+
         train_counts = train.groupby(_TIER, sort=True).size().to_dict()
         model_summaries[model_name] = {
             "included_error_tiers": list(allowed_tiers),
@@ -838,6 +1126,7 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
                 if key != "labels"
             },
             "tier_fixed_test": tier_metrics,
+            "domain_fixed_test": domain_metrics,
             "locked_operating_points": aggregate[
                 "locked_operating_points"],
         }
@@ -852,8 +1141,13 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
             votes["fpr_5"])
         test_predictions[f"{model_name}_fpr10_error_vote_fraction"] = (
             votes["fpr_10"])
-        oof_frame = train[[
-            _SAMPLE_ID, group_col, target_col, _TIER, _OUTER_FOLD]].copy()
+        oof_identity = [
+            column for column in (
+                _SAMPLE_ID, _SOURCE_SAMPLE_ID, _DATASET, group_col,
+                target_col, _TIER, _OUTER_FOLD)
+            if column in train
+        ]
+        oof_frame = train[oof_identity].copy()
         oof_frame["oof_fold"] = oof_folds
         oof_frame["trust_score"] = oof
         oof_frame["error_score"] = 1.0 - oof
@@ -867,19 +1161,55 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
     tier_summary = pd.DataFrame(tier_rows)
     bootstrap = _bootstrap_paired(
         test, model_predictions, bootstrap_reps, bootstrap_seed, group_col)
+    domain_bootstraps = []
+    if _DATASET in test:
+        for offset, test_dataset in enumerate(sorted(test[_DATASET].unique())):
+            mask = test[_DATASET].eq(test_dataset).to_numpy()
+            domain_test = test.loc[mask].reset_index(drop=True)
+            domain_predictions = {
+                model: {
+                    key: np.asarray(value)[mask]
+                    for key, value in values.items()
+                }
+                for model, values in model_predictions.items()
+            }
+            domain_bootstrap = _bootstrap_paired(
+                domain_test, domain_predictions, bootstrap_reps,
+                bootstrap_seed + offset + 1, group_col)
+            domain_bootstrap.insert(0, "test_dataset", test_dataset)
+            domain_bootstraps.append(domain_bootstrap)
+    domain_bootstrap = (
+        pd.concat(domain_bootstraps, ignore_index=True)
+        if domain_bootstraps else pd.DataFrame())
     _atomic_csv(str(root / "predictions" / "fixed_test_predictions.csv"),
                 test_predictions)
     _atomic_csv(str(root / "fixed_test_summary.csv"), fixed_summary)
     _atomic_csv(str(root / "tier_summary.csv"), tier_summary)
     _atomic_csv(str(root / "paired_bootstrap.csv"), bootstrap)
+    if domain_rows:
+        _atomic_csv(str(root / "domain_summary.csv"),
+                    pd.DataFrame(domain_rows))
+        _atomic_csv(str(root / "domain_tier_summary.csv"),
+                    pd.DataFrame(domain_tier_rows))
+        _atomic_csv(str(root / "paired_bootstrap_by_domain.csv"),
+                    domain_bootstrap)
 
     summary = {
         "metric_semantics": METRIC_SEMANTICS_VERSION,
         "positive_class": "incorrect_identification",
-        "experiment": "fixed_test_nested_negative_pool_v1",
+        "experiment": (
+            "combined_fixed_test_nested_negative_pool_v1"
+            if dataset == "combined"
+            else "fixed_test_nested_negative_pool_v1"),
         "dataset": dataset,
         "design": {
-            "master_feature_table": str(paths["neg20"]),
+            "master_feature_table": (
+                {
+                    source: str(feature_paths(
+                        feature_root, source)["neg20"])
+                    for source in ("2da", "5da", "normal")
+                }
+                if dataset == "combined" else str(paths["neg20"])),
             "fixed_test": "correct_test + complete_E20_error_test",
             "training_models": {
                 model: list(tiers) for model, tiers in MODEL_TIERS.items()},
@@ -891,6 +1221,9 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
             "interpretation": (
                 "models are compared on identical test rows; tier analyses "
                 "separate broad discrimination from added-tier coverage"),
+            "combined_domain_reporting": (
+                "pooled + equal-weight macro + per-dataset"
+                if dataset == "combined" else None),
             "tier_pr_auc_note": (
                 "PR-AUC is paired/comparable between models within a tier, "
                 "not as a raw number across tiers with different prevalence"),
@@ -916,6 +1249,14 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
             "fixed_test_summary": str(root / "fixed_test_summary.csv"),
             "tier_summary": str(root / "tier_summary.csv"),
             "paired_bootstrap": str(root / "paired_bootstrap.csv"),
+            "domain_summary": (
+                str(root / "domain_summary.csv") if domain_rows else None),
+            "domain_tier_summary": (
+                str(root / "domain_tier_summary.csv")
+                if domain_rows else None),
+            "paired_bootstrap_by_domain": (
+                str(root / "paired_bootstrap_by_domain.csv")
+                if domain_rows else None),
             "log": str(log_path),
         },
         "provenance": _provenance(
@@ -931,10 +1272,10 @@ def _parser():
     parser = argparse.ArgumentParser(
         description="Fixed-test controlled E5/E10/E20 training experiment")
     parser.add_argument("--config", required=True,
-                        help="formal cv_in_<dataset>_neg20 YAML")
+                        help="formal neg20 CV template YAML")
     parser.add_argument("--feature-root", required=True)
     parser.add_argument("--dataset", required=True,
-                        choices=("2da", "5da", "normal"))
+                        choices=("2da", "5da", "normal", "combined"))
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--test-fraction", type=float, default=0.20)
     parser.add_argument("--min-test-errors-per-tier", type=int, default=100)

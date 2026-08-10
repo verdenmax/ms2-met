@@ -160,6 +160,21 @@ make train-fixed-test-negpool-2da \
 错误难度层的结果写入 `tier_summary.csv`，按 sequence 的 1000 次配对 cluster
 bootstrap 写入 `paired_bootstrap.csv`。清单和固定折叠位于 `manifests/`。
 
+三种采集条件合并训练、并从每个 `dataset × tier` 全局冻结约 20% 测试样本：
+
+```bash
+make train-fixed-test-negpool-combined \
+  PY=/home/verden/.conda/envs/jianyan/bin/python \
+  FEATURE_ROOT=/path/to/ms2-met-runs-08-08 \
+  FIXED_NEGPOOL_OUTPUT_ROOT=/path/to/output/fixed-negpool
+```
+
+combined 模式先分别验证三套 E5/E10/E20，再合并各自 neg20 主表。切分和五折
+均以全局 `sequence` 分组：一个 sequence 在 2da、5da、Normal 中的全部行只会
+共同进入 train 或 test；分层变量为十二个 `dataset × {correct,T5,T5_10,
+T10_20}` 组合。主结果为 pooled 指标，`domain_summary.csv` 同时给出各数据集
+及等权 macro 指标，`domain_tier_summary.csv` 给出数据集内错误层结果。
+
 ### Evaluation convention / 评价指标口径
 
 CSV 与模型为兼容既有数据，仍使用 `label=1` 表示正确鉴定、模型高分表示

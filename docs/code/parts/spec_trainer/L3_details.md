@@ -102,6 +102,17 @@ FNR@FPR5/Recall@FPR10，并额外在三个错误层分别评估。差值使用�
 独立重复。测试标签不参与阈值选择；阈值仍来自每个成员自己的 outer OOF，
 外部判定仍为成员多数投票。
 
+`make train-fixed-test-negpool-combined` 将 2da、5da、Normal 的 neg20 主表合并
+后再做一次全局 80/20 sequence-group split。它不是分别切三个数据集：同一
+sequence 跨采集条件保持在同一侧，从而避免 2da train / Normal test 的肽段
+泄漏。split 与 outer fold 同时平衡十二个 `dataset × tier` 层级；M5/M10/M20
+复用相同正确样本、全局 outer fold 和 inner-validation map。
+
+combined 的 `fixed_test_summary.csv` 为 pooled 结果；`domain_summary.csv` 包含
+2da/5da/Normal 结果及数据集等权 macro；`domain_tier_summary.csv` 包含 27 个
+模型×数据集×错误层结果。锁定阈值仍从 pooled training OOF 校准，因此必须
+同时报告 pooled 和各数据集实际 observed FPR。
+
 ## rescore 多阈值评估（`rescore.py`）
 
 - 仅针对 LightGBM `.txt` 模型；`discover_models` 扫 `--models-dir/*.txt`，可用 `--models` 过滤。
