@@ -128,3 +128,35 @@ def test_average_proba():
                          np.array([1.0, 0.0]),
                          np.array([0.5, 0.5])])
     assert np.allclose(out, [0.5, 0.5])
+
+
+def test_weighted_metrics_equal_explicit_bootstrap_expansion():
+    from cv_core import evaluate_at_threshold, evaluate_ranking
+    labels = np.array([1, 1, 0, 0])
+    trust = np.array([0.9, 0.3, 0.2, 0.8])
+    weights = np.array([2, 0, 3, 1])
+    expanded = np.repeat(np.arange(len(labels)), weights)
+
+    weighted = evaluate_at_threshold(
+        labels, trust, error_threshold=0.5, sample_weight=weights)
+    explicit = evaluate_at_threshold(
+        labels[expanded], trust[expanded], error_threshold=0.5)
+    for key in ("tp", "fp", "fn", "tn", "fpr", "fnr", "error_recall"):
+        assert weighted[key] == explicit[key]
+
+    weighted_rank = evaluate_ranking(
+        labels, trust, sample_weight=weights)
+    explicit_rank = evaluate_ranking(labels[expanded], trust[expanded])
+    assert weighted_rank["roc_auc"] == explicit_rank["roc_auc"]
+    assert weighted_rank["error_pr_auc"] == explicit_rank["error_pr_auc"]
+
+
+def test_weighted_metrics_reject_bad_weights():
+    from cv_core import evaluate_at_threshold, evaluate_ranking
+    labels = np.array([1, 0])
+    trust = np.array([0.9, 0.1])
+    with pytest.raises(ValueError, match="shape mismatch"):
+        evaluate_ranking(labels, trust, sample_weight=[1])
+    with pytest.raises(ValueError, match="non-negative"):
+        evaluate_at_threshold(
+            labels, trust, 0.5, sample_weight=[1, -1])

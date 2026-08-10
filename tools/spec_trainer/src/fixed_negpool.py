@@ -1,0 +1,971 @@
+"""Controlled E5/E10/E20 negative-pool experiment on one fixed test set.
+
+The public seam is ``run_fixed_negpool``: callers provide one formal neg20 CV
+config plus a feature snapshot/dataset, and receive a complete paired result
+bundle.  Internally the module validates nested pool identity and feature
+equality, creates one sequence-held-out test manifest and one reusable CV map,
+trains M5/M10/M20, evaluates every model on the same E20 test rows, and runs a
+paired sequence-cluster bootstrap.
+
+Stored labels and model scores retain the project convention (1/high means a
+correct identification).  Every metric delegates to cv_core, where an
+incorrect identification is the statistical positive class.
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import datetime as dt
+import hashlib
+import json
+import logging
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import yaml
+
+from cohort import COHORT_DEFINITIONS, apply_training_cohort
+from cv_core import (METRIC_SEMANTICS_VERSION, evaluate_at_threshold,
+                     evaluate_ranking, make_cv_splits)
+from cv_train import (_SOURCE_FILE, _SOURCE_ROW, _atomic_csv, _atomic_json,
+                      _file_fingerprint, _inner_split, _op_key,
+                      _operating_targets, _validate_frame, assemble_oof,
+                      evaluate_cross_test)
+from feature_cols import resolve_configured_feature_cols
+
+
+POOL_NAMES = ("neg05", "neg10", "neg20")
+ERROR_TIERS = ("t5", "t5_10", "t10_20")
+MODEL_TIERS = {
+    "M5": ("t5",),
+    "M10": ("t5", "t5_10"),
+    "M20": ERROR_TIERS,
+}
+PAIR_COMPARISONS = (("M5", "M10"), ("M10", "M20"), ("M5", "M20"))
+_SAMPLE_ID = "sample_id"
+_TIER = "negative_tier"
+_SPLIT = "fixed_split"
+_OUTER_FOLD = "outer_fold"
+
+
+@dataclass
+class PreparedFixedNegpool:
+    """Prepared master cohort and auditable, reusable split assignments."""
+
+    frame: pd.DataFrame
+    membership: pd.DataFrame
+    group_fold_map: pd.DataFrame
+    feature_cols: list[str]
+    identity_cols: list[str]
+    cohort_audit: dict
+    validation: dict
+
+
+def feature_paths(feature_root, dataset):
+    """Return the three required feature CSVs for one dataset."""
+    root = Path(feature_root)
+    return {
+        pool: root / f"baseline_{dataset}_{pool}" / "features.csv"
+        for pool in POOL_NAMES
+    }
+
+
+def _identity_candidates(common_columns):
+    common = set(common_columns)
+    candidates = []
+    for singleton in ("query_id", "parent_id"):
+        if singleton in common:
+            candidates.append([singleton])
+    base = [
+        column for column in (
+            "sequence", "charge", "precursor_mz", "rt", "raw_title1",
+            "raw_title2", "label_type")
+        if column in common
+    ]
+    if "sequence" in base and "charge" in base:
+        candidates.append(base)
+        extras = [c for c in ("protein_names", "q_value") if c in common]
+        for i in range(1, len(extras) + 1):
+            candidates.append(base + extras[:i])
+    return candidates
+
+
+def _identity_text(frame, columns):
+    """Unambiguous length-prefixed serialization of identity fields."""
+    encoded = pd.Series("", index=frame.index, dtype=object)
+    for column in columns:
+        values = frame[column].astype(str)
+        encoded = encoded + values.str.len().astype(str) + ":" + values + "|"
+    return encoded
+
+
+def _load_identity_tables(paths, target_col):
+    headers = {
+        pool: list(pd.read_csv(path, nrows=0).columns)
+        for pool, path in paths.items()
+    }
+    common = set(headers[POOL_NAMES[0]])
+    for pool in POOL_NAMES[1:]:
+        common.intersection_update(headers[pool])
+    if target_col not in common:
+        raise ValueError(f"target column {target_col!r} is not common to pools")
+
+    candidates = _identity_candidates(common)
+    if not candidates:
+        raise ValueError(
+            "cannot construct a stable sample identity: query_id/parent_id "
+            "and the required sequence composite are unavailable")
+    read_columns = sorted(
+        set().union(*map(set, candidates), {target_col}))
+    tables = {
+        pool: pd.read_csv(
+            path, usecols=read_columns, dtype=str, keep_default_na=False)
+        for pool, path in paths.items()
+    }
+
+    identity_cols = None
+    diagnostics = []
+    for candidate in candidates:
+        bad = {}
+        for pool, frame in tables.items():
+            missing_rows = int(frame[candidate].eq("").any(axis=1).sum())
+            duplicate_rows = int(
+                frame.duplicated(candidate, keep=False).sum())
+            if missing_rows or duplicate_rows:
+                bad[pool] = {
+                    "rows_with_empty_identity_field": missing_rows,
+                    "duplicate_identity_rows": duplicate_rows,
+                }
+        diagnostics.append({"columns": candidate, "failures": bad})
+        if not bad:
+            identity_cols = candidate
+            break
+    if identity_cols is None:
+        raise ValueError(
+            "no candidate identity is complete and unique in all pools: "
+            f"{diagnostics}")
+
+    for pool, frame in tables.items():
+        serialized = _identity_text(frame, identity_cols)
+        frame[_SAMPLE_ID] = serialized.map(
+            lambda value: hashlib.sha256(value.encode("utf-8")).hexdigest())
+        frame[_SOURCE_ROW] = np.arange(len(frame), dtype=np.int64)
+        if frame[_SAMPLE_ID].duplicated().any():
+            raise ValueError(
+                f"SHA-256 identity collision or duplicate in {pool}")
+        labels = pd.to_numeric(frame[target_col], errors="coerce")
+        if labels.isna().any() or not set(labels.unique()).issubset({0, 1}):
+            raise ValueError(f"{pool} has malformed {target_col} values")
+        frame[target_col] = labels.astype(int)
+    return tables, identity_cols, headers, diagnostics
+
+
+def _validate_nested_membership(tables, target_col):
+    sets = {
+        pool: set(frame[_SAMPLE_ID]) for pool, frame in tables.items()
+    }
+    if not sets["neg05"] <= sets["neg10"] <= sets["neg20"]:
+        raise ValueError(
+            "negative-pool files are not nested: require E5 subset E10 "
+            "subset E20")
+
+    labels = {
+        pool: frame.set_index(_SAMPLE_ID)[target_col]
+        for pool, frame in tables.items()
+    }
+    for pool in ("neg05", "neg10"):
+        shared = labels[pool].index
+        mismatch = int((labels[pool] != labels["neg20"].loc[shared]).sum())
+        if mismatch:
+            raise ValueError(
+                f"{pool}/neg20 disagree on {mismatch} shared labels")
+
+    correct_sets = {
+        pool: set(frame.loc[frame[target_col].eq(1), _SAMPLE_ID])
+        for pool, frame in tables.items()
+    }
+    if not (correct_sets["neg05"] == correct_sets["neg10"]
+            == correct_sets["neg20"]):
+        raise ValueError(
+            "correct-identification rows differ across negative pools")
+    error_sets = {
+        pool: set(frame.loc[frame[target_col].eq(0), _SAMPLE_ID])
+        for pool, frame in tables.items()
+    }
+    if not error_sets["neg05"] <= error_sets["neg10"] <= error_sets["neg20"]:
+        raise ValueError(
+            "error rows are not nested: require E5 subset E10 subset E20")
+
+    return {
+        "n_rows": {pool: len(frame) for pool, frame in tables.items()},
+        "n_correct": {
+            pool: int(frame[target_col].eq(1).sum())
+            for pool, frame in tables.items()
+        },
+        "n_error": {
+            pool: int(frame[target_col].eq(0).sum())
+            for pool, frame in tables.items()
+        },
+        "nested_all_rows": True,
+        "nested_error_rows": True,
+        "identical_correct_rows": True,
+    }
+
+
+def _row_hashes(path, columns):
+    values = pd.read_csv(
+        path, usecols=columns, dtype=str, keep_default_na=False)
+    return pd.util.hash_pandas_object(
+        values[columns], index=False, hash_key="negpool-check-v1")
+
+
+def _validate_shared_values(paths, tables, columns):
+    """Ensure shared rows have identical formal features and cohort flags."""
+    master_hash = pd.Series(
+        _row_hashes(paths["neg20"], columns).to_numpy(),
+        index=tables["neg20"][_SAMPLE_ID])
+    mismatch_counts = {}
+    for pool in ("neg05", "neg10"):
+        hashes = pd.Series(
+            _row_hashes(paths[pool], columns).to_numpy(),
+            index=tables[pool][_SAMPLE_ID])
+        mismatch = hashes != master_hash.loc[hashes.index]
+        mismatch_counts[pool] = int(mismatch.sum())
+        if mismatch.any():
+            examples = hashes.index[mismatch][:5].tolist()
+            raise ValueError(
+                f"{pool}/neg20 shared formal feature values differ on "
+                f"{int(mismatch.sum())} rows; sample_ids={examples}")
+    return {
+        "columns_compared": list(columns),
+        "n_columns_compared": len(columns),
+        "hash_method": "pandas_hash_pandas_object_v1_over_raw_csv_strings",
+        "mismatch_counts": mismatch_counts,
+    }
+
+
+def _assign_tiers(master_identity, tables, target_col):
+    ids05 = set(tables["neg05"][_SAMPLE_ID])
+    ids10 = set(tables["neg10"][_SAMPLE_ID])
+    tiers = np.full(len(master_identity), "correct", dtype=object)
+    is_error = master_identity[target_col].eq(0).to_numpy()
+    sample_ids = master_identity[_SAMPLE_ID]
+    tiers[is_error & sample_ids.isin(ids05).to_numpy()] = "t5"
+    tiers[is_error & ~sample_ids.isin(ids05).to_numpy()
+          & sample_ids.isin(ids10).to_numpy()] = "t5_10"
+    tiers[is_error & ~sample_ids.isin(ids10).to_numpy()] = "t10_20"
+    return tiers
+
+
+def _choose_fixed_test(frame, group_col, test_fraction, seed,
+                       n_candidates=128):
+    """Choose the best deterministic grouped split across four strata."""
+    from sklearn.model_selection import GroupShuffleSplit
+
+    if not 0.0 < test_fraction < 1.0:
+        raise ValueError("test_fraction must be between 0 and 1")
+    if n_candidates < 1:
+        raise ValueError("split_candidates must be >= 1")
+    strata = frame[_TIER].to_numpy()
+    required = {"correct", *ERROR_TIERS}
+    if set(strata) != required:
+        raise ValueError(
+            f"prepared cohort must contain strata {sorted(required)}, got "
+            f"{sorted(set(strata))}")
+    totals = pd.Series(strata).value_counts()
+    splitter = GroupShuffleSplit(
+        n_splits=n_candidates, test_size=test_fraction, random_state=seed)
+    best = None
+    for candidate, (train_idx, test_idx) in enumerate(splitter.split(
+            np.zeros(len(frame)), strata, frame[group_col])):
+        test_counts = pd.Series(strata[test_idx]).value_counts()
+        train_counts = pd.Series(strata[train_idx]).value_counts()
+        if any(test_counts.get(name, 0) == 0
+               or train_counts.get(name, 0) == 0 for name in required):
+            continue
+        fractions = test_counts.reindex(totals.index, fill_value=0) / totals
+        max_error = float((fractions - test_fraction).abs().max())
+        row_error = abs(len(test_idx) / len(frame) - test_fraction)
+        score = (max_error, row_error, candidate)
+        if best is None or score < best[0]:
+            best = (score, train_idx, test_idx, fractions)
+    if best is None:
+        raise ValueError(
+            "cannot construct a grouped fixed test containing every tier")
+    _, train_idx, test_idx, fractions = best
+    split = np.full(len(frame), "train", dtype=object)
+    split[test_idx] = "test"
+    audit = {
+        "method": "best_of_deterministic_group_shuffle_candidates",
+        "group_col": group_col,
+        "seed": seed,
+        "test_fraction_target": test_fraction,
+        "n_candidates": n_candidates,
+        "n_train": int(len(train_idx)),
+        "n_test": int(len(test_idx)),
+        "test_fraction_observed": float(len(test_idx) / len(frame)),
+        "test_fraction_by_stratum": {
+            name: float(fractions[name]) for name in sorted(fractions.index)
+        },
+    }
+    return split, audit
+
+
+def _assign_reusable_folds(frame, cfg, group_col):
+    """Create outer and inner group assignments once on the E20 train set."""
+    training = cfg["training"]
+    n_folds = int(training.get("cv_folds", 5))
+    seed = int(training.get("cv_seed", 42))
+    valid_size = float(training.get("valid_size", 0.15))
+    train = frame.loc[frame[_SPLIT].eq("train")].copy().reset_index()
+    stratum_codes = pd.Categorical(
+        train[_TIER], categories=["correct", *ERROR_TIERS]).codes
+    splits = make_cv_splits(
+        stratum_codes, train[group_col].to_numpy(), n_folds=n_folds,
+        seed=seed)
+    outer = np.full(len(train), -1, dtype=int)
+    for fold, (_, test_idx) in enumerate(splits):
+        outer[test_idx] = fold
+    if (outer < 0).any():
+        raise AssertionError("reusable outer fold map left rows unassigned")
+    train[_OUTER_FOLD] = outer
+
+    dummy = pd.DataFrame({"unused": np.zeros(len(train))})
+    y = train[cfg["data"]["target_col"]]
+    groups = train[group_col]
+    inner_columns = []
+    for fold in range(n_folds):
+        tr_idx = np.flatnonzero(outer != fold)
+        te_idx = np.flatnonzero(outer == fold)
+        _, val_idx = _inner_split(
+            dummy, y, groups, tr_idx, valid_size, seed + fold)
+        mask = np.zeros(len(train), dtype=bool)
+        mask[val_idx] = True
+        if mask[te_idx].any():
+            raise AssertionError("fixed inner validation overlaps outer fold")
+        column = f"inner_valid_for_fold_{fold}"
+        train[column] = mask
+        inner_columns.append(column)
+
+    frame[_OUTER_FOLD] = -1
+    for column in inner_columns:
+        frame[column] = False
+    frame.loc[train["index"], _OUTER_FOLD] = train[_OUTER_FOLD].to_numpy()
+    for column in inner_columns:
+        frame.loc[train["index"], column] = train[column].to_numpy()
+    frame[_OUTER_FOLD] = frame[_OUTER_FOLD].astype(int)
+
+    fold_counts = (
+        train.groupby([_OUTER_FOLD, _TIER], sort=True).size()
+        .unstack(fill_value=0).to_dict(orient="index")
+    )
+    return inner_columns, {
+        "method": "stratified_group_kfold_on_E20_training_superset",
+        "stratification": _TIER,
+        "n_folds": n_folds,
+        "seed": seed,
+        "outer_fold_stratum_counts": {
+            str(fold): {key: int(value) for key, value in counts.items()}
+            for fold, counts in fold_counts.items()
+        },
+        "inner_validation": (
+            "created once per outer fold on the E20 training superset and "
+            "reused by M5/M10/M20"),
+    }
+
+
+def _group_fold_manifest(frame, group_col, inner_columns):
+    columns = [group_col, _SPLIT, _OUTER_FOLD, *inner_columns]
+    grouped = frame[columns].groupby(group_col, sort=True, dropna=False)
+    nunique = grouped.nunique(dropna=False)
+    if (nunique > 1).any(axis=None):
+        bad = nunique.index[(nunique > 1).any(axis=1)][:5].tolist()
+        raise ValueError(
+            f"group split/fold assignment is inconsistent for {bad}")
+    return grouped.first().reset_index()
+
+
+def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
+                          min_test_errors_per_tier=100,
+                          split_candidates=128):
+    """Validate pools and return the single master cohort/split/fold map."""
+    target_col = cfg["data"]["target_col"]
+    group_col = cfg["data"].get("group_col")
+    if not group_col:
+        raise ValueError("fixed-negpool requires data.group_col")
+    for pool, path in paths.items():
+        if not Path(path).is_file():
+            raise FileNotFoundError(f"missing {pool} feature file: {path}")
+
+    logging.info("reading identities and validating E5/E10/E20 nesting")
+    tables, identity_cols, headers, identity_diagnostics = (
+        _load_identity_tables(paths, target_col))
+    nesting = _validate_nested_membership(tables, target_col)
+    feature_cols = resolve_configured_feature_cols(
+        cfg["data"], [str(paths["neg20"])], target_col)
+    cohort_name = cfg["data"].get("cohort") or "none"
+    cohort_columns = [
+        column for column, _ in COHORT_DEFINITIONS[cohort_name]
+    ]
+    logging.info(
+        "comparing %d formal feature/cohort columns on every shared row",
+        len(feature_cols) + len(cohort_columns))
+    shared_values = _validate_shared_values(
+        paths, tables, list(dict.fromkeys(feature_cols + cohort_columns)))
+
+    logging.info("loading neg20 as the single master feature table")
+    master = pd.read_csv(paths["neg20"])
+    master_identity = tables["neg20"]
+    if len(master) != len(master_identity):
+        raise ValueError("neg20 identity/full reads disagree on row count")
+    labels = pd.to_numeric(master[target_col], errors="coerce")
+    if not np.array_equal(labels.to_numpy(), master_identity[target_col]):
+        raise ValueError("neg20 identity/full reads disagree on labels/order")
+    master = pd.concat([
+        master,
+        pd.DataFrame({
+            _SAMPLE_ID: master_identity[_SAMPLE_ID].to_numpy(),
+            _TIER: _assign_tiers(master_identity, tables, target_col),
+            _SOURCE_FILE: str(Path(paths["neg20"]).resolve()),
+            _SOURCE_ROW: np.arange(len(master), dtype=np.int64),
+        }),
+    ], axis=1).copy()
+    cohort, cohort_audit = apply_training_cohort(
+        master, cohort_name, target_col=target_col)
+    # The wide feature table may arrive as many pandas blocks; consolidate it
+    # before adding split/fold manifest columns to avoid fragmented writes.
+    cohort = cohort.copy()
+    _validate_frame(cohort, feature_cols, target_col, group_col)
+
+    seed = int(cfg["training"].get("cv_seed", 42))
+    split, split_audit = _choose_fixed_test(
+        cohort, group_col, test_fraction, seed,
+        n_candidates=split_candidates)
+    cohort[_SPLIT] = split
+    test_counts = (
+        cohort.loc[cohort[_SPLIT].eq("test")]
+        .groupby(_TIER, sort=True).size().to_dict()
+    )
+    insufficient = {
+        tier: int(test_counts.get(tier, 0)) for tier in ERROR_TIERS
+        if test_counts.get(tier, 0) < min_test_errors_per_tier
+    }
+    if insufficient:
+        raise ValueError(
+            "fixed test has too few error rows in tiers "
+            f"{insufficient}; require >= {min_test_errors_per_tier}. "
+            "Increase the holdout fraction or negative-pool cutoff before "
+            "training")
+
+    inner_columns, fold_audit = _assign_reusable_folds(
+        cohort, cfg, group_col)
+    group_map = _group_fold_manifest(cohort, group_col, inner_columns)
+
+    in_cohort = set(cohort[_SAMPLE_ID])
+    membership = master_identity[
+        [_SAMPLE_ID, *identity_cols, target_col, _SOURCE_ROW]].copy()
+    membership[_TIER] = master[_TIER].to_numpy()
+    membership["in_cohort"] = membership[_SAMPLE_ID].isin(in_cohort)
+    split_map = cohort.set_index(_SAMPLE_ID)[_SPLIT]
+    membership[_SPLIT] = membership[_SAMPLE_ID].map(split_map).fillna(
+        "excluded_by_cohort")
+
+    validation = {
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+        "identity": {
+            "columns": identity_cols,
+            "serialization": "length_prefixed_utf8_fields_v1",
+            "sample_id": "sha256",
+            "candidate_diagnostics": identity_diagnostics,
+        },
+        "headers_identical": all(
+            headers[pool] == headers["neg20"] for pool in POOL_NAMES),
+        "nesting": nesting,
+        "shared_values": shared_values,
+        "cohort": cohort_audit,
+        "fixed_split": split_audit,
+        "fixed_folds": fold_audit,
+        "fixed_test_tier_counts": {
+            key: int(value) for key, value in test_counts.items()
+        },
+        "min_test_errors_per_tier": min_test_errors_per_tier,
+    }
+    logging.info(
+        "preflight passed: cohort=%s, fixed test tiers=%s",
+        cohort_audit["after"], validation["fixed_test_tier_counts"])
+    return PreparedFixedNegpool(
+        frame=cohort, membership=membership,
+        group_fold_map=group_map, feature_cols=feature_cols,
+        identity_cols=identity_cols, cohort_audit=cohort_audit,
+        validation=validation)
+
+
+def _locked_metrics(labels, trust_scores, vote_fractions, weights=None):
+    ranking = evaluate_ranking(labels, trust_scores, sample_weight=weights)
+    result = dict(ranking)
+    for key, votes in vote_fractions.items():
+        point = evaluate_at_threshold(
+            labels, 1.0 - np.asarray(votes), 0.5,
+            sample_weight=weights)
+        result[key] = point
+    return result
+
+
+def _flat_result_row(model_name, subset, metrics):
+    labels = metrics["labels"]
+    fpr5 = metrics["fpr_5"]
+    fpr10 = metrics["fpr_10"]
+    return {
+        "model": model_name,
+        "test_subset": subset,
+        "n_rows": int(len(labels)),
+        "n_actual_correct": int((labels == 1).sum()),
+        "n_actual_error": int((labels == 0).sum()),
+        "roc_auc": metrics["roc_auc"],
+        "error_pr_auc": metrics["error_pr_auc"],
+        "locked_fnr_at_fpr5": fpr5["fnr"],
+        "observed_fpr_at_fpr5": fpr5["fpr"],
+        "locked_error_recall_at_fpr10": fpr10["error_recall"],
+        "observed_fpr_at_fpr10": fpr10["fpr"],
+    }
+
+
+def _bootstrap_paired(test_frame, model_predictions, reps, seed, group_col):
+    """Paired sequence-cluster bootstrap on the unchanged full E20 test."""
+    if reps < 1:
+        return pd.DataFrame(columns=[
+            "model_a", "model_b", "metric", "delta_b_minus_a",
+            "bootstrap_mean_delta", "ci95_low", "ci95_high",
+            "probability_improved", "n_bootstrap"])
+    labels = test_frame["label"].to_numpy()
+    group_codes, groups = pd.factorize(test_frame[group_col], sort=True)
+    n_groups = len(groups)
+    rng = np.random.default_rng(seed)
+    metric_names = (
+        "roc_auc", "error_pr_auc", "locked_fnr_at_fpr5",
+        "locked_error_recall_at_fpr10")
+    observed = {}
+    for model, values in model_predictions.items():
+        metrics = _locked_metrics(
+            labels, values["trust_score"], {
+                "fpr_5": values["fpr_5_vote_fraction"],
+                "fpr_10": values["fpr_10_vote_fraction"],
+            })
+        observed[model] = {
+            "roc_auc": metrics["roc_auc"],
+            "error_pr_auc": metrics["error_pr_auc"],
+            "locked_fnr_at_fpr5": metrics["fpr_5"]["fnr"],
+            "locked_error_recall_at_fpr10": metrics["fpr_10"][
+                "error_recall"],
+        }
+    samples = {
+        pair: {metric: [] for metric in metric_names}
+        for pair in PAIR_COMPARISONS
+    }
+    completed = 0
+    for _ in range(reps):
+        group_weight = rng.multinomial(
+            n_groups, np.full(n_groups, 1.0 / n_groups))
+        weights = group_weight[group_codes].astype("f8")
+        if not weights[labels == 0].sum() or not weights[labels == 1].sum():
+            continue
+        replicate = {}
+        for model, values in model_predictions.items():
+            metrics = _locked_metrics(
+                labels, values["trust_score"], {
+                    "fpr_5": values["fpr_5_vote_fraction"],
+                    "fpr_10": values["fpr_10_vote_fraction"],
+                }, weights=weights)
+            replicate[model] = {
+                "roc_auc": metrics["roc_auc"],
+                "error_pr_auc": metrics["error_pr_auc"],
+                "locked_fnr_at_fpr5": metrics["fpr_5"]["fnr"],
+                "locked_error_recall_at_fpr10": metrics["fpr_10"][
+                    "error_recall"],
+            }
+        for model_a, model_b in PAIR_COMPARISONS:
+            for metric in metric_names:
+                samples[(model_a, model_b)][metric].append(
+                    replicate[model_b][metric]
+                    - replicate[model_a][metric])
+        completed += 1
+
+    rows = []
+    for (model_a, model_b), metrics in samples.items():
+        for metric, values in metrics.items():
+            values = np.asarray(values, dtype="f8")
+            delta = observed[model_b][metric] - observed[model_a][metric]
+            higher_is_better = metric != "locked_fnr_at_fpr5"
+            rows.append({
+                "model_a": model_a,
+                "model_b": model_b,
+                "metric": metric,
+                "delta_b_minus_a": float(delta),
+                "bootstrap_mean_delta": float(values.mean()),
+                "ci95_low": float(np.quantile(values, 0.025)),
+                "ci95_high": float(np.quantile(values, 0.975)),
+                "probability_improved": float(
+                    (values > 0).mean() if higher_is_better
+                    else (values < 0).mean()),
+                "higher_is_better": higher_is_better,
+                "n_bootstrap": completed,
+                "resampling_unit": group_col,
+            })
+    return pd.DataFrame(rows)
+
+
+def _provenance(config_path, cfg, paths, argv):
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], check=True, capture_output=True,
+            text=True).stdout.strip()
+        dirty = bool(subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            check=True, capture_output=True, text=True).stdout.strip())
+    except (OSError, subprocess.CalledProcessError):
+        commit, dirty = None, None
+    with open(config_path, "rb") as handle:
+        config_hash = hashlib.sha256(handle.read()).hexdigest()
+    try:
+        import lightgbm
+        import sklearn
+        versions = {
+            "python": platform.python_version(), "numpy": np.__version__,
+            "pandas": pd.__version__, "scikit_learn": sklearn.__version__,
+            "lightgbm": lightgbm.__version__,
+        }
+    except ImportError:
+        versions = {"python": platform.python_version(),
+                    "numpy": np.__version__, "pandas": pd.__version__}
+    return {
+        "created_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "command": [sys.executable, *argv],
+        "config_path": str(Path(config_path).resolve()),
+        "config_sha256": config_hash,
+        "git_commit": commit,
+        "git_tracked_files_dirty": dirty,
+        "versions": versions,
+        "model_params": cfg.get("model", {}).get("params", {}),
+        "training_params": cfg.get("training", {}),
+        "inputs": [_file_fingerprint(path) for path in paths.values()],
+    }
+
+
+def _assert_formal_config(cfg):
+    data = cfg.get("data", {})
+    if data.get("feature_arm") not in {"evidence_all", "evidence_core"}:
+        raise ValueError(
+            "fixed-negpool requires a formal evidence_all/evidence_core arm")
+    if data.get("cohort") != "evidence_common":
+        raise ValueError("fixed-negpool requires cohort=evidence_common")
+    if data.get("group_col") != "sequence":
+        raise ValueError("fixed-negpool requires group_col=sequence")
+    params = cfg.get("model", {}).get("params", {})
+    forbidden = [key for key in ("is_unbalance", "scale_pos_weight")
+                 if key in params]
+    if forbidden:
+        raise ValueError(
+            "class weighting is intentionally excluded from this controlled "
+            f"experiment; remove {forbidden}")
+    targets, _ = _operating_targets(cfg)
+    if not {0.05, 0.10}.issubset(set(targets)):
+        raise ValueError("fixed-negpool requires FPR5 and FPR10 targets")
+
+
+def _known_outputs(output_root):
+    root = Path(output_root)
+    paths = [
+        root / "summary.json", root / "preflight.json",
+        root / "manifests" / "membership.csv",
+        root / "manifests" / "fixed_test_manifest.csv",
+        root / "manifests" / "fold_map.csv",
+        root / "predictions" / "fixed_test_predictions.csv",
+        root / "fixed_test_summary.csv", root / "tier_summary.csv",
+        root / "paired_bootstrap.csv",
+    ]
+    return paths
+
+
+def _assert_output_available(output_root, overwrite):
+    existing = [path for path in _known_outputs(output_root) if path.exists()]
+    if existing and not overwrite:
+        raise FileExistsError(
+            "refusing to overwrite an existing fixed-negpool bundle; choose "
+            "a new output root or pass --overwrite:\n  "
+            + "\n  ".join(map(str, existing)))
+
+
+def _write_prepared(prepared, output_root):
+    root = Path(output_root)
+    _atomic_csv(str(root / "manifests" / "membership.csv"),
+                prepared.membership)
+    identity = [
+        _SAMPLE_ID, *prepared.identity_cols, "label", _TIER, _SPLIT,
+        _OUTER_FOLD,
+    ]
+    fixed = prepared.frame[
+        [column for column in identity if column in prepared.frame]].copy()
+    _atomic_csv(str(root / "manifests" / "fixed_test_manifest.csv"), fixed)
+    _atomic_csv(str(root / "manifests" / "fold_map.csv"),
+                prepared.group_fold_map)
+    _atomic_json(str(root / "preflight.json"), prepared.validation)
+
+
+def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
+                      test_fraction=0.20, min_test_errors_per_tier=100,
+                      split_candidates=128, bootstrap_reps=1000,
+                      bootstrap_seed=20260810, overwrite=False,
+                      prepare_only=False, argv=None):
+    """Run the complete controlled experiment and write one result bundle."""
+    with open(config_path, encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle)
+    _assert_formal_config(cfg)
+    _assert_output_available(output_root, overwrite)
+    log_path = Path(output_root) / "logs" / "fixed_negpool.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO, force=True,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[logging.FileHandler(
+            log_path, mode="w", encoding="utf-8"), logging.StreamHandler()])
+    logging.info(
+        "starting fixed-negpool experiment: dataset=%s, feature_root=%s",
+        dataset, feature_root)
+    paths = feature_paths(feature_root, dataset)
+    prepared = prepare_fixed_negpool(
+        paths, cfg, test_fraction=test_fraction,
+        min_test_errors_per_tier=min_test_errors_per_tier,
+        split_candidates=split_candidates)
+    _write_prepared(prepared, output_root)
+    if prepare_only:
+        return {"mode": "prepare_only", **prepared.validation}
+
+    root = Path(output_root)
+    os.makedirs(root / "models", exist_ok=True)
+    os.makedirs(root / "predictions", exist_ok=True)
+    shutil.copyfile(config_path, root / "config_used.yaml")
+    target_col = cfg["data"]["target_col"]
+    group_col = cfg["data"]["group_col"]
+    train_master = prepared.frame.loc[
+        prepared.frame[_SPLIT].eq("train")].copy()
+    test = prepared.frame.loc[
+        prepared.frame[_SPLIT].eq("test")].copy().reset_index(drop=True)
+    test_labels = test[target_col].to_numpy()
+    n_folds = int(cfg["training"].get("cv_folds", 5))
+    inner_columns = [f"inner_valid_for_fold_{fold}"
+                     for fold in range(n_folds)]
+    target_fprs, _ = _operating_targets(cfg)
+
+    prediction_identity = [
+        column for column in (
+            _SAMPLE_ID, *prepared.identity_cols, target_col, _TIER,
+            _SOURCE_ROW)
+        if column in test
+    ]
+    test_predictions = test[prediction_identity].copy()
+    model_predictions = {}
+    model_summaries = {}
+    full_rows = []
+    tier_rows = []
+
+    for model_name, allowed_tiers in MODEL_TIERS.items():
+        use = train_master[target_col].eq(1) | train_master[_TIER].isin(
+            allowed_tiers)
+        train = train_master.loc[use].copy().reset_index(drop=True)
+        logging.info(
+            "training %s with error tiers=%s and rows=%d",
+            model_name, allowed_tiers, len(train))
+        _validate_frame(
+            train, prepared.feature_cols, target_col, group_col)
+        fixed_inner = {
+            fold: train[inner_columns[fold]].to_numpy(dtype=bool)
+            for fold in range(n_folds)
+        }
+        model_prefix = str(root / "models" / model_name.lower())
+        oof, fold_metrics, model_paths, oof_folds = assemble_oof(
+            train, train[prepared.feature_cols], train[target_col],
+            train[group_col], cfg, prepared.feature_cols, model_prefix,
+            return_fold_ids=True,
+            predefined_fold_ids=train[_OUTER_FOLD].to_numpy(),
+            predefined_inner_valid=fixed_inner)
+        trust, _, aggregate, details = evaluate_cross_test(
+            model_paths, test[prepared.feature_cols], test_labels,
+            fold_metrics=fold_metrics, return_details=True)
+        votes = details["fold_calibrated_error_vote_fractions"]
+        required_keys = {_op_key(target) for target in target_fprs}
+        if not {"fpr_5", "fpr_10"}.issubset(required_keys & set(votes)):
+            raise ValueError("trained model lacks locked FPR5/FPR10 votes")
+
+        full_metrics = _locked_metrics(test_labels, trust, votes)
+        full_metrics["labels"] = test_labels
+        full_rows.append(_flat_result_row(model_name, "full_E20", full_metrics))
+        tier_metrics = {}
+        for tier in ERROR_TIERS:
+            mask = test[target_col].eq(1) | test[_TIER].eq(tier)
+            indices = np.flatnonzero(mask.to_numpy())
+            subset_votes = {key: np.asarray(value)[indices]
+                            for key, value in votes.items()}
+            metrics = _locked_metrics(
+                test_labels[indices], np.asarray(trust)[indices], subset_votes)
+            metrics["labels"] = test_labels[indices]
+            tier_rows.append(_flat_result_row(
+                model_name, f"correct_plus_{tier}", metrics))
+            tier_metrics[tier] = {
+                key: value for key, value in metrics.items()
+                if key != "labels"
+            }
+
+        train_counts = train.groupby(_TIER, sort=True).size().to_dict()
+        model_summaries[model_name] = {
+            "included_error_tiers": list(allowed_tiers),
+            "n_train": int(len(train)),
+            "train_counts_by_tier": {
+                key: int(value) for key, value in train_counts.items()},
+            "n_features": len(prepared.feature_cols),
+            "feature_cols": prepared.feature_cols,
+            "fold_metrics": fold_metrics,
+            "model_paths": model_paths,
+            "full_fixed_test": {
+                key: value for key, value in full_metrics.items()
+                if key != "labels"
+            },
+            "tier_fixed_test": tier_metrics,
+            "locked_operating_points": aggregate[
+                "locked_operating_points"],
+        }
+        model_predictions[model_name] = {
+            "trust_score": np.asarray(trust),
+            "fpr_5_vote_fraction": np.asarray(votes["fpr_5"]),
+            "fpr_10_vote_fraction": np.asarray(votes["fpr_10"]),
+        }
+        test_predictions[f"{model_name}_trust_score"] = trust
+        test_predictions[f"{model_name}_error_score"] = 1.0 - trust
+        test_predictions[f"{model_name}_fpr5_error_vote_fraction"] = (
+            votes["fpr_5"])
+        test_predictions[f"{model_name}_fpr10_error_vote_fraction"] = (
+            votes["fpr_10"])
+        oof_frame = train[[
+            _SAMPLE_ID, group_col, target_col, _TIER, _OUTER_FOLD]].copy()
+        oof_frame["oof_fold"] = oof_folds
+        oof_frame["trust_score"] = oof
+        oof_frame["error_score"] = 1.0 - oof
+        _atomic_csv(str(root / "predictions" /
+                        f"{model_name.lower()}_train_oof.csv"), oof_frame)
+
+    logging.info(
+        "running %d paired sequence-cluster bootstrap replicates",
+        bootstrap_reps)
+    fixed_summary = pd.DataFrame(full_rows)
+    tier_summary = pd.DataFrame(tier_rows)
+    bootstrap = _bootstrap_paired(
+        test, model_predictions, bootstrap_reps, bootstrap_seed, group_col)
+    _atomic_csv(str(root / "predictions" / "fixed_test_predictions.csv"),
+                test_predictions)
+    _atomic_csv(str(root / "fixed_test_summary.csv"), fixed_summary)
+    _atomic_csv(str(root / "tier_summary.csv"), tier_summary)
+    _atomic_csv(str(root / "paired_bootstrap.csv"), bootstrap)
+
+    summary = {
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+        "experiment": "fixed_test_nested_negative_pool_v1",
+        "dataset": dataset,
+        "design": {
+            "master_feature_table": str(paths["neg20"]),
+            "fixed_test": "correct_test + complete_E20_error_test",
+            "training_models": {
+                model: list(tiers) for model, tiers in MODEL_TIERS.items()},
+            "same_correct_training_rows": True,
+            "same_outer_and_inner_group_assignments": True,
+            "class_weighting": False,
+            "feature_arm": cfg["data"]["feature_arm"],
+            "cohort": cfg["data"]["cohort"],
+            "interpretation": (
+                "models are compared on identical test rows; tier analyses "
+                "separate broad discrimination from added-tier coverage"),
+            "tier_pr_auc_note": (
+                "PR-AUC is paired/comparable between models within a tier, "
+                "not as a raw number across tiers with different prevalence"),
+        },
+        "validation": prepared.validation,
+        "models": model_summaries,
+        "bootstrap": {
+            "n_requested": bootstrap_reps,
+            "n_completed": int(bootstrap["n_bootstrap"].max())
+            if len(bootstrap) else 0,
+            "seed": bootstrap_seed,
+            "resampling_unit": group_col,
+            "primary_hypothesis": (
+                "M20 has lower locked FNR@FPR5 than M5 on the fixed E20 test"),
+        },
+        "artifacts": {
+            "membership": str(root / "manifests" / "membership.csv"),
+            "fixed_test_manifest": str(
+                root / "manifests" / "fixed_test_manifest.csv"),
+            "fold_map": str(root / "manifests" / "fold_map.csv"),
+            "fixed_test_predictions": str(
+                root / "predictions" / "fixed_test_predictions.csv"),
+            "fixed_test_summary": str(root / "fixed_test_summary.csv"),
+            "tier_summary": str(root / "tier_summary.csv"),
+            "paired_bootstrap": str(root / "paired_bootstrap.csv"),
+            "log": str(log_path),
+        },
+        "provenance": _provenance(
+            config_path, cfg, paths,
+            argv or ["tools/spec_trainer/src/fixed_negpool.py"]),
+    }
+    _atomic_json(str(root / "summary.json"), summary)
+    logging.info("fixed-negpool complete: %s", root / "summary.json")
+    return summary
+
+
+def _parser():
+    parser = argparse.ArgumentParser(
+        description="Fixed-test controlled E5/E10/E20 training experiment")
+    parser.add_argument("--config", required=True,
+                        help="formal cv_in_<dataset>_neg20 YAML")
+    parser.add_argument("--feature-root", required=True)
+    parser.add_argument("--dataset", required=True,
+                        choices=("2da", "5da", "normal"))
+    parser.add_argument("--output-root", required=True)
+    parser.add_argument("--test-fraction", type=float, default=0.20)
+    parser.add_argument("--min-test-errors-per-tier", type=int, default=100)
+    parser.add_argument("--split-candidates", type=int, default=128)
+    parser.add_argument("--bootstrap-reps", type=int, default=1000)
+    parser.add_argument("--bootstrap-seed", type=int, default=20260810)
+    parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
+    return parser
+
+
+def main(argv=None):
+    args = _parser().parse_args(argv)
+    command = ["tools/spec_trainer/src/fixed_negpool.py",
+               *(argv if argv is not None else sys.argv[1:])]
+    result = run_fixed_negpool(
+        args.config, args.feature_root, args.dataset, args.output_root,
+        test_fraction=args.test_fraction,
+        min_test_errors_per_tier=args.min_test_errors_per_tier,
+        split_candidates=args.split_candidates,
+        bootstrap_reps=args.bootstrap_reps,
+        bootstrap_seed=args.bootstrap_seed,
+        overwrite=args.overwrite, prepare_only=args.prepare_only,
+        argv=command)
+    if args.prepare_only:
+        counts = result["fixed_test_tier_counts"]
+        print(f"preflight OK: fixed test tier counts={counts}")
+    else:
+        print(f"fixed-negpool complete: {args.output_root}/summary.json")
+    return result
+
+
+if __name__ == "__main__":
+    main()

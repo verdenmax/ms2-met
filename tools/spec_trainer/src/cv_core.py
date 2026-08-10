@@ -86,19 +86,38 @@ def threshold_at_fpr(stored_labels, trust_scores, target_fpr=0.10):
     return threshold
 
 
-def evaluate_at_threshold(stored_labels, trust_scores, error_threshold):
-    """Compute a confusion matrix with incorrect identifications positive."""
+def evaluate_at_threshold(stored_labels, trust_scores, error_threshold,
+                          sample_weight=None):
+    """Compute a confusion matrix with incorrect identifications positive.
+
+    ``sample_weight`` is intended for cluster-bootstrap resamples.  With no
+    weights the historical integer counts are retained; with weights the
+    confusion entries are weighted counts while every class convention stays
+    identical.
+    """
     error_truth, error_score = as_error_detection(stored_labels, trust_scores)
+    if sample_weight is None:
+        weight = np.ones(len(error_truth), dtype="f8")
+        cast_count = int
+    else:
+        weight = np.asarray(sample_weight, dtype="f8")
+        if weight.shape != error_truth.shape:
+            raise ValueError(
+                "sample_weight/stored_labels shape mismatch: "
+                f"{weight.shape} vs {error_truth.shape}")
+        if not np.isfinite(weight).all() or (weight < 0).any():
+            raise ValueError("sample_weight must be finite and non-negative")
+        cast_count = float
     predicted_error = error_score >= error_threshold
     actual_error = error_truth == 1
     actual_correct = error_truth == 0
 
-    tp = int((predicted_error & actual_error).sum())
-    fp = int((predicted_error & actual_correct).sum())
-    fn = int(((~predicted_error) & actual_error).sum())
-    tn = int(((~predicted_error) & actual_correct).sum())
-    n_error = int(actual_error.sum())
-    n_correct = int(actual_correct.sum())
+    tp = cast_count(weight[predicted_error & actual_error].sum())
+    fp = cast_count(weight[predicted_error & actual_correct].sum())
+    fn = cast_count(weight[(~predicted_error) & actual_error].sum())
+    tn = cast_count(weight[(~predicted_error) & actual_correct].sum())
+    n_error = cast_count(weight[actual_error].sum())
+    n_correct = cast_count(weight[actual_correct].sum())
     return {
         "metric_semantics": METRIC_SEMANTICS_VERSION,
         "positive_class": "incorrect_identification",
@@ -115,6 +134,30 @@ def evaluate_at_threshold(stored_labels, trust_scores, error_threshold):
         "error_recall": float(tp / n_error) if n_error else None,
         "correct_recall": float(tn / n_correct) if n_correct else None,
         "error_precision": float(tp / (tp + fp)) if tp + fp else None,
+    }
+
+
+def evaluate_ranking(stored_labels, trust_scores, sample_weight=None):
+    """ROC-AUC and error PR-AUC, optionally under bootstrap row weights."""
+    from sklearn.metrics import average_precision_score, roc_auc_score
+
+    error_truth, error_score = as_error_detection(stored_labels, trust_scores)
+    if sample_weight is not None:
+        sample_weight = np.asarray(sample_weight, dtype="f8")
+        if sample_weight.shape != error_truth.shape:
+            raise ValueError(
+                "sample_weight/stored_labels shape mismatch: "
+                f"{sample_weight.shape} vs {error_truth.shape}")
+        if (not np.isfinite(sample_weight).all()
+                or (sample_weight < 0).any()):
+            raise ValueError("sample_weight must be finite and non-negative")
+    return {
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+        "roc_auc": float(roc_auc_score(
+            error_truth, error_score, sample_weight=sample_weight)),
+        "error_pr_auc": float(average_precision_score(
+            error_truth, error_score, sample_weight=sample_weight)),
     }
 
 
@@ -139,16 +182,10 @@ def fnr_at_fpr5(stored_labels, trust_scores):
 
 def evaluate_oof(stored_labels, trust_scores):
     """Pooled OOF ranking and fixed-FPR metrics under canonical semantics."""
-    from sklearn.metrics import average_precision_score, roc_auc_score
-
-    error_truth, error_score = as_error_detection(stored_labels, trust_scores)
+    ranking = evaluate_ranking(stored_labels, trust_scores)
     points = working_points(stored_labels, trust_scores)
     return {
-        "metric_semantics": METRIC_SEMANTICS_VERSION,
-        "positive_class": "incorrect_identification",
-        "roc_auc": float(roc_auc_score(error_truth, error_score)),
-        "error_pr_auc": float(
-            average_precision_score(error_truth, error_score)),
+        **ranking,
         "fnr_at_fpr5": float(points["fpr_5"]["fnr"]),
         "error_recall_at_fpr10": float(
             points["fpr_10"]["error_recall"]),

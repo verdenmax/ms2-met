@@ -155,6 +155,29 @@ def test_inner_split_no_groups_branch():
     assert len(tr2) + len(val) == len(tr_idx)
 
 
+def test_predefined_splits_preserve_group_assignments():
+    import cv_train
+    groups = pd.Series(["a", "a", "b", "b", "c", "c", "d", "d"])
+    fold_ids = np.array([0, 0, 1, 1, 0, 0, 1, 1])
+    splits = cv_train._predefined_cv_splits(
+        fold_ids, len(fold_ids), 2, groups=groups)
+    assert [test.tolist() for _, test in splits] == [
+        [0, 1, 4, 5], [2, 3, 6, 7]]
+    with pytest.raises(ValueError, match="split at least one group"):
+        cv_train._predefined_cv_splits(
+            np.array([0, 1, 1, 1, 0, 0, 1, 1]), 8, 2,
+            groups=groups)
+
+
+def test_predefined_inner_split_rejects_outer_overlap():
+    import cv_train
+    groups = pd.Series(["a", "b", "c", "d"])
+    with pytest.raises(ValueError, match="outer OOF"):
+        cv_train._predefined_inner_split(
+            np.array([0, 1]), np.array([2, 3]),
+            np.array([False, True, True, False]), 4, groups=groups)
+
+
 @requires_lgb
 def test_main_writes_outputs(tmp_path):
     import cv_train, yaml

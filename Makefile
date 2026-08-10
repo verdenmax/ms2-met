@@ -30,6 +30,9 @@ CV_CONFIG_DIR ?= $(CV_OUTPUT_ROOT)/configs
 CV_FEATURE_ARM ?= evidence_all
 CV_OVERWRITE ?= 0
 CV_OVERWRITE_FLAG = $(if $(filter 1 true yes,$(CV_OVERWRITE)),--overwrite,)
+FIXED_NEGPOOL_OUTPUT_ROOT ?= $(CV_OUTPUT_ROOT)/fixed-negpool
+FIXED_NEGPOOL_BOOTSTRAPS ?= 1000
+FIXED_NEGPOOL_TEST_FRACTION ?= 0.20
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -211,6 +214,8 @@ help:
 	@echo "  make train-cv-neg20-all 6 个 neg20 CV 实验"
 	@echo "  make train-cv-all FEATURE_ROOT=/path/to/results  30 个 evidence_all CV 实验"
 	@echo "  make train-cv-core-all FEATURE_ROOT=/path/to/results  30 个 evidence_core CV 实验"
+	@echo "  make train-fixed-test-negpool-2da FEATURE_ROOT=/path/to/results  固定 E20 测试集比较 M5/M10/M20"
+	@echo "  make train-fixed-test-negpool-all FEATURE_ROOT=/path/to/results  三数据集固定测试实验"
 	@echo ""
 	@echo "  Formal MS1/MS2 ablation（共同队列 + 注册表特征组）："
 	@echo "  make train-ablation-neg20-2da FEATURE_ROOT=/path/to/results  2da 预跑（8 组）"
@@ -1039,6 +1044,15 @@ CV_NEG15_FEATURES = $(FEATURE_ROOT)/baseline_2da_neg15/features.csv \
 CV_NEG20_FEATURES = $(FEATURE_ROOT)/baseline_2da_neg20/features.csv \
                     $(FEATURE_ROOT)/baseline_5da_neg20/features.csv \
                     $(FEATURE_ROOT)/baseline_normal_neg20/features.csv
+FIXED_NEGPOOL_2DA_FEATURES = $(FEATURE_ROOT)/baseline_2da_neg05/features.csv \
+                            $(FEATURE_ROOT)/baseline_2da_neg10/features.csv \
+                            $(FEATURE_ROOT)/baseline_2da_neg20/features.csv
+FIXED_NEGPOOL_5DA_FEATURES = $(FEATURE_ROOT)/baseline_5da_neg05/features.csv \
+                            $(FEATURE_ROOT)/baseline_5da_neg10/features.csv \
+                            $(FEATURE_ROOT)/baseline_5da_neg20/features.csv
+FIXED_NEGPOOL_NORMAL_FEATURES = $(FEATURE_ROOT)/baseline_normal_neg05/features.csv \
+                               $(FEATURE_ROOT)/baseline_normal_neg10/features.csv \
+                               $(FEATURE_ROOT)/baseline_normal_neg20/features.csv
 
 CLEAN_YAMLS := $(SPEC_CFG)/in_2da_clean.yaml \
                $(SPEC_CFG)/in_5da_clean.yaml \
@@ -1103,6 +1117,8 @@ train-cv-2da: $(FEATURE_ROOT)/baseline_2da_clean/features.csv
 .PHONY: train-cv-clean-all train-cv-neg05-all train-cv-neg10-all
 .PHONY: train-cv-neg15-all train-cv-neg20-all train-cv-all train-cv-core-all
 .PHONY: train-ablation-neg20-2da train-ablation-neg20
+.PHONY: train-fixed-test-negpool-2da train-fixed-test-negpool-5da
+.PHONY: train-fixed-test-negpool-normal train-fixed-test-negpool-all
 
 CV_CLEAN_YAMLS := cv_in_2da_clean cv_in_5da_clean cv_in_normal_clean \
                   cv_cross_test_2da_clean cv_cross_test_5da_clean cv_cross_test_normal_clean
@@ -1244,6 +1260,57 @@ train-cv-core-all:
 	    CV_FEATURE_ARM=evidence_core \
 	    CV_OUTPUT_ROOT="$(CV_OUTPUT_ROOT)/evidence_core" \
 	    CV_CONFIG_DIR="$(CV_OUTPUT_ROOT)/evidence_core/configs"
+
+# Controlled nested-negative experiment. All three models use the neg20
+# feature table, the same correct rows, one sequence-held-out E20 test, and
+# the same predeclared outer/inner group assignments.
+train-fixed-test-negpool-2da: $(FIXED_NEGPOOL_2DA_FEATURES)
+	@mkdir -p "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs"
+	$(PY) tools/spec_trainer/gen_cv_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/reference-cv" \
+	    --config-dir "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs" \
+	    --feature-arm evidence_all
+	$(PY) tools/spec_trainer/src/fixed_negpool.py \
+	    --config "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
+	    --feature-root "$(FEATURE_ROOT)" --dataset 2da \
+	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/2da" \
+	    --test-fraction "$(FIXED_NEGPOOL_TEST_FRACTION)" \
+	    --bootstrap-reps "$(FIXED_NEGPOOL_BOOTSTRAPS)" $(CV_OVERWRITE_FLAG)
+
+train-fixed-test-negpool-5da: $(FIXED_NEGPOOL_5DA_FEATURES)
+	@mkdir -p "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs"
+	$(PY) tools/spec_trainer/gen_cv_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/reference-cv" \
+	    --config-dir "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs" \
+	    --feature-arm evidence_all
+	$(PY) tools/spec_trainer/src/fixed_negpool.py \
+	    --config "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs/cv_in_5da_neg20.yaml" \
+	    --feature-root "$(FEATURE_ROOT)" --dataset 5da \
+	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/5da" \
+	    --test-fraction "$(FIXED_NEGPOOL_TEST_FRACTION)" \
+	    --bootstrap-reps "$(FIXED_NEGPOOL_BOOTSTRAPS)" $(CV_OVERWRITE_FLAG)
+
+train-fixed-test-negpool-normal: $(FIXED_NEGPOOL_NORMAL_FEATURES)
+	@mkdir -p "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs"
+	$(PY) tools/spec_trainer/gen_cv_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/reference-cv" \
+	    --config-dir "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs" \
+	    --feature-arm evidence_all
+	$(PY) tools/spec_trainer/src/fixed_negpool.py \
+	    --config "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs/cv_in_normal_neg20.yaml" \
+	    --feature-root "$(FEATURE_ROOT)" --dataset normal \
+	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/normal" \
+	    --test-fraction "$(FIXED_NEGPOOL_TEST_FRACTION)" \
+	    --bootstrap-reps "$(FIXED_NEGPOOL_BOOTSTRAPS)" $(CV_OVERWRITE_FLAG)
+
+train-fixed-test-negpool-all:
+	$(MAKE) train-fixed-test-negpool-2da
+	$(MAKE) train-fixed-test-negpool-5da
+	$(MAKE) train-fixed-test-negpool-normal
+	@echo "[done] fixed E20 test comparison complete for 2da/5da/normal"
 
 train-neg05-all: $(NEG05_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures

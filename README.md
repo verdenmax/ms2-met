@@ -141,6 +141,25 @@ cross-test 的 ROC-AUC/error PR-AUC 使用外部 ensemble 连续分数。测试�
 sequence 有重叠，该实验只能解释为采集条件 domain holdout，而不是未见肽段
 泛化。
 
+要区分“负样本增加确实提高分辨能力”和“仅因评估分母/样本构成改变而数值
+变化”，使用固定 E20 测试实验。它先从 neg20 主表按 sequence 冻结一次 20%
+测试集，再用完全相同的正确训练样本和折叠分别训练 M5、M10、M20：
+
+```bash
+make train-fixed-test-negpool-2da \
+  PY=/home/verden/.conda/envs/jianyan/bin/python \
+  FEATURE_ROOT=/path/to/ms2-met-runs-08-08 \
+  FIXED_NEGPOOL_OUTPUT_ROOT=/path/to/output/fixed-negpool
+```
+
+确认 2da 后，在同一输出根目录继续运行
+`make train-fixed-test-negpool-5da` 和 `make train-fixed-test-negpool-normal`；
+若三套数据都尚未运行，则可直接使用 `make train-fixed-test-negpool-all`。程序会先验证
+`E5 ⊂ E10 ⊂ E20`、三档正确样本完全一致、共享行的 152 个正式特征完全
+一致；任何失败都会在训练前终止。主比较写入 `fixed_test_summary.csv`，三个
+错误难度层的结果写入 `tier_summary.csv`，按 sequence 的 1000 次配对 cluster
+bootstrap 写入 `paired_bootstrap.csv`。清单和固定折叠位于 `manifests/`。
+
 ### Evaluation convention / 评价指标口径
 
 CSV 与模型为兼容既有数据，仍使用 `label=1` 表示正确鉴定、模型高分表示

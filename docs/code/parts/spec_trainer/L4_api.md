@@ -28,9 +28,11 @@
 
 - `read_dataframe(paths) -> DataFrame`：合并特征表，并增加只用于审计的
   `__source_file/__source_row`，不作为模型输入。
-- `assemble_oof(..., return_fold_ids=False)`：按 sequence 分组完成外层 CV 和
+- `assemble_oof(..., return_fold_ids=False, predefined_fold_ids=None,
+  predefined_inner_valid=None)`：按 sequence 分组完成外层 CV 和
   分组早停；保存每折模型、OOF 分数、best iteration，以及每个成员模型在自身
-  outer-OOF 上得到的 FPR5/FPR10 校准阈值。
+  outer-OOF 上得到的 FPR5/FPR10 校准阈值。两个 predefined 参数用于严格配对
+  实验，传入时会校验折号完整性和 group 不跨折。
 - `predict_ensemble(model_paths, X)`：返回成员 trust score 均值；DataFrame
   输入会严格验证列名及顺序。
 - `evaluate_cross_test(..., fold_metrics=None, return_details=False)`：连续
@@ -40,6 +42,15 @@
 - `main(argv=None)`：默认拒绝覆盖已有 bundle；`--overwrite` 显式允许重跑。
   原子写入 JSON、suspects、OOF/test 逐样本分数；JSON 还记录缺失模式、来源
   分层指标、sequence overlap、每折迭代数、配置/Git/依赖/input fingerprint。
+
+## tools/spec_trainer/src/fixed_negpool.py
+
+- `prepare_fixed_negpool(paths, cfg, ...) -> PreparedFixedNegpool`：验证三档样本
+  身份、嵌套、正确样本一致性及共享特征一致性；从 neg20 主表构造共同 cohort、
+  固定 sequence 测试集及可复用 outer/inner fold map。
+- `run_fixed_negpool(config_path, feature_root, dataset, output_root, ...)`：训练
+  M5/M10/M20，在相同 E20 测试行及三个错误层上评估，并输出 sequence-cluster
+  paired bootstrap、逐样本分数、manifest、模型和 provenance。
 
 ## tools/spec_trainer/src/models/base_model.py
 

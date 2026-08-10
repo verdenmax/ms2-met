@@ -71,6 +71,19 @@ make train-cv-all \
 JSON、suspects 和日志的输出位置。默认值分别为 `runs` 和
 `runs/spec_trainer`。
 
+## 固定 E20 测试集比较负样本池
+
+```bash
+make train-fixed-test-negpool-2da \
+  FEATURE_ROOT=/path/to/feature-snapshot \
+  FIXED_NEGPOOL_OUTPUT_ROOT=/path/to/fixed-negpool-output
+```
+
+该入口严格验证 E5/E10/E20 的嵌套关系和共享特征值，用 neg20 主表冻结一个
+sequence-held-out 测试集，并以同一正确样本、同一 outer/inner fold map 训练
+M5/M10/M20。结果包含相同 E20 测试集的主表、分层错误集结果及按 sequence 的
+1000 次配对 bootstrap；可用 `FIXED_NEGPOOL_BOOTSTRAPS=<N>` 调整次数。
+
 ## CV 决策阈值
 
 为兼容现有数据和模型，CSV 仍保存 `label=1`（正确鉴定），模型仍输出

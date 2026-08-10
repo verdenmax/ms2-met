@@ -88,6 +88,20 @@ cross-test 将测试标签导出的 working point 标记为 retrospective oracle
 逐行分数、每折 best iteration、按类别/来源的缺失率、sequence 重叠和环境
 provenance；默认拒绝覆盖已完成 bundle。
 
+## 固定测试集的嵌套负样本池实验
+
+`make train-fixed-test-negpool-2da`（或 `...-all`）以 neg20 特征表为唯一主表，
+将错误样本划分为 `T5=E5`、`T5_10=E10-E5`、`T10_20=E20-E10`。程序先按
+sequence 冻结一次完整 E20 测试集，再训练：M5 只含 T5，M10 含 T5+T5_10，
+M20 含全部三层；正确训练行、特征、cohort、外层 fold 及折内 early-stopping
+分组在三个模型间完全相同。
+
+所有模型都在同一测试行上报告 ROC-AUC、error PR-AUC 和锁定的
+FNR@FPR5/Recall@FPR10，并额外在三个错误层分别评估。差值使用固定测试集上
+按 sequence 的配对 cluster bootstrap，不能把嵌套的 5%/10%/20% 池当作三次
+独立重复。测试标签不参与阈值选择；阈值仍来自每个成员自己的 outer OOF，
+外部判定仍为成员多数投票。
+
 ## rescore 多阈值评估（`rescore.py`）
 
 - 仅针对 LightGBM `.txt` 模型；`discover_models` 扫 `--models-dir/*.txt`，可用 `--models` 过滤。

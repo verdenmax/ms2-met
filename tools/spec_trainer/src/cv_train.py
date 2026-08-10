@@ -388,8 +388,66 @@ def _validate_split_counts(fold, split_counts, min_class_groups, grouped):
                     f"minority-class sequences. Counts: {counts}")
 
 
+def _predefined_cv_splits(fold_ids, n_rows, n_folds, groups=None):
+    """Validate and expand a reusable row-level outer-fold assignment."""
+    raw = np.asarray(fold_ids)
+    if raw.shape != (n_rows,):
+        raise ValueError(
+            f"predefined_fold_ids must have shape ({n_rows},), got "
+            f"{raw.shape}")
+    if not np.issubdtype(raw.dtype, np.integer):
+        if not np.isfinite(raw.astype("f8")).all() or not np.equal(
+                raw, raw.astype(int)).all():
+            raise ValueError("predefined_fold_ids must contain integers")
+    fold_ids = raw.astype(int)
+    expected = set(range(n_folds))
+    actual = set(fold_ids.tolist())
+    if actual != expected:
+        raise ValueError(
+            f"predefined_fold_ids must contain exactly {sorted(expected)}, "
+            f"got {sorted(actual)}")
+    if groups is not None:
+        assigned = pd.DataFrame({
+            "group": np.asarray(groups), "fold": fold_ids,
+        }).groupby("group", sort=False)["fold"].nunique()
+        if (assigned > 1).any():
+            raise ValueError(
+                "predefined_fold_ids split at least one group across folds")
+    return [
+        (np.flatnonzero(fold_ids != fold),
+         np.flatnonzero(fold_ids == fold))
+        for fold in range(n_folds)
+    ]
+
+
+def _predefined_inner_split(tr_idx, te_idx, mask, n_rows, groups=None):
+    """Apply one reusable inner-validation assignment for an outer fold."""
+    mask = np.asarray(mask)
+    if mask.shape != (n_rows,):
+        raise ValueError(
+            f"predefined inner-valid mask must have shape ({n_rows},), got "
+            f"{mask.shape}")
+    if mask.dtype != bool:
+        if not set(np.unique(mask).tolist()).issubset({0, 1, False, True}):
+            raise ValueError("predefined inner-valid mask must be boolean")
+        mask = mask.astype(bool)
+    if mask[te_idx].any():
+        raise ValueError(
+            "predefined inner-valid mask marks rows from the outer OOF fold")
+    val = tr_idx[mask[tr_idx]]
+    tr2 = tr_idx[~mask[tr_idx]]
+    if not len(val) or not len(tr2):
+        raise ValueError("predefined inner split has an empty train/valid side")
+    if groups is not None:
+        if set(groups.iloc[tr2]).intersection(set(groups.iloc[val])):
+            raise ValueError(
+                "predefined inner-valid mask splits a group across train/valid")
+    return tr2, val
+
+
 def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
-                 return_fold_ids=False):
+                 return_fold_ids=False, predefined_fold_ids=None,
+                 predefined_inner_valid=None):
     """Train one model per fold, collect leak-free OOF preds, save fold models.
 
     Returns (oof_proba, fold_metrics, model_paths), plus fold IDs when
@@ -408,14 +466,31 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
         raise ValueError("training.min_class_groups_per_split must be >= 1")
     grp_vals = None if groups is None else groups.values
 
-    splits = make_cv_splits(y.values, grp_vals, n_folds=n_folds, seed=seed)
+    if predefined_fold_ids is None:
+        splits = make_cv_splits(
+            y.values, grp_vals, n_folds=n_folds, seed=seed)
+    else:
+        splits = _predefined_cv_splits(
+            predefined_fold_ids, len(y), n_folds, groups=groups)
+    if predefined_inner_valid is not None:
+        missing_masks = set(range(n_folds)) - set(predefined_inner_valid)
+        if missing_masks:
+            raise ValueError(
+                "predefined_inner_valid is missing outer folds: "
+                f"{sorted(missing_masks)}")
     oof = np.full(len(y), np.nan)
     oof_folds = np.full(len(y), -1, dtype=int)
     fold_metrics, model_paths = [], []
 
     for k, (tr_idx, te_idx) in enumerate(splits):
         # 折内早停验证集（分组，避免污染 OOF 折）
-        tr2, val = _inner_split(X, y, groups, tr_idx, valid_size, seed + k)
+        if predefined_inner_valid is None:
+            tr2, val = _inner_split(
+                X, y, groups, tr_idx, valid_size, seed + k)
+        else:
+            tr2, val = _predefined_inner_split(
+                tr_idx, te_idx, predefined_inner_valid[k], len(y),
+                groups=groups)
         counts = {
             "train": _split_counts(y, groups, tr2),
             "valid": _split_counts(y, groups, val),
