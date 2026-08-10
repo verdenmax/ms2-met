@@ -33,6 +33,11 @@ output:
   result_path: runs/spec_trainer/results/cv_in_5da_neg10.cv.json
 operating_point:
   target_fpr: 0.1
+evaluation_semantics:
+  positive_class: incorrect_identification
+  stored_label: 1=correct_identification, 0=incorrect_identification
+  model_score: trust_score=P(correct_identification)
+  metric_score: error_score=1-trust_score
 audit:
   suspect_threshold: 0.9
   suspect_top_n: 200

@@ -71,6 +71,12 @@ def build_ablation_config(*, feature_root, output_root, dataset, fdr, arm):
             "model_path": str(output_root / "models" / f"{name}.txt"),
             "result_path": str(output_root / "results" / f"{name}.cv.json"),
         },
+        "evaluation_semantics": {
+            "positive_class": "incorrect_identification",
+            "stored_label": "1=correct_identification, 0=incorrect_identification",
+            "model_score": "trust_score=P(correct_identification)",
+            "metric_score": "error_score=1-trust_score",
+        },
         "operating_point": {"target_fpr": 0.10},
         "audit": {"suspect_threshold": 0.9, "suspect_top_n": 200},
     }

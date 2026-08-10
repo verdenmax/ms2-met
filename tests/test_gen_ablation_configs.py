@@ -37,6 +37,8 @@ def test_build_ablation_config_uses_external_root_and_common_cohort(tmp_path):
     assert cfg["training"]["cv_folds"] == 5
     assert cfg["training"]["num_boost_round"] == 2000
     assert cfg["training"]["early_stopping_rounds"] == 200
+    assert cfg["evaluation_semantics"]["positive_class"] == \
+        "incorrect_identification"
 
 
 def test_generate_configs_writes_one_yaml_per_dataset_and_arm(tmp_path):

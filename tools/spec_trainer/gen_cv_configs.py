@@ -32,6 +32,12 @@ def to_cv_config(src, name):
     cfg["training"]["valid_size"] = 0.15
     cfg["training"]["min_class_groups_per_split"] = 5
     cfg["operating_point"] = {"target_fpr": 0.10}
+    cfg["evaluation_semantics"] = {
+        "positive_class": "incorrect_identification",
+        "stored_label": "1=correct_identification, 0=incorrect_identification",
+        "model_score": "trust_score=P(correct_identification)",
+        "metric_score": "error_score=1-trust_score",
+    }
     cfg["audit"] = {"suspect_threshold": 0.9, "suspect_top_n": 200}
     cv_name = "cv_" + name
     cfg["output"] = {

@@ -1,18 +1,52 @@
-"""Pure, lightgbm-free helpers for cross-validated training.
+"""Pure helpers for grouped CV and error-identification evaluation.
 
-Split / metric / audit / ensemble-averaging logic lives here so it can be
-unit-tested without importing lightgbm (mirrors the holdout.py / feature_cols.py
-extraction pattern in this package).
+Storage/training compatibility
+------------------------------
+Feature CSVs and trained models keep the historical convention
+``label=1`` / high model score = a correct, supported identification.
+
+Evaluation convention
+---------------------
+Every public metric in this module follows the thesis convention:
+
+* actual positive = an incorrect identification;
+* actual negative = a correct identification;
+* predicted positive = flagged as incorrect/suspicious;
+* false positive = a correct identification flagged as incorrect;
+* false negative = an incorrect identification accepted as correct.
+
+The conversion is explicit: ``error_truth = 1 - stored_label`` and
+``error_score = 1 - trust_score``.
 """
+from __future__ import annotations
+
 import numpy as np
 from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 
 
-def make_cv_splits(y, groups, n_folds=5, seed=42):
-    """Return a list of (train_idx, test_idx) positional index arrays.
+METRIC_SEMANTICS_VERSION = "error_identification_positive_v1"
 
-    With groups: StratifiedGroupKFold — no group spans a fold's train+test
-    (prevents same-peptide leakage). Without groups (None): StratifiedKFold.
+
+def as_error_detection(stored_labels, trust_scores):
+    """Return ``(error_truth, error_score)`` under the canonical convention."""
+    labels = np.asarray(stored_labels)
+    scores = np.asarray(trust_scores, dtype="f8")
+    if labels.shape != scores.shape:
+        raise ValueError(
+            f"stored_labels/trust_scores shape mismatch: "
+            f"{labels.shape} vs {scores.shape}")
+    if not set(np.unique(labels).tolist()).issubset({0, 1}):
+        raise ValueError("stored_labels must contain only 0 (error) and 1 (correct)")
+    if not np.isfinite(scores).all():
+        raise ValueError("trust_scores contains NaN or infinite values")
+    return 1 - labels.astype(int), 1.0 - scores
+
+
+def make_cv_splits(y, groups, n_folds=5, seed=42):
+    """Return positional grouped/stratified CV splits.
+
+    Stratification may use the stored 0/1 labels because complementing a
+    binary label does not change the split composition.
     """
     y = np.asarray(y)
     dummy = np.zeros(len(y))
@@ -26,149 +60,126 @@ def make_cv_splits(y, groups, n_folds=5, seed=42):
     return list(splitter.split(dummy, y))
 
 
-def working_points(y_true, y_score, fpr_targets=(0.05, 0.10, 0.20)):
-    """Negative-quantile working points — same convention as
-    tools/eval_baseline.py:compute_working_points (FPR via neg quantile).
-    Returns {"neg_recall_95/90/80": {threshold, pos_recall, neg_recall}}.
-    """
-    y_true = np.asarray(y_true)
-    y_score = np.asarray(y_score)
-    pos = y_score[y_true == 1]
-    neg = y_score[y_true == 0]
-    out = {}
-    for fpr in fpr_targets:
-        thr = float(np.quantile(neg, 1 - fpr))
-        pos_kept = int((pos >= thr).sum())
-        neg_kept = int((neg >= thr).sum())
-        out[f"neg_recall_{int((1 - fpr) * 100)}"] = {
-            "threshold": thr,
-            "pos_recall": float(pos_kept / max(len(pos), 1)),
-            "neg_recall": float(1 - neg_kept / max(len(neg), 1)),
-        }
-    return out
+def threshold_at_fpr(stored_labels, trust_scores, target_fpr=0.10):
+    """Select an error-score threshold with empirical FPR <= target.
 
-
-def threshold_at_fpr(y_true, y_score, target_fpr=0.10):
-    """Select the most permissive negative-calibrated threshold with
-    empirical FPR <= ``target_fpr``.
-
-    Scores greater than or equal to the returned threshold are classified as
-    positive.  Unlike a plain quantile, this implementation handles ties at
-    the boundary conservatively: all samples tied with the first disallowed
-    negative are rejected.  Consequently the calibration-set FPR is
-    guaranteed not to exceed the requested target (it can be lower).
+    FPR is the fraction of actually correct identifications that are flagged
+    as errors. The returned threshold is on ``error_score = 1-trust_score``;
+    the inclusive decision rule is ``error_score >= threshold => error``.
+    Boundary ties are rejected conservatively as a whole.
     """
     if not 0.0 <= target_fpr < 1.0:
         raise ValueError(
             f"target_fpr must be in [0, 1), got {target_fpr!r}")
-
-    y_true = np.asarray(y_true)
-    y_score = np.asarray(y_score, dtype="f8")
-    if y_true.shape != y_score.shape:
+    error_truth, error_score = as_error_detection(stored_labels, trust_scores)
+    correct_scores = np.sort(error_score[error_truth == 0])[::-1]
+    if len(correct_scores) == 0:
         raise ValueError(
-            f"y_true/y_score shape mismatch: {y_true.shape} vs {y_score.shape}")
-    if not np.isfinite(y_score).all():
-        raise ValueError("y_score contains NaN or infinite values")
+            "cannot select an FPR threshold without correct identifications")
 
-    neg = np.sort(y_score[y_true == 0])[::-1]
-    if len(neg) == 0:
-        raise ValueError("cannot select an FPR threshold without negatives")
-
-    # At most floor(target_fpr * n_neg) negatives may pass.  The item at
-    # ``allowed_fp`` is the first disallowed score; stepping just above it
-    # also excludes all ties at that boundary.
-    allowed_fp = int(np.floor(target_fpr * len(neg)))
-    first_disallowed = neg[allowed_fp]
+    allowed_fp = int(np.floor(target_fpr * len(correct_scores)))
+    first_disallowed = correct_scores[allowed_fp]
     threshold = float(np.nextafter(first_disallowed, np.inf))
-
-    observed_fpr = float((neg >= threshold).sum() / len(neg))
+    observed_fpr = float(
+        (correct_scores >= threshold).sum() / len(correct_scores))
     assert observed_fpr <= target_fpr + np.finfo(float).eps
     return threshold
 
 
-def evaluate_at_threshold(y_true, y_score, threshold):
-    """Classification metrics for the inclusive ``score >= threshold`` rule."""
-    y_true = np.asarray(y_true)
-    y_score = np.asarray(y_score, dtype="f8")
-    if y_true.shape != y_score.shape:
-        raise ValueError(
-            f"y_true/y_score shape mismatch: {y_true.shape} vs {y_score.shape}")
+def evaluate_at_threshold(stored_labels, trust_scores, error_threshold):
+    """Compute a confusion matrix with incorrect identifications positive."""
+    error_truth, error_score = as_error_detection(stored_labels, trust_scores)
+    predicted_error = error_score >= error_threshold
+    actual_error = error_truth == 1
+    actual_correct = error_truth == 0
 
-    pred = y_score >= threshold
-    pos = y_true == 1
-    neg = y_true == 0
-    n_pos, n_neg = int(pos.sum()), int(neg.sum())
-    tp = int((pred & pos).sum())
-    fp = int((pred & neg).sum())
-    fn = n_pos - tp
-    tn = n_neg - fp
+    tp = int((predicted_error & actual_error).sum())
+    fp = int((predicted_error & actual_correct).sum())
+    fn = int(((~predicted_error) & actual_error).sum())
+    tn = int(((~predicted_error) & actual_correct).sum())
+    n_error = int(actual_error.sum())
+    n_correct = int(actual_correct.sum())
     return {
-        "threshold": float(threshold),
-        "n_pos": n_pos,
-        "n_neg": n_neg,
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+        "error_threshold": float(error_threshold),
+        "trust_threshold": float(1.0 - error_threshold),
+        "n_actual_error": n_error,
+        "n_actual_correct": n_correct,
         "tp": tp,
         "fp": fp,
         "fn": fn,
         "tn": tn,
-        "fpr": float(fp / n_neg) if n_neg else None,
-        "neg_recall": float(tn / n_neg) if n_neg else None,
-        "pos_recall": float(tp / n_pos) if n_pos else None,
-        "fnr": float(fn / n_pos) if n_pos else None,
-        "pos_precision": float(tp / (tp + fp)) if tp + fp else None,
+        "fpr": float(fp / n_correct) if n_correct else None,
+        "fnr": float(fn / n_error) if n_error else None,
+        "error_recall": float(tp / n_error) if n_error else None,
+        "correct_recall": float(tn / n_correct) if n_correct else None,
+        "error_precision": float(tp / (tp + fp)) if tp + fp else None,
     }
 
 
-def fnr_at_fpr5(y_true, y_score):
-    """FNR at FPR<=5% = 1 - pos_recall at the neg-95% working point."""
-    return 1.0 - working_points(y_true, y_score)["neg_recall_95"]["pos_recall"]
+def working_points(stored_labels, trust_scores,
+                   fpr_targets=(0.01, 0.05, 0.10)):
+    """Metrics at fixed false-alarm rates on correct identifications."""
+    out = {}
+    for target in fpr_targets:
+        threshold = threshold_at_fpr(stored_labels, trust_scores, target)
+        metrics = evaluate_at_threshold(
+            stored_labels, trust_scores, threshold)
+        metrics["target_fpr"] = float(target)
+        out[f"fpr_{int(round(target * 100))}"] = metrics
+    return out
 
 
-def evaluate_oof(y_true, oof_proba):
-    """Summary metrics on out-of-fold predictions.
+def fnr_at_fpr5(stored_labels, trust_scores):
+    """Missed-error rate when <=5% of correct IDs are falsely flagged."""
+    return working_points(
+        stored_labels, trust_scores, fpr_targets=(0.05,))["fpr_5"]["fnr"]
 
-    The two PR-AUC values use average precision, the standard step-wise area
-    summary for a precision-recall curve. ``pr_auc_neg`` treats the minority
-    negative identifications as the event of interest and is therefore the
-    primary imbalance-sensitive metric; ``pr_auc_pos`` is retained for the
-    model's native positive-confidence direction.
-    """
+
+def evaluate_oof(stored_labels, trust_scores):
+    """Pooled OOF ranking and fixed-FPR metrics under canonical semantics."""
     from sklearn.metrics import average_precision_score, roc_auc_score
-    y_true = np.asarray(y_true)
-    oof_proba = np.asarray(oof_proba)
+
+    error_truth, error_score = as_error_detection(stored_labels, trust_scores)
+    points = working_points(stored_labels, trust_scores)
     return {
-        "auc": float(roc_auc_score(y_true, oof_proba)),
-        "pr_auc_pos": float(average_precision_score(y_true, oof_proba)),
-        "pr_auc_neg": float(average_precision_score(
-            1 - y_true, 1.0 - oof_proba)),
-        "fnr_at_fpr5": float(fnr_at_fpr5(y_true, oof_proba)),
-        "working_points": working_points(y_true, oof_proba),
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+        "roc_auc": float(roc_auc_score(error_truth, error_score)),
+        "error_pr_auc": float(
+            average_precision_score(error_truth, error_score)),
+        "fnr_at_fpr5": float(points["fpr_5"]["fnr"]),
+        "error_recall_at_fpr10": float(
+            points["fpr_10"]["error_recall"]),
+        "working_points": points,
     }
 
 
-def audit_labels(df, oof_proba, label_col="label", threshold=0.9, top_n=200,
+def audit_labels(df, trust_scores, label_col="label", threshold=0.9,
+                 top_n=200,
                  id_cols=("sequence", "charge", "label_type"),
-                 diag_cols=("all_p75", "precursor_pearson", "all_cosine_mean",
+                 diag_cols=("all_p75", "precursor_pearson",
+                            "all_cosine_mean",
                             "all_heavy_shape_irregularity_max")):
-    """Negatives ranked by how 'positive-looking' their OOF prob is.
+    """Incorrect references ranked by erroneous model support.
 
-    Triage list for manual review (NOT auto-relabel): a negative whose
-    out-of-fold prob >= threshold either is a genuine hard negative or a
-    mislabel. Returns id+diagnostic cols (only those present), oof desc,
-    capped at top_n.
+    These are false-negative candidates under the canonical convention: known
+    errors that receive a high trust score and would be accepted as correct.
     """
     work = df.copy()
-    work["oof_proba"] = np.asarray(oof_proba)
-    neg = work[work[label_col] == 0]
-    susp = (neg[neg["oof_proba"] >= threshold]
-            .sort_values("oof_proba", ascending=False)
-            .head(top_n))
-    keep = ([c for c in id_cols if c in susp.columns]
-            + ["oof_proba"]
-            + [c for c in diag_cols if c in susp.columns])
-    return susp[keep].reset_index(drop=True)
+    work["trust_score"] = np.asarray(trust_scores)
+    errors = work[work[label_col] == 0]
+    suspects = (errors[errors["trust_score"] >= threshold]
+                .sort_values("trust_score", ascending=False)
+                .head(top_n))
+    keep = ([c for c in id_cols if c in suspects.columns]
+            + ["trust_score"]
+            + [c for c in diag_cols if c in suspects.columns])
+    return suspects[keep].reset_index(drop=True)
 
 
 def average_proba(proba_list):
-    """Mean of per-fold predict_proba arrays = ensemble score for new data."""
+    """Mean of per-fold trust-score arrays for an external sample set."""
     arr = np.vstack([np.asarray(p, dtype="f8") for p in proba_list])
     return arr.mean(axis=0)

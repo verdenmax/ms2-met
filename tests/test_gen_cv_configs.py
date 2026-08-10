@@ -22,6 +22,8 @@ def test_to_cv_config_in_sample():
     assert cv["training"]["valid_size"] == 0.15
     assert cv["training"]["min_class_groups_per_split"] == 5
     assert cv["operating_point"] == {"target_fpr": 0.10}
+    assert cv["evaluation_semantics"]["positive_class"] == \
+        "incorrect_identification"
     assert cv["audit"] == {"suspect_threshold": 0.9, "suspect_top_n": 200}
     assert cv["output"]["model_path"] == "runs/spec_trainer/models/cv_in_2da_clean.txt"
     assert cv["output"]["result_path"] == "runs/spec_trainer/results/cv_in_2da_clean.cv.json"

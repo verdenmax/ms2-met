@@ -4,8 +4,10 @@ import yaml
 import json
 import argparse
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
+from sklearn.metrics import (accuracy_score, average_precision_score,
+                             roc_auc_score)
 import os
+from cv_core import METRIC_SEMANTICS_VERSION, as_error_detection
 
 
 def load_data(file_paths, feature_cols, target_col):
@@ -17,11 +19,20 @@ def load_data(file_paths, feature_cols, target_col):
 
 
 def evaluate(y_true, y_pred, y_proba=None):
+    error_truth = 1 - y_true.astype(int)
+    predicted_error = 1 - y_pred.astype(int)
     metrics = {
-        "accuracy": accuracy_score(y_true, y_pred),
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+        "accuracy": accuracy_score(error_truth, predicted_error),
     }
     if y_proba is not None:
-        metrics["auc"] = roc_auc_score(y_true, y_proba)
+        converted_truth, error_score = as_error_detection(y_true, y_proba)
+        metrics["roc_auc"] = roc_auc_score(converted_truth, error_score)
+        metrics["error_pr_auc"] = average_precision_score(
+            converted_truth, error_score)
+        metrics["error_threshold"] = 0.5
+        metrics["trust_threshold"] = 0.5
     return metrics
 
 

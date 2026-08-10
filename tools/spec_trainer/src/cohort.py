@@ -25,8 +25,8 @@ def _class_counts(df, target_col):
         raise ValueError(f"target column {target_col!r} is missing")
     return {
         "n_rows": int(len(df)),
-        "n_pos": int(df[target_col].eq(1).sum()),
-        "n_neg": int(df[target_col].eq(0).sum()),
+        "n_correct": int(df[target_col].eq(1).sum()),
+        "n_error": int(df[target_col].eq(0).sum()),
     }
 
 
@@ -66,7 +66,8 @@ def apply_training_cohort(df, cohort_name, *, target_col="label"):
         "before": _class_counts(df, target_col),
         "after": _class_counts(filtered, target_col),
     }
-    if audit["after"]["n_pos"] == 0 or audit["after"]["n_neg"] == 0:
+    if (audit["after"]["n_correct"] == 0
+            or audit["after"]["n_error"] == 0):
         raise ValueError(
             f"cohort {name!r} removed one class: {audit['after']}")
     return filtered, audit

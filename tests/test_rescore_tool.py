@@ -39,10 +39,19 @@ def _python_exec():
     return sys.executable
 
 
+def _runtime_has_lightgbm() -> bool:
+    """Whether the interpreter used by subprocess integration tests has LGB."""
+    result = subprocess.run(
+        [_python_exec(), "-c", "import lightgbm"],
+        capture_output=True, text=True)
+    return result.returncode == 0
+
+
+_HAS_RUNTIME_LGB = _runtime_has_lightgbm()
+
+
 def test_rescore_threshold_monotonicity():
-    """As threshold increases, neg_recall must monotonically increase
-    (or stay the same), and pos_recall must monotonically decrease (or
-    stay the same). Pure-logic test, no LightGBM."""
+    """Higher error threshold flags fewer IDs as errors."""
     rng = np.random.default_rng(42)
     n = 200
     y_true = np.array([1] * 100 + [0] * 100)
@@ -52,16 +61,14 @@ def test_rescore_threshold_monotonicity():
     ])
 
     thresholds = [0.1, 0.3, 0.5, 0.7, 0.9]
-    prev_neg_recall = -np.inf
-    prev_pos_recall = np.inf
+    prev_correct_recall = -np.inf
+    prev_error_recall = np.inf
     for t in thresholds:
         m = rescore.compute_metrics(y_true, proba, t)
-        assert m["neg_recall"] >= prev_neg_recall, (
-            "neg_recall not monotonic increasing: "
-            "prev={}, current={} at t={}".format(prev_neg_recall, m['neg_recall'], t))
-        assert m["pos_recall"] <= prev_pos_recall
-        prev_neg_recall = m["neg_recall"]
-        prev_pos_recall = m["pos_recall"]
+        assert m["correct_recall"] >= prev_correct_recall
+        assert m["error_recall"] <= prev_error_recall
+        prev_correct_recall = m["correct_recall"]
+        prev_error_recall = m["error_recall"]
 
 
 def test_rescore_invalid_threshold_rejected():
@@ -95,6 +102,8 @@ def _have_artifact(rel_path: str) -> bool:
 
 
 @pytest.mark.skipif(
+    not _HAS_RUNTIME_LGB, reason="lightgbm not installed in runtime interpreter")
+@pytest.mark.skipif(
     not _have_artifact("runs/spec_trainer/models/in_2da_clean.txt"),
     reason="model not trained yet")
 @pytest.mark.skipif(
@@ -121,6 +130,8 @@ def test_rescore_models_filter(tmp_path):
 
 
 @pytest.mark.skipif(
+    not _HAS_RUNTIME_LGB, reason="lightgbm not installed in runtime interpreter")
+@pytest.mark.skipif(
     not _have_artifact("runs/spec_trainer/models/in_2da_clean.txt"),
     reason="model not trained yet")
 @pytest.mark.skipif(
@@ -129,8 +140,8 @@ def test_rescore_models_filter(tmp_path):
 @pytest.mark.skipif(
     not _have_artifact("runs/baseline_2da_clean/features.csv"),
     reason="features.csv not generated yet")
-def test_rescore_in_sample_split_matches_training(tmp_path):
-    """rescore.py at threshold 0.5 reproduces in_2da_clean.json confusion."""
+def test_rescore_in_sample_uses_error_positive_confusion(tmp_path):
+    """Rescore confusion agrees with either legacy or canonical artifact."""
     output = tmp_path / "out.csv"
     result = subprocess.run(
         [_python_exec(), _TOOL,
@@ -153,13 +164,22 @@ def test_rescore_in_sample_split_matches_training(tmp_path):
     ref_tn, ref_fp = ref_cm[0]
     ref_fn, ref_tp = ref_cm[1]
 
-    assert int(r["tn"]) == ref_tn
-    assert int(r["fp"]) == ref_fp
-    assert int(r["fn"]) == ref_fn
-    assert int(r["tp"]) == ref_tp
-    assert abs(float(r["auc"]) - float(ref["auc"])) < 1e-6
+    if ref.get("metric_semantics") == "error_identification_positive_v1":
+        expected = {"tn": ref_tn, "fp": ref_fp,
+                    "fn": ref_fn, "tp": ref_tp}
+    else:
+        # Historical report used stored label=1 (correct) as positive. Class
+        # inversion maps old TN/FP/FN/TP to canonical TP/FN/FP/TN.
+        expected = {"tp": ref_tn, "fn": ref_fp,
+                    "fp": ref_fn, "tn": ref_tp}
+    for key, value in expected.items():
+        assert int(r[key]) == value
+    ref_auc = ref.get("roc_auc", ref.get("auc"))
+    assert abs(float(r["roc_auc"]) - float(ref_auc)) < 1e-6
 
 
+@pytest.mark.skipif(
+    not _HAS_RUNTIME_LGB, reason="lightgbm not installed in runtime interpreter")
 @pytest.mark.skipif(
     not _have_artifact("runs/spec_trainer/models/cross_test_2da_clean.txt"),
     reason="cross_test model not trained yet")
@@ -181,7 +201,7 @@ def test_rescore_cross_test_uses_full_held_file(tmp_path):
     with open(output) as f:
         rows = list(_csv.DictReader(f))
     r = rows[0]
-    test_total = int(r["n_pos"]) + int(r["n_neg"])
+    test_total = int(r["n_actual_error"]) + int(r["n_actual_correct"])
 
     full_csv_rows = sum(
         1 for _ in open(os.path.join(

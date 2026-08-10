@@ -1,4 +1,4 @@
-"""Baseline 评估脚本：用当前 57 个特征跑 5-fold CV，输出 AUC / AUPRC / MCC / negative recall。
+"""Baseline evaluation with incorrect identifications as the positive class.
 
 用法:
     python tools/eval_baseline.py \
@@ -8,7 +8,7 @@
 输出:
     - 5-fold CV 指标（mean ± std）
     - 全数据训练后的特征重要性（gain）
-    - 在 negative_recall 80%/90%/95% 三个工作点上的阈值与对应 positive precision
+    - Error-detection ROC-AUC / PR-AUC and fixed-FPR working points
 """
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ if _PROJECT_ROOT not in sys.path:
 
 from spectrum.species_marker import matches_species_marker
 from tools.spec_trainer.src.feature_cols import prefer_canonical_shift_feature
+from tools.spec_trainer.src.cv_core import (
+    METRIC_SEMANTICS_VERSION, evaluate_oof, working_points)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s")
@@ -121,31 +123,14 @@ def load_features(
 
 
 def compute_working_points(y_true: np.ndarray, y_score: np.ndarray) -> dict:
-    """计算几个工作点：固定 negative recall，看 positive precision/recall。"""
-    fpr_targets = [0.05, 0.10, 0.20]  # neg_recall = 1 - fpr = 0.95/0.90/0.80
-    result = {}
-
-    pos_scores = y_score[y_true == 1]
-    neg_scores = y_score[y_true == 0]
-    for fpr in fpr_targets:
-        thr = float(np.quantile(neg_scores, 1 - fpr))
-        pos_kept = (pos_scores >= thr).sum()
-        pos_total = len(pos_scores)
-        neg_kept = (neg_scores >= thr).sum()
-        result[f"neg_recall_{int((1-fpr)*100)}"] = {
-            "threshold": thr,
-            "pos_recall": float(pos_kept / max(pos_total, 1)),
-            "neg_recall": float(1 - neg_kept / max(len(neg_scores), 1)),
-        }
-    return result
+    """Canonical error-positive fixed-FPR operating points."""
+    return working_points(y_true, y_score)
 
 
 def cv_evaluate(X: pd.DataFrame, y: pd.Series, n_splits: int = 5,
                 random_state: int = 42) -> dict:
     from sklearn.ensemble import HistGradientBoostingClassifier
-    from sklearn.metrics import (
-        average_precision_score, matthews_corrcoef, roc_auc_score,
-    )
+    from sklearn.metrics import matthews_corrcoef
     from sklearn.model_selection import StratifiedKFold
 
     skf = StratifiedKFold(
@@ -170,14 +155,18 @@ def cv_evaluate(X: pd.DataFrame, y: pd.Series, n_splits: int = 5,
         y_proba = clf.predict_proba(X_val)[:, 1]
         y_pred = (y_proba >= 0.5).astype(int)
 
+        evaluated = evaluate_oof(y_val, y_proba)
         metrics = {
             "fold": fold_idx,
-            "auc": float(roc_auc_score(y_val, y_proba)),
-            "auprc": float(average_precision_score(y_val, y_proba)),
-            "mcc": float(matthews_corrcoef(y_val, y_pred)),
+            "roc_auc": evaluated["roc_auc"],
+            "error_pr_auc": evaluated["error_pr_auc"],
+            "fnr_at_fpr5": evaluated["fnr_at_fpr5"],
+            "mcc": float(matthews_corrcoef(1 - y_val, 1 - y_pred)),
         }
-        logger.info("Fold %d: AUC=%.4f AUPRC=%.4f MCC=%.4f",
-                    fold_idx, metrics["auc"], metrics["auprc"], metrics["mcc"])
+        logger.info(
+            "Fold %d: error ROC-AUC=%.4f PR-AUC=%.4f "
+            "FNR@FPR5=%.4f MCC=%.4f", fold_idx, metrics["roc_auc"],
+            metrics["error_pr_auc"], metrics["fnr_at_fpr5"], metrics["mcc"])
         fold_metrics.append(metrics)
         all_y_true.append(y_val.values)
         all_y_score.append(y_proba)
@@ -185,16 +174,18 @@ def cv_evaluate(X: pd.DataFrame, y: pd.Series, n_splits: int = 5,
     y_true_concat = np.concatenate(all_y_true)
     y_score_concat = np.concatenate(all_y_score)
 
+    pooled = evaluate_oof(y_true_concat, y_score_concat)
     summary = {
-        "auc_mean": float(np.mean([m["auc"] for m in fold_metrics])),
-        "auc_std": float(np.std([m["auc"] for m in fold_metrics])),
-        "auprc_mean": float(np.mean([m["auprc"] for m in fold_metrics])),
-        "auprc_std": float(np.std([m["auprc"] for m in fold_metrics])),
+        **pooled,
+        "roc_auc_mean": float(np.mean([m["roc_auc"] for m in fold_metrics])),
+        "roc_auc_std": float(np.std([m["roc_auc"] for m in fold_metrics])),
+        "error_pr_auc_mean": float(np.mean(
+            [m["error_pr_auc"] for m in fold_metrics])),
+        "error_pr_auc_std": float(np.std(
+            [m["error_pr_auc"] for m in fold_metrics])),
         "mcc_mean": float(np.mean([m["mcc"] for m in fold_metrics])),
         "mcc_std": float(np.std([m["mcc"] for m in fold_metrics])),
         "fold_metrics": fold_metrics,
-        "working_points": compute_working_points(
-            y_true_concat, y_score_concat),
     }
     return summary
 
@@ -214,9 +205,14 @@ def compute_feature_importance(
     clf.fit(X, y)
 
     logger.info("Computing permutation importance (n_repeats=%d)...", n_repeats)
+    def error_average_precision(estimator, features, stored_labels):
+        from sklearn.metrics import average_precision_score
+        trust_scores = estimator.predict_proba(features)[:, 1]
+        return average_precision_score(1 - stored_labels, 1.0 - trust_scores)
+
     perm = permutation_importance(
         clf, X, y, n_repeats=n_repeats,
-        random_state=random_state, scoring="average_precision", n_jobs=-1)
+        random_state=random_state, scoring=error_average_precision, n_jobs=-1)
 
     ranked = sorted(
         zip(feature_cols, perm.importances_mean, perm.importances_std),
@@ -247,9 +243,10 @@ def main():
     cv_summary = cv_evaluate(X, y)
 
     logger.info(
-        "CV Mean: AUC=%.4f±%.4f  AUPRC=%.4f±%.4f  MCC=%.4f±%.4f",
-        cv_summary["auc_mean"], cv_summary["auc_std"],
-        cv_summary["auprc_mean"], cv_summary["auprc_std"],
+        "CV Mean: error ROC-AUC=%.4f±%.4f  PR-AUC=%.4f±%.4f  "
+        "MCC=%.4f±%.4f",
+        cv_summary["roc_auc_mean"], cv_summary["roc_auc_std"],
+        cv_summary["error_pr_auc_mean"], cv_summary["error_pr_auc_std"],
         cv_summary["mcc_mean"], cv_summary["mcc_std"],
     )
     logger.info("Working points: %s",
@@ -259,16 +256,18 @@ def main():
     if not args.skip_importance:
         logger.info("=== Feature importance ===")
         importance = compute_feature_importance(X, y, feature_cols)
-        logger.info("Top 15 features by permutation AUPRC drop:")
+        logger.info("Top 15 features by error PR-AUC permutation drop:")
         for item in importance[:15]:
             logger.info("  %-32s  %.4f ± %.4f",
                         item["feature"], item["importance_mean"],
                         item["importance_std"])
 
     result = {
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
         "n_samples": int(len(y)),
-        "n_positive": int((y == 1).sum()),
-        "n_negative": int((y == 0).sum()),
+        "n_actual_correct": int((y == 1).sum()),
+        "n_actual_error": int((y == 0).sum()),
         "n_features": len(feature_cols),
         "cv_summary": cv_summary,
         "feature_importance": importance,

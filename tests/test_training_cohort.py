@@ -37,8 +37,10 @@ def test_evidence_common_filters_and_reports_class_counts():
 
     assert filtered["label"].tolist() == [1, 0]
     assert audit["name"] == "evidence_common"
-    assert audit["before"] == {"n_rows": 3, "n_pos": 1, "n_neg": 2}
-    assert audit["after"] == {"n_rows": 2, "n_pos": 1, "n_neg": 1}
+    assert audit["before"] == {
+        "n_rows": 3, "n_correct": 1, "n_error": 2}
+    assert audit["after"] == {
+        "n_rows": 2, "n_correct": 1, "n_error": 1}
     assert audit["failed_by_rule"]["has_lib_pred == 1"] == 1
 
 

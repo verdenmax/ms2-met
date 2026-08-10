@@ -14,51 +14,32 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import confusion_matrix, roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _SPEC_TRAINER_SRC = _PROJECT_ROOT / "tools" / "spec_trainer" / "src"
 if str(_SPEC_TRAINER_SRC) not in sys.path:
     sys.path.insert(0, str(_SPEC_TRAINER_SRC))
 
+from cv_core import as_error_detection, evaluate_at_threshold
+
 logger = logging.getLogger(__name__)
 
 
 def compute_metrics(y_true: np.ndarray, y_proba: np.ndarray,
                     threshold: float) -> dict:
-    """Compute per-threshold classification metrics."""
-    y_true = np.asarray(y_true).astype(int)
-    y_proba = np.asarray(y_proba).astype(float)
-    y_pred = (y_proba > threshold).astype(int)
-
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    tn, fp = int(cm[0, 0]), int(cm[0, 1])
-    fn, tp = int(cm[1, 0]), int(cm[1, 1])
-
-    n_pos = int((y_true == 1).sum())
-    n_neg = int((y_true == 0).sum())
-
-    pos_recall = tp / n_pos if n_pos else 0.0
-    neg_recall = tn / n_neg if n_neg else 0.0
-    pos_prec = tp / (tp + fp) if (tp + fp) else 0.0
-    neg_prec = tn / (tn + fn) if (tn + fn) else 0.0
-    f1_neg = (
-        2 * neg_prec * neg_recall / (neg_prec + neg_recall)
-        if (neg_prec + neg_recall) else 0.0
-    )
-    auc = float(roc_auc_score(y_true, y_proba)) if n_pos and n_neg else float("nan")
-
-    return {
-        "n_pos": n_pos,
-        "n_neg": n_neg,
-        "tn": tn, "fp": fp, "fn": fn, "tp": tp,
-        "pos_recall": pos_recall,
-        "neg_recall": neg_recall,
-        "pos_precision": pos_prec,
-        "neg_precision": neg_prec,
-        "f1_neg": f1_neg,
-        "auc": auc,
-    }
+    """Metrics at an error-score threshold; actual error is positive."""
+    error_truth, error_score = as_error_detection(y_true, y_proba)
+    metrics = evaluate_at_threshold(y_true, y_proba, threshold)
+    has_both = len(np.unique(error_truth)) == 2
+    metrics.update({
+        "roc_auc": float(roc_auc_score(error_truth, error_score))
+        if has_both else float("nan"),
+        "error_pr_auc": float(
+            average_precision_score(error_truth, error_score))
+        if has_both else float("nan"),
+    })
+    return metrics
 
 
 def _threshold_arg(s: str) -> float:
@@ -79,7 +60,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Re-evaluate trained LightGBM models at multiple thresholds.")
     p.add_argument(
         "--thresholds", type=_threshold_arg, nargs="+", required=True,
-        help="Decision thresholds (e.g. 0.5 0.7 0.9 0.99). Each in (0, 1).")
+        help=("Error-score thresholds (e.g. 0.1 0.2 0.5); "
+              "error_score = 1 - model trust score."))
     p.add_argument(
         "--models", nargs="+", default=None,
         help="Model basenames to include. Default: all .txt files.")
@@ -180,11 +162,9 @@ def _print_console_table(rows) -> None:
         return
 
     table = Table(title="Rescore Summary", show_lines=False)
-    cols = [
-        "experiment", "thresh", "n_pos", "n_neg",
-        "TN", "FP", "FN", "TP",
-        "PosRec", "NegRec", "PosPrec", "NegPrec", "F1_neg", "AUC",
-    ]
+    cols = ["experiment", "error_thr", "n_error", "n_correct",
+            "TP", "FP", "FN", "TN", "FPR", "FNR",
+            "ErrorRec", "CorrectRec", "ErrorPrec", "ROC-AUC", "ErrorPR"]
     for c in cols:
         table.add_column(c, justify="right" if c != "experiment" else "left")
 
@@ -194,19 +174,20 @@ def _print_console_table(rows) -> None:
         if last_exp is not None and exp != last_exp:
             table.add_section()
         last_exp = exp
-        auc_str = "{:.4f}".format(r["auc"]) if not np.isnan(r["auc"]) else "n/a"
+        auc_str = ("{:.4f}".format(r["roc_auc"])
+                   if not np.isnan(r["roc_auc"]) else "n/a")
         table.add_row(
             exp,
             "{:.3f}".format(r['threshold']),
-            str(r["n_pos"]),
-            str(r["n_neg"]),
-            str(r["tn"]), str(r["fp"]), str(r["fn"]), str(r["tp"]),
-            "{:.4f}".format(r['pos_recall']),
-            "{:.4f}".format(r['neg_recall']),
-            "{:.4f}".format(r['pos_precision']),
-            "{:.4f}".format(r['neg_precision']),
-            "{:.4f}".format(r['f1_neg']),
+            str(r["n_actual_error"]), str(r["n_actual_correct"]),
+            str(r["tp"]), str(r["fp"]), str(r["fn"]), str(r["tn"]),
+            "{:.4f}".format(r['fpr']),
+            "{:.4f}".format(r['fnr']),
+            "{:.4f}".format(r['error_recall']),
+            "{:.4f}".format(r['correct_recall']),
+            "{:.4f}".format(r['error_precision']),
             auc_str,
+            "{:.4f}".format(r['error_pr_auc']),
         )
     Console().print(table)
 
@@ -214,10 +195,10 @@ def _print_console_table(rows) -> None:
 def _write_csv(rows, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
-        "experiment", "threshold",
-        "n_pos", "n_neg", "tn", "fp", "fn", "tp",
-        "pos_recall", "neg_recall", "pos_precision", "neg_precision",
-        "f1_neg", "auc",
+        "experiment", "metric_semantics", "positive_class", "threshold",
+        "n_actual_error", "n_actual_correct", "tp", "fp", "fn", "tn",
+        "fpr", "fnr", "error_recall", "correct_recall",
+        "error_precision", "roc_auc", "error_pr_auc",
     ]
     with open(output_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)

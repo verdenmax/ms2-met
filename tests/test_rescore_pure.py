@@ -50,29 +50,29 @@ def test_infer_rejects_malformed_or_unsupported(name):
 # --- compute_metrics ---
 
 def test_compute_metrics_confusion_and_rates():
-    # y_pred = proba > 0.5 -> [1,0,1,0]; truth [1,1,0,0]
+    # Stored labels: 1=correct, 0=error. At error threshold 0.5 the canonical
+    # confusion matrix has one TP/FP/FN/TN each.
     y = np.array([1, 1, 0, 0])
     p = np.array([0.9, 0.4, 0.6, 0.1])
     m = rescore.compute_metrics(y, p, 0.5)
     assert (m["tp"], m["fn"], m["fp"], m["tn"]) == (1, 1, 1, 1)
-    assert m["n_pos"] == 2 and m["n_neg"] == 2
-    assert m["pos_recall"] == 0.5 and m["neg_recall"] == 0.5
-    assert m["pos_precision"] == 0.5 and m["neg_precision"] == 0.5
-    assert m["f1_neg"] == pytest.approx(0.5)
-    # FNR = 1 - pos_recall, FPR = 1 - neg_recall (the metrics users derive)
-    assert 1 - m["pos_recall"] == 0.5  # FNR
-    assert 1 - m["neg_recall"] == 0.5  # FPR
+    assert m["n_actual_error"] == 2 and m["n_actual_correct"] == 2
+    assert m["error_recall"] == 0.5 and m["correct_recall"] == 0.5
+    assert m["error_precision"] == 0.5
+    assert m["fnr"] == 0.5 and m["fpr"] == 0.5
+    assert m["metric_semantics"] == "error_identification_positive_v1"
+    assert m["positive_class"] == "incorrect_identification"
 
 
-def test_compute_metrics_threshold_is_strict_gt():
-    # proba exactly equal to threshold must NOT be predicted positive
+def test_compute_metrics_error_threshold_is_inclusive():
+    # trust=.5 -> error_score=.5; equality is flagged as an error.
     y = np.array([1, 0])
     p = np.array([0.5, 0.5])
     m = rescore.compute_metrics(y, p, 0.5)
-    assert m["tp"] == 0 and m["fp"] == 0  # neither crosses strict >
+    assert m["tp"] == 1 and m["fp"] == 1
 
 
 def test_compute_metrics_auc_nan_when_single_class():
     m = rescore.compute_metrics(np.array([1, 1]), np.array([0.9, 0.8]), 0.5)
-    assert m["n_neg"] == 0
-    assert np.isnan(m["auc"])
+    assert m["n_actual_error"] == 0
+    assert np.isnan(m["roc_auc"])

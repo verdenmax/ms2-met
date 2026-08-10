@@ -2,7 +2,9 @@
 
 ## 一句话职责
 
-训练 / 评估二分类器，对每条 PSM 的 SILAC 验证特征（`features.csv`）打分，区分真实标记肽段（正例）与诱捕 / 错配（负例），并产出模型、JSON 报告与图。
+训练 / 评估二分类器，对每条 PSM 的 SILAC 验证特征（`features.csv`）打可信度
+分数并区分正确鉴定与错误鉴定。存储/训练保持 `label=1` 为正确鉴定；对外评价
+统一以错误鉴定为阳性，并产出模型、JSON 报告与图。
 
 ## 对外接口
 
@@ -27,6 +29,7 @@
 - 输入：YAML 配置（`config/*.yaml`）、特征表 `runs/baseline_{ds}_{fdr}/features.csv`（含 `label` 列）。
 - 输出：
   - 模型 `runs/spec_trainer/models/<name>.txt`（LightGBM 文本；其余后端用 joblib）。
-  - 报告 `runs/spec_trainer/results/<name>.json`（accuracy / auc / 混淆矩阵 / 分类报告）。
+  - 报告 `runs/spec_trainer/results/<name>.json`（带语义版本的 error-positive
+    ROC-AUC、error PR-AUC、FNR@FPR5、工作点 / 混淆矩阵等）。
   - 图 `runs/spec_trainer/figures/<name>_importance.png`、`<name>_roc_curve.png`。
   - rescore 汇总 `runs/spec_trainer/rescore_summary.csv`。

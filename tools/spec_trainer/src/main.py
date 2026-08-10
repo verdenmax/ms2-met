@@ -16,7 +16,8 @@ import os
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split  # 划分数据集
 from sklearn.metrics import (  # 评估模型效果的各种指标
-    accuracy_score, roc_auc_score, classification_report, confusion_matrix
+    accuracy_score, average_precision_score, roc_auc_score,
+    classification_report, confusion_matrix
 )
 from sklearn.metrics import roc_curve, auc
 import numpy as np
@@ -32,6 +33,7 @@ from feature_cols import (
     EXCLUDED_EXTRA,
     resolve_feature_cols as _resolve_feature_cols,
 )
+from cv_core import (METRIC_SEMANTICS_VERSION, as_error_detection)
 
 
 def load_data(file_paths, feature_cols, target_col):
@@ -72,8 +74,9 @@ def save_feature_importance(model, feature_names, output_path):
 
 
 def save_roc_figure(y_true, y_proba, output_path):
-    """ 画出 roc 曲线图 """
-    fpr, tpr, thresholds = roc_curve(y_true, y_proba)
+    """Plot ROC with incorrect identifications as the positive class."""
+    error_truth, error_score = as_error_detection(y_true, y_proba)
+    fpr, tpr, thresholds = roc_curve(error_truth, error_score)
 
     roc_auc = auc(fpr, tpr)
     # 计算约登指数
@@ -108,18 +111,33 @@ def evaluate_and_report(
         feature_names=None, model=None,
         report_path=None, fig_path=None,
         roc_path=None):
-    # 计算各种评估指标
+    error_truth = 1 - np.asarray(y_true, dtype=int)
+    predicted_error = 1 - np.asarray(y_pred, dtype=int)
+    error_score = None if y_proba is None else 1.0 - np.asarray(y_proba)
     metrics = {
-        "accuracy": float(accuracy_score(y_true, y_pred)),  # 准确率
-        "auc": float(roc_auc_score(y_true, y_proba)) if y_proba is not None else None,
-        "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),  # 混淆矩阵
-        # 详细分类报告
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+        "accuracy": float(accuracy_score(error_truth, predicted_error)),
+        "roc_auc": float(roc_auc_score(error_truth, error_score))
+        if error_score is not None else None,
+        "error_pr_auc": float(
+            average_precision_score(error_truth, error_score))
+        if error_score is not None else None,
+        "error_threshold": 0.5,
+        "trust_threshold": 0.5,
+        "confusion_matrix_labels": [
+            "correct_identification", "incorrect_identification"],
+        "confusion_matrix": confusion_matrix(
+            error_truth, predicted_error, labels=[0, 1]).tolist(),
         # zero_division=0: SILAC 测试集极度不均衡 + is_unbalance + 阈值 0.5
         # 时，模型可能将所有样本预测为正，负类无预测样本 → precision = 0/0。
         # 显式设为 0 以消除 sklearn 的 UndefinedMetricWarning（指标值
         # 行为不变，本就是 0/0 → 报告为 0.0）。
         "classification_report": classification_report(
-            y_true, y_pred, output_dict=True, zero_division=0),
+            error_truth, predicted_error, labels=[0, 1],
+            output_dict=True, zero_division=0,
+            target_names=["correct_identification",
+                          "incorrect_identification"]),
     }
 
     # 计算ROC曲线和最佳阈值（约登指数）

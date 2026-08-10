@@ -70,9 +70,12 @@ python -m tools.extract_common \
 
 - `derive_binary_label(df, marker="HUMAN") -> pd.Series`：三级优先派生 0/1 标签（label_type → 数值 label → protein_names），皆无抛 `ValueError`。
 - `load_features(path, marker="HUMAN") -> (X, y, feature_cols)`：读 CSV，剔除 `META_COLUMNS`，±inf→NaN，过滤非 0/1 行。
-- `compute_working_points(y_true, y_score) -> dict`：neg_recall 95/90/80 工作点。
-- `cv_evaluate(X, y, n_splits=5, random_state=42) -> dict`：5-fold CV，含 fold 指标、mean±std、working_points。
-- `compute_feature_importance(X, y, feature_cols, random_state=42, n_repeats=5) -> list[dict]`：permutation importance（AUPRC drop）降序。
+- `compute_working_points(y_true, y_score) -> dict`：按错误鉴定为阳性返回
+  FPR 1%/5%/10% 工作点；`y_score` 是模型的 trust score，内部自动转换为
+  error score。
+- `cv_evaluate(X, y, n_splits=5, random_state=42) -> dict`：5-fold CV，含
+  error-positive fold 指标、mean±std、pooled OOF 指标与 working points。
+- `compute_feature_importance(X, y, feature_cols, random_state=42, n_repeats=5) -> list[dict]`：permutation importance（error PR-AUC drop）降序。
 
 ### CLI / 运行示例
 
@@ -83,7 +86,8 @@ python -m tools.extract_common \
 | `--skip-importance` | 否 | 跳过特征重要性 |
 | `--positive-marker` | 否 | 默认 `HUMAN`，仅 protein_names 回退层用 |
 
-输出 JSON：`n_samples / n_positive / n_negative / n_features / cv_summary / feature_importance`。
+输出 JSON：`n_samples / n_actual_correct / n_actual_error / n_features /
+cv_summary / feature_importance`；`cv_summary.metric_semantics` 标记指标口径。
 
 ```bash
 python tools/eval_baseline.py \
@@ -98,7 +102,9 @@ python tools/eval_baseline.py \
 ### 主要函数
 
 - `split_features(all_features) -> dict[str, list[str]]`：分出 `sequence_only / silac_only / silac_minus_intensity / all`。
-- `cv_one(X, y, name, n_splits=5) -> dict`：单组 5-fold CV，返回 `name / n_features / auc_mean / auc_std / auprc_mean / working_points`。
+- `cv_one(X, y, name, n_splits=5) -> dict`：单组 5-fold CV，返回特征数、
+  error-positive ROC-AUC/error PR-AUC、FNR@FPR5、error recall@FPR10、
+  fold mean±std 与 working points。
 - 复用 `eval_baseline.derive_binary_label`。
 
 ### CLI / 运行示例

@@ -105,6 +105,22 @@ make train-ablation-neg20 \
 配置、模型和 JSON 结果位于 `runs/spec_trainer/ablation/neg20/`。历史
 `train-cv-neg20-all` 不执行正式 feature-arm 消融。
 
+### Evaluation convention / 评价指标口径
+
+CSV 与模型为兼容既有数据，仍使用 `label=1` 表示正确鉴定、模型高分表示
+更可信。所有对外评价指标统一将**错误鉴定作为阳性类**：
+
+```text
+error_truth = 1 - stored_label
+error_score = 1 - trust_score
+```
+
+因此，假阳性（FP）是正确鉴定被误判为错误，假阴性（FN）是错误鉴定被
+误判为正确；FPR 是正确鉴定的误报率，FNR 是错误鉴定的漏检率。结果 JSON
+以 `error_identification_positive_v1` 标记该语义，报告 `roc_auc`、
+`error_pr_auc`、`fnr_at_fpr5` 和 `error_recall_at_fpr10`。缺少该标记的历史
+JSON 使用旧口径，不能仅修改字段名称后与新结果混用。
+
 依赖安装 / install deps: `pip install -r requirements.txt`（本机推荐用 conda 管理环境）。
 
 ---

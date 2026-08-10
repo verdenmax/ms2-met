@@ -8,8 +8,10 @@
 
 - `load_data(file_paths, feature_cols, target_col) -> (X, y)`：逐文件 `read_csv` 后 `concat`；文件不存在抛 `FileNotFoundError`。返回 `X=df[feature_cols]`、`y=df[target_col]`。
 - `save_feature_importance(model, feature_names, output_path)`：取 `model.feature_importance('gain')`，按重要性降序画水平条形图存 PNG。
-- `save_roc_figure(y_true, y_proba, output_path)`：画 ROC 曲线并标注约登最优点（`argmax(tpr-fpr)`）。
-- `evaluate_and_report(y_true, y_pred, y_proba, feature_names=None, model=None, report_path=None, fig_path=None, roc_path=None) -> dict`：算 accuracy / auc / confusion_matrix / classification_report（`zero_division=0`），按需写 JSON、画重要性图与 ROC 图，返回 metrics dict。
+- `save_roc_figure(y_true, y_proba, output_path)`：先用
+  `error_truth=1-y_true`、`error_score=1-y_proba` 转换，再画错误鉴定为阳性的
+  ROC 曲线并标注约登最优点（`argmax(tpr-fpr)`）。
+- `evaluate_and_report(y_true, y_pred, y_proba, feature_names=None, model=None, report_path=None, fig_path=None, roc_path=None) -> dict`：按错误鉴定为阳性计算 accuracy / `roc_auc` / confusion_matrix / classification_report（`zero_division=0`），写入 `metric_semantics` 与 `positive_class`，并按需写 JSON、画重要性图与 ROC 图。
 - `main()`：解析 `--config`（必填）、`--name`（必填）、`--logpath`（默认 `./spec.log`）；配置 rich+文件日志；执行完整训练评估流程。
 
 ## tools/spec_trainer/src/feature_cols.py
@@ -63,7 +65,10 @@
 
 对已训练 LightGBM 模型多阈值重评估。
 
-- `compute_metrics(y_true, y_proba, threshold) -> dict`：算 n_pos/n_neg、TN/FP/FN/TP、正负类 recall+precision、`f1_neg`、`auc`。
+- `compute_metrics(y_true, y_proba, threshold) -> dict`：`threshold` 是
+  `error_score=1-y_proba` 的阈值；按错误鉴定为阳性返回
+  `n_actual_error/n_actual_correct`、TP/FP/FN/TN、FPR/FNR、
+  `error_recall/correct_recall/error_precision`、`roc_auc/error_pr_auc`。
 - `infer_data_source(model_basename, features_root_template) -> (Path, mode)`：`in_*`（3 段）→ `in_sample`；`cross_test_*`（4 段）→ `cross_test`；其它抛 `ValueError`。
 - `discover_models(models_dir, filter_names) -> list[Path]`：列 `*.txt`，按 stem 过滤，缺失告警。
 - `score_model(model_path, csv_path, mode, target_col='label') -> (y_true, y_proba)`：载 `lgb.Booster`，用 `resolve_feature_cols` 取特征；`in_sample` 切 20% 测试，`cross_test` 用整表。

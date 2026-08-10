@@ -85,20 +85,26 @@
 
 ### 特征与训练
 
+- 存储标签为 `1=正确鉴定、0=错误鉴定`，模型概率为 trust score。评价时统一
+  转为 `error_truth=1-label`、`error_score=1-trust_score`，错误鉴定为阳性。
 - 特征列 = 全列 − `META_COLUMNS`（sequence/charge/raw_title*/protein_names/label*/precursor_mz/sequence_len）。
 - **不 fillna(0)**：`HistGradientBoostingClassifier` 原生支持 NaN，仅把 ±inf 替换为 NaN（避免把"无数据"与"值=0"混淆）。
 - label 既非 0 也非 1 的行被过滤并 warn。
 - 模型固定超参：`max_iter=300, lr=0.05, max_depth=6, l2=1.0, class_weight="balanced", random_state=42`。
-- `StratifiedKFold(5, shuffle, seed=42)`，每折算 AUC/AUPRC/MCC（阈值 0.5），汇总 mean±std。
+- `StratifiedKFold(5, shuffle, seed=42)`，每折算 error-positive ROC-AUC、
+  error PR-AUC、FNR@FPR5 和 MCC（阈值 0.5），汇总 mean±std；同时用所有
+  OOF 预测计算 pooled 指标。
 
 ### 工作点（`compute_working_points`）
 
-- 固定 negative recall = 0.95/0.90/0.80（即 fpr 0.05/0.10/0.20）。
-- 阈值 = 负例分数的 `quantile(1-fpr)`，再看正例 recall。
+- 固定 FPR = 0.01/0.05/0.10，其中 FPR 是正确鉴定被误报为错误的比例。
+- 在正确鉴定的 error score 上保守选择阈值（同分整体处理，保证经验 FPR 不
+  超过目标），再报告错误鉴定的 FNR/error recall。
 
 ### 特征重要性
 
-- 全数据训练后 `permutation_importance`（`scoring="average_precision"`, `n_repeats=5`, `n_jobs=-1`），按均值降序排名。
+- 全数据训练后 `permutation_importance`（scoring 为 error PR-AUC，
+  `n_repeats=5`, `n_jobs=-1`），按均值降序排名。
 - `--skip-importance` 可跳过（耗时）。
 
 ---
@@ -116,7 +122,9 @@
 
 - 全特征 = 全列 − `ID_COLUMNS`。
 - 标签复用 `eval_baseline.derive_binary_label`，仅保留 0/1。
-- 每组跑 5-fold CV（同 baseline 超参），输出 AUC mean±std、AUPRC、`pos_recall@neg_recall=95/90/80`。空组跳过。
+- 每组跑 5-fold CV（同 baseline 超参），输出 error-positive ROC-AUC
+  mean±std、error PR-AUC、FNR@FPR5、error recall@FPR10 和固定 FPR 工作点。
+  空组跳过。
 
 ### 设计取舍
 

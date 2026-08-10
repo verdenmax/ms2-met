@@ -1,5 +1,16 @@
 # spec_trainer — 细节
 
+## 统一的评价口径
+
+- 为兼容已有 CSV 和模型，存储标签仍为 `label=1` 表示正确鉴定、`label=0`
+  表示错误鉴定，模型输出的 `trust_score=P(正确鉴定)` 越大越可信。
+- 计算评价指标时统一转换为 `error_truth=1-label`、
+  `error_score=1-trust_score`，即**错误鉴定是实际阳性，正确鉴定是实际阴性**。
+- FP 是正确鉴定被误报为错误，FN 是错误鉴定被漏判为正确。因此 FPR 是
+  正确鉴定的误报率，FNR 是错误鉴定的漏检率，error recall 为错误鉴定检出率。
+- 新结果带有 `metric_semantics=error_identification_positive_v1`。没有该字段的
+  历史 JSON 使用旧口径，不能只改字段名后与新结果混用。
+
 ## 训练流程（`src/main.py`）
 
 1. 把 `src/` 插入 `sys.path`，使脚本可从任意工作目录调用。
@@ -62,7 +73,10 @@
 - 仅针对 LightGBM `.txt` 模型；`discover_models` 扫 `--models-dir/*.txt`，可用 `--models` 过滤。
 - `infer_data_source(basename, template)`：按模型名前缀映射回 `features.csv` 与模式——`in_*`（3 段）→ `in_sample`（同集 `train_test_split` 取 20% 测试），`cross_test_*`（4 段）→ `cross_test`（整表为测试）。
 - `score_model` 复用 `resolve_feature_cols` 保证特征一致，输出 `(y_true, y_proba)`。
-- `compute_metrics(y_true, y_proba, threshold)`：每阈值算 TN/FP/FN/TP、正/负类 recall+precision、`f1_neg`、AUC；写 CSV 并用 `rich.Table` 分组打印。
+- `compute_metrics(y_true, y_proba, threshold)`：将传入阈值解释为
+  `error_score` 阈值，并按错误鉴定为阳性计算 TP/FP/FN/TN、FPR、FNR、
+  error/correct recall、error precision、ROC-AUC 和 error PR-AUC；写 CSV 并用
+  `rich.Table` 分组打印。
 - 阈值经 `_threshold_arg` 校验，须落在开区间 (0,1)。
 
 ## 边界与设计取舍
@@ -70,5 +84,6 @@
 - `resolve_holdout` 拒绝隐式 in-sample 评估：既无独立 `test_files` 又 `test_size<=0` 时直接报错（I-ST2）。
 - 特征解析、held-out 逻辑抽到独立模块，便于在不引入 lightgbm 的前提下单测（I-ST1/I-ST2）。
 - `classification_report` 用 `zero_division=0`：SILAC 极不均衡 + `is_unbalance` + 阈值 0.5 下负类可能无预测样本，避免告警。
-- ROC 图标注约登点（`TPR-FPR` 最大），但 JSON 报告不落该阈值（代码中被注释）。
+- ROC 图按错误鉴定为阳性绘制并标注约登点（`TPR-FPR` 最大），但 JSON 报告
+  不落该阈值（代码中被注释）。
 - `train.py` / `train2.py` 是早期单后端实现，要求显式 `feature_cols` 且无泄露列剔除，仅作历史参考。

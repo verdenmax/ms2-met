@@ -76,12 +76,12 @@ def test_assemble_oof_no_nan_and_saves_models(tmp_path):
     oof, fold_metrics, model_paths = cv_train.assemble_oof(
         df, X, y, groups, cfg, feature_cols, str(tmp_path / "m"))
     assert not np.isnan(oof).any()                       # 每行恰好预测一次
-    assert len(fold_metrics) == 5 and "auc" in fold_metrics[0]
+    assert len(fold_metrics) == 5 and "roc_auc" in fold_metrics[0]
     counts = fold_metrics[0]["split_counts"]
     assert set(counts) == {"train", "valid", "oof_test"}
     for split in counts.values():
-        assert split["n_pos_groups"] >= 2
-        assert split["n_neg_groups"] >= 2
+        assert split["n_correct_groups"] >= 2
+        assert split["n_error_groups"] >= 2
         assert split["n_mixed_groups"] == 0
     assert len(model_paths) == 5 and all(os.path.exists(p) for p in model_paths)
 
@@ -124,8 +124,9 @@ def test_inner_split_supports_parent_positive_with_synthetic_negative_group():
 def test_validate_split_counts_rejects_too_few_minority_groups():
     import cv_train
     counts = {"valid": {
-        "n_rows": 10, "n_pos": 9, "n_neg": 1, "n_groups": 10,
-        "n_pos_groups": 9, "n_neg_groups": 1, "n_mixed_groups": 0,
+        "n_rows": 10, "n_correct": 9, "n_error": 1, "n_groups": 10,
+        "n_correct_groups": 9, "n_error_groups": 1,
+        "n_mixed_groups": 0,
     }}
     with pytest.raises(ValueError, match="require >= 2"):
         cv_train._validate_split_counts(
@@ -157,16 +158,18 @@ def test_main_writes_outputs(tmp_path):
     summary = cv_train.main(["--config", str(cfg_path), "--name", "toy",
                              "--logpath", str(tmp_path / "log.txt")])
     res = json.loads((tmp_path / "r.cv.json").read_text())
-    assert ("auc" in res and "pr_auc_pos" in res and "pr_auc_neg" in res
+    assert ("roc_auc" in res and "error_pr_auc" in res
             and "fnr_at_fpr5" in res)
-    assert len(res["fold_metrics"]) == 5 and "auc_mean" in res
-    assert "pr_auc_pos_mean" in res and "pr_auc_neg_mean" in res
+    assert len(res["fold_metrics"]) == 5 and "roc_auc_mean" in res
+    assert "error_pr_auc_mean" in res and "error_pr_auc_std" in res
     assert "fnr_at_fpr5_mean" in res and "fnr_at_fpr5_std" in res
     assert res["operating_point"]["target_fpr"] == 0.10
     assert res["operating_point"]["threshold_source"] == "train_oof"
+    assert res["operating_point"]["positive_class"] == \
+        "incorrect_identification"
     assert res["operating_point"]["train_oof_metrics"]["fpr"] <= 0.10
     assert (tmp_path / "r.cv.suspects.csv").exists()     # 派生路径
-    assert summary["auc"] == res["auc"]
+    assert summary["roc_auc"] == res["roc_auc"]
     assert res["name"] == "toy"
 
 
@@ -248,26 +251,25 @@ def test_evaluate_cross_test(tmp_path):
     # ensemble = 各折预测的均值
     per = [lgb.Booster(model_file=p).predict(Xb) for p in model_paths]
     assert np.allclose(ens, np.mean(per, axis=0))
-    assert (len(per_fold) == 5 and "auc" in per_fold[0]
-            and "pr_auc_pos" in per_fold[0]
-            and "pr_auc_neg" in per_fold[0]
+    assert (len(per_fold) == 5 and "roc_auc" in per_fold[0]
+            and "error_pr_auc" in per_fold[0]
             and "fnr_at_fpr5" in per_fold[0])
-    assert {"test_auc_mean", "test_auc_std",
-            "test_pr_auc_pos_mean", "test_pr_auc_pos_std",
-            "test_pr_auc_neg_mean", "test_pr_auc_neg_std",
+    assert {"test_roc_auc_mean", "test_roc_auc_std",
+            "test_error_pr_auc_mean", "test_error_pr_auc_std",
             "test_fnr_at_fpr5_mean", "test_fnr_at_fpr5_std"} <= set(agg)
     # value-level: per-fold metrics are the real auc/fnr (not swapped)
     from cv_core import fnr_at_fpr5 as _fnr
     from sklearn.metrics import roc_auc_score as _auc
-    assert np.isclose(per_fold[0]["auc"], _auc(yb, per[0]))
+    assert np.isclose(per_fold[0]["roc_auc"], _auc(yb, per[0]))
     assert np.isclose(per_fold[0]["fnr_at_fpr5"], _fnr(yb, per[0]))
-    assert np.isclose(agg["test_auc_mean"],
-                      np.mean([m["auc"] for m in per_fold]))
+    assert np.isclose(agg["test_roc_auc_mean"],
+                      np.mean([m["roc_auc"] for m in per_fold]))
     # single-class external y -> per-fold + agg NaN, but ensemble still scores
     import numpy as _np
     ens1, pf1, agg1 = cv_train.evaluate_cross_test(
         model_paths, Xb, _np.ones(len(dfB)))
-    assert _np.isnan(pf1[0]["auc"]) and _np.isnan(agg1["test_auc_mean"])
+    assert (_np.isnan(pf1[0]["roc_auc"])
+            and _np.isnan(agg1["test_roc_auc_mean"]))
     assert _np.isfinite(ens1).all()
 
 
@@ -287,14 +289,15 @@ def test_main_cross_test_mode(tmp_path):
     res = json.loads((tmp_path / "r.cv.json").read_text())
     assert res["mode"] == "cross_test"
     assert len(res["test_per_fold"]) == 5
-    assert "test_auc_mean" in res and "train_oof_auc" in res
+    assert "test_roc_auc_mean" in res and "train_oof_roc_auc" in res
     op = res["operating_point"]
     assert op["target_fpr"] == 0.10
     assert op["threshold_source"] == "train_oof"
     assert "test_metrics" in op
-    assert op["test_metrics"]["n_pos"] == int((dfB["label"] == 1).sum())
-    assert res["n_pos"] == int((dfB["label"] == 1).sum())     # 105 — fails if counted from A (140)
-    assert res["n_neg"] == int((dfB["label"] == 0).sum())     # 45
-    assert res["n_pos"] + res["n_neg"] == len(dfB)            # 150 — totals pin to external B
+    assert op["test_metrics"]["n_actual_correct"] == int(
+        (dfB["label"] == 1).sum())
+    assert res["n_actual_correct"] == int((dfB["label"] == 1).sum())
+    assert res["n_actual_error"] == int((dfB["label"] == 0).sum())
+    assert res["n_actual_correct"] + res["n_actual_error"] == len(dfB)
     assert (tmp_path / "r.cv.suspects.csv").exists()
-    assert summary["auc"] == res["auc"]
+    assert summary["roc_auc"] == res["roc_auc"]

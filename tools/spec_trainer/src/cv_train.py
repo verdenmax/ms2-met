@@ -16,8 +16,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from cv_core import (average_proba, audit_labels, evaluate_at_threshold,
-                     evaluate_oof, fnr_at_fpr5, make_cv_splits,
+from cv_core import (METRIC_SEMANTICS_VERSION, average_proba, audit_labels,
+                     evaluate_at_threshold, evaluate_oof, make_cv_splits,
                      threshold_at_fpr)
 from cohort import apply_training_cohort
 from feature_cols import resolve_configured_feature_cols
@@ -106,12 +106,12 @@ def _split_counts(y, groups, idx):
     yy = y.iloc[idx]
     out = {
         "n_rows": int(len(idx)),
-        "n_pos": int((yy == 1).sum()),
-        "n_neg": int((yy == 0).sum()),
+        "n_correct": int((yy == 1).sum()),
+        "n_error": int((yy == 0).sum()),
     }
     if groups is None:
-        out.update({"n_groups": None, "n_pos_groups": None,
-                    "n_neg_groups": None, "n_mixed_groups": None})
+        out.update({"n_groups": None, "n_correct_groups": None,
+                    "n_error_groups": None, "n_mixed_groups": None})
         return out
 
     part = pd.DataFrame({
@@ -120,13 +120,13 @@ def _split_counts(y, groups, idx):
     })
     grouped = part.groupby("group", sort=False)["label"]
     nunique = grouped.nunique()
-    has_pos = grouped.apply(lambda s: bool((s == 1).any()))
-    has_neg = grouped.apply(lambda s: bool((s == 0).any()))
+    has_correct = grouped.apply(lambda s: bool((s == 1).any()))
+    has_error = grouped.apply(lambda s: bool((s == 0).any()))
     out.update({
         "n_groups": int(len(nunique)),
-        "n_pos_groups": int(has_pos.sum()),
-        "n_neg_groups": int(has_neg.sum()),
-        "n_mixed_groups": int(((has_pos) & (has_neg)).sum()),
+        "n_correct_groups": int(has_correct.sum()),
+        "n_error_groups": int(has_error.sum()),
+        "n_mixed_groups": int(((has_correct) & (has_error)).sum()),
     })
     return out
 
@@ -134,11 +134,12 @@ def _split_counts(y, groups, idx):
 def _validate_split_counts(fold, split_counts, min_class_groups, grouped):
     """Fail fast when a fold cannot support stable binary evaluation."""
     for split_name, counts in split_counts.items():
-        if counts["n_pos"] == 0 or counts["n_neg"] == 0:
+        if counts["n_correct"] == 0 or counts["n_error"] == 0:
             raise ValueError(
                 f"fold {fold} {split_name} has a missing class: {counts}")
         if grouped:
-            minority = min(counts["n_pos_groups"], counts["n_neg_groups"])
+            minority = min(
+                counts["n_correct_groups"], counts["n_error_groups"])
             if minority < min_class_groups:
                 raise ValueError(
                     f"fold {fold} {split_name} has only {minority} groups in "
@@ -153,7 +154,6 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
     Returns (oof_proba, fold_metrics, model_paths). lightgbm imported here.
     """
     # df: unused here; kept for call-site symmetry (caller uses it for label audit)
-    from sklearn.metrics import average_precision_score, roc_auc_score
     from models.model_manager import ModelManager
 
     n_folds = int(cfg["training"].get("cv_folds", 5))
@@ -193,22 +193,23 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix):
         model_paths.append(mp)
 
         te_y, te_p = y.iloc[te_idx].values, oof[te_idx]
-        if len(set(te_y.tolist())) < 2:               # 该折单类 → auc 无定义
-            fold_metrics.append({"fold": k, "auc": float("nan"),
-                                 "pr_auc_pos": float("nan"),
-                                 "pr_auc_neg": float("nan"),
+        if len(set(te_y.tolist())) < 2:
+            fold_metrics.append({"fold": k, "roc_auc": float("nan"),
+                                 "error_pr_auc": float("nan"),
                                  "fnr_at_fpr5": float("nan"),
+                                 "error_recall_at_fpr10": float("nan"),
                                  "split_counts": counts})
         else:
-            fold_metrics.append({"fold": k,
-                                 "auc": float(roc_auc_score(te_y, te_p)),
-                                 "pr_auc_pos": float(
-                                     average_precision_score(te_y, te_p)),
-                                 "pr_auc_neg": float(
-                                     average_precision_score(
-                                         1 - te_y, 1.0 - te_p)),
-                                 "fnr_at_fpr5": float(fnr_at_fpr5(te_y, te_p)),
-                                 "split_counts": counts})
+            metrics = evaluate_oof(te_y, te_p)
+            fold_metrics.append({
+                "fold": k,
+                "roc_auc": metrics["roc_auc"],
+                "error_pr_auc": metrics["error_pr_auc"],
+                "fnr_at_fpr5": metrics["fnr_at_fpr5"],
+                "error_recall_at_fpr10": metrics[
+                    "error_recall_at_fpr10"],
+                "split_counts": counts,
+            })
 
     assert not np.isnan(oof).any(), "OOF has NaN — some sample never predicted"
     return oof, fold_metrics, model_paths
@@ -252,20 +253,24 @@ def main(argv=None):
     oof, fold_metrics, model_paths = assemble_oof(
         df, X, y, groups, cfg, feature_cols, model_prefix)
 
-    # Deployment operating point: choose once from leak-free TRAIN OOF
-    # predictions, then lock it before touching an external test set.
-    # The strict selector handles ties conservatively, so empirical train-OOF
-    # FPR cannot exceed the requested target.
+    # FPR follows the canonical error-positive convention: a correct
+    # identification flagged as an error. Select the error-score threshold
+    # once from train OOF, then lock it before any external test set.
     op_cfg = cfg.get("operating_point", {})
     target_fpr = float(op_cfg.get("target_fpr", 0.10))
-    decision_threshold = threshold_at_fpr(y, oof, target_fpr)
+    error_threshold = threshold_at_fpr(y, oof, target_fpr)
     train_threshold_metrics = evaluate_at_threshold(
-        y, oof, decision_threshold)
+        y, oof, error_threshold)
     operating_point = {
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
         "target_fpr": target_fpr,
-        "threshold": decision_threshold,
+        "error_threshold": error_threshold,
+        "trust_threshold": 1.0 - error_threshold,
         "threshold_source": "train_oof",
-        "decision_rule": "score >= threshold => positive",
+        "decision_rule": (
+            "error_score >= error_threshold => incorrect_identification; "
+            "error_score = 1 - trust_score"),
         "train_oof_metrics": train_threshold_metrics,
     }
 
@@ -288,7 +293,8 @@ def main(argv=None):
         summary.update({
             "mode": "cross_test",
             "test_per_fold": test_per_fold,
-            "train_oof_auc": train_oof["auc"],
+            "train_oof_roc_auc": train_oof["roc_auc"],
+            "train_oof_error_pr_auc": train_oof["error_pr_auc"],
             "train_oof_fnr_at_fpr5": train_oof["fnr_at_fpr5"],
             "train_fold_metrics": fold_metrics,
         })
@@ -296,35 +302,36 @@ def main(argv=None):
         # This is the deployable external-test operating point: the threshold
         # was fixed from train OOF and is NOT re-selected from test labels.
         operating_point["test_metrics"] = evaluate_at_threshold(
-            eval_y, eval_proba, decision_threshold)
+            eval_y, eval_proba, error_threshold)
     else:
         # in_sample 模式（行为同上一里程碑）
         eval_df = df
         eval_y = y
         eval_proba = oof
         summary = evaluate_oof(eval_y, eval_proba)
-        aucs = [m["auc"] for m in fold_metrics if not np.isnan(m["auc"])]
-        pr_aucs_pos = [m["pr_auc_pos"] for m in fold_metrics
-                       if not np.isnan(m["pr_auc_pos"])]
-        pr_aucs_neg = [m["pr_auc_neg"] for m in fold_metrics
-                       if not np.isnan(m["pr_auc_neg"])]
+        aucs = [m["roc_auc"] for m in fold_metrics
+                if not np.isnan(m["roc_auc"])]
+        error_pr_aucs = [m["error_pr_auc"] for m in fold_metrics
+                         if not np.isnan(m["error_pr_auc"])]
         fnrs = [m["fnr_at_fpr5"] for m in fold_metrics
                 if not np.isnan(m["fnr_at_fpr5"])]
+        recalls = [m["error_recall_at_fpr10"] for m in fold_metrics
+                   if not np.isnan(m["error_recall_at_fpr10"])]
         summary.update({
             "mode": "in_sample",
             "fold_metrics": fold_metrics,
-            "auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
-            "auc_std": float(np.std(aucs)) if aucs else float("nan"),
-            "pr_auc_pos_mean": float(np.mean(pr_aucs_pos))
-            if pr_aucs_pos else float("nan"),
-            "pr_auc_pos_std": float(np.std(pr_aucs_pos))
-            if pr_aucs_pos else float("nan"),
-            "pr_auc_neg_mean": float(np.mean(pr_aucs_neg))
-            if pr_aucs_neg else float("nan"),
-            "pr_auc_neg_std": float(np.std(pr_aucs_neg))
-            if pr_aucs_neg else float("nan"),
+            "roc_auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
+            "roc_auc_std": float(np.std(aucs)) if aucs else float("nan"),
+            "error_pr_auc_mean": float(np.mean(error_pr_aucs))
+            if error_pr_aucs else float("nan"),
+            "error_pr_auc_std": float(np.std(error_pr_aucs))
+            if error_pr_aucs else float("nan"),
             "fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
             "fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
+            "error_recall_at_fpr10_mean": float(np.mean(recalls))
+            if recalls else float("nan"),
+            "error_recall_at_fpr10_std": float(np.std(recalls))
+            if recalls else float("nan"),
         })
 
     summary["operating_point"] = operating_point
@@ -332,8 +339,8 @@ def main(argv=None):
     summary.update({
         "cv_folds": len(fold_metrics),
         "model_paths": model_paths,
-        "n_pos": int((eval_y == 1).sum()),
-        "n_neg": int((eval_y == 0).sum()),
+        "n_actual_correct": int((eval_y == 1).sum()),
+        "n_actual_error": int((eval_y == 0).sum()),
         "name": args.name,
     })
     summary["experiment"] = {
@@ -363,12 +370,13 @@ def main(argv=None):
     applied = operating_point.get(
         "test_metrics", operating_point["train_oof_metrics"])
     logging.info(
-        "CV(%s) done: AUC=%.4f; target FPR<=%.3f, threshold=%.6g, "
-        "observed FPR=%s, pos recall=%s; %d suspects -> %s",
-        summary["mode"], summary["auc"], target_fpr, decision_threshold,
+        "CV(%s) done: error-positive ROC-AUC=%.4f; target FPR<=%.3f, "
+        "error threshold=%.6g, observed FPR=%s, error recall=%s; "
+        "%d false-negative candidates -> %s",
+        summary["mode"], summary["roc_auc"], target_fpr, error_threshold,
         "n/a" if applied["fpr"] is None else f'{applied["fpr"]:.4f}',
-        "n/a" if applied["pos_recall"] is None
-        else f'{applied["pos_recall"]:.4f}',
+        "n/a" if applied["error_recall"] is None
+        else f'{applied["error_recall"]:.4f}',
         len(susp), suspects_path)
     return summary
 
@@ -390,13 +398,12 @@ def evaluate_cross_test(model_paths, X, y):
 
     Returns (ens_proba, per_fold, agg):
     - ens_proba: mean of the K fold models' predictions on X (cross_test score).
-    - per_fold: [{fold, auc, fnr_at_fpr5}, ...] for each fold model on the
+    - per_fold: error-positive metrics for each fold model on the
       external test (NaN when y is single-class).
-    - agg: {test_auc_mean/std, test_fnr_at_fpr5_mean/std} over non-NaN folds.
+    - agg: fold means/std under the same metric convention.
     lightgbm imported lazily.
     """
     import lightgbm as lgb
-    from sklearn.metrics import average_precision_score, roc_auc_score
     y = np.asarray(y)
     probas = [lgb.Booster(model_file=p).predict(X) for p in model_paths]
     ens = average_proba(probas)
@@ -404,37 +411,41 @@ def evaluate_cross_test(model_paths, X, y):
     per_fold = []
     for k, p in enumerate(probas):
         if one_class:
-            per_fold.append({"fold": k, "auc": float("nan"),
-                             "pr_auc_pos": float("nan"),
-                             "pr_auc_neg": float("nan"),
-                             "fnr_at_fpr5": float("nan")})
+            per_fold.append({
+                "fold": k, "roc_auc": float("nan"),
+                "error_pr_auc": float("nan"),
+                "fnr_at_fpr5": float("nan"),
+                "error_recall_at_fpr10": float("nan")})
         else:
-            per_fold.append({"fold": k,
-                             "auc": float(roc_auc_score(y, p)),
-                             "pr_auc_pos": float(
-                                 average_precision_score(y, p)),
-                             "pr_auc_neg": float(
-                                 average_precision_score(1 - y, 1.0 - p)),
-                             "fnr_at_fpr5": float(fnr_at_fpr5(y, p))})
-    aucs = [m["auc"] for m in per_fold if not np.isnan(m["auc"])]
-    pr_aucs_pos = [m["pr_auc_pos"] for m in per_fold
-                   if not np.isnan(m["pr_auc_pos"])]
-    pr_aucs_neg = [m["pr_auc_neg"] for m in per_fold
-                   if not np.isnan(m["pr_auc_neg"])]
+            metrics = evaluate_oof(y, p)
+            per_fold.append({
+                "fold": k,
+                "roc_auc": metrics["roc_auc"],
+                "error_pr_auc": metrics["error_pr_auc"],
+                "fnr_at_fpr5": metrics["fnr_at_fpr5"],
+                "error_recall_at_fpr10": metrics[
+                    "error_recall_at_fpr10"],
+            })
+    aucs = [m["roc_auc"] for m in per_fold
+            if not np.isnan(m["roc_auc"])]
+    error_pr_aucs = [m["error_pr_auc"] for m in per_fold
+                     if not np.isnan(m["error_pr_auc"])]
     fnrs = [m["fnr_at_fpr5"] for m in per_fold if not np.isnan(m["fnr_at_fpr5"])]
+    recalls = [m["error_recall_at_fpr10"] for m in per_fold
+               if not np.isnan(m["error_recall_at_fpr10"])]
     agg = {
-        "test_auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
-        "test_auc_std": float(np.std(aucs)) if aucs else float("nan"),
-        "test_pr_auc_pos_mean": float(np.mean(pr_aucs_pos))
-        if pr_aucs_pos else float("nan"),
-        "test_pr_auc_pos_std": float(np.std(pr_aucs_pos))
-        if pr_aucs_pos else float("nan"),
-        "test_pr_auc_neg_mean": float(np.mean(pr_aucs_neg))
-        if pr_aucs_neg else float("nan"),
-        "test_pr_auc_neg_std": float(np.std(pr_aucs_neg))
-        if pr_aucs_neg else float("nan"),
+        "test_roc_auc_mean": float(np.mean(aucs)) if aucs else float("nan"),
+        "test_roc_auc_std": float(np.std(aucs)) if aucs else float("nan"),
+        "test_error_pr_auc_mean": float(np.mean(error_pr_aucs))
+        if error_pr_aucs else float("nan"),
+        "test_error_pr_auc_std": float(np.std(error_pr_aucs))
+        if error_pr_aucs else float("nan"),
         "test_fnr_at_fpr5_mean": float(np.mean(fnrs)) if fnrs else float("nan"),
         "test_fnr_at_fpr5_std": float(np.std(fnrs)) if fnrs else float("nan"),
+        "test_error_recall_at_fpr10_mean": float(np.mean(recalls))
+        if recalls else float("nan"),
+        "test_error_recall_at_fpr10_std": float(np.std(recalls))
+        if recalls else float("nan"),
     }
     return ens, per_fold, agg
 

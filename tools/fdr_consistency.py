@@ -86,8 +86,11 @@ def main(argv=None):
     feature_cols = resolve_feature_cols(None, [args.clean_csv], "label")
     clean_folds = [b.predict(clean[feature_cols].values) for b in models]
     clean_ens = cv_core.average_proba(clean_folds)
-    thr = cv_core.working_points(
-        clean["label"].values, clean_ens)["neg_recall_95"]["threshold"]
+    # FPR is defined on actual-correct identifications under the canonical
+    # error-positive convention. bin_recall consumes a trust-score threshold.
+    point = cv_core.working_points(
+        clean["label"].values, clean_ens)["fpr_5"]
+    thr = point["trust_threshold"]
 
     pos50 = pd.read_csv(args.pos50_csv)
     pos50_folds = [b.predict(pos50[feature_cols].values) for b in models]

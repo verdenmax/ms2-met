@@ -55,25 +55,35 @@ tree_method: hist XGBoost 默认使用 exact 树构建方法，而 LightGBM 使�
 
 ## CV 决策阈值
 
-`train-cv-*` 默认使用训练数据的 OOF 预测选择决策阈值，目标为
-`FPR <= 10%`（即负例召回至少 90%）：
+为兼容现有数据和模型，CSV 仍保存 `label=1`（正确鉴定），模型仍输出
+`trust_score=P(正确鉴定)`。对外评估统一使用错误鉴定为阳性：
+
+```text
+error_truth = 1 - label
+error_score = 1 - trust_score
+```
+
+因此 FP 是正确鉴定被误报为错误，FN 是错误鉴定被漏判为正确。`train-cv-*`
+默认使用训练数据的 OOF 预测选择 error-score 阈值，目标为 `FPR <= 10%`：
 
 ```yaml
 operating_point:
   target_fpr: 0.10
 ```
 
-规则为 `score >= threshold => positive`。阈值只从训练 OOF 负例分数
-确定；`cross_test` 会锁定该阈值后再评估外部测试集，不会根据测试标签
-重新选择阈值。结果写入 CV JSON 的 `operating_point`，其中
-`train_oof_metrics` 是阈值选择侧指标，`test_metrics` 是外部测试集上的
-实际 FPR、正例召回和负例召回。发生域偏移时，外部测试 FPR 可能高于
-10%，此时应报告实际值，不能在测试集上重新调阈值。
+规则为 `error_score >= error_threshold => 错误鉴定`（等价于
+`trust_score <= trust_threshold`）。阈值只根据训练 OOF 中实际正确鉴定的
+error score 确定；`cross_test` 会锁定该阈值后再评估外部测试集，不会根据
+测试标签重新选择。结果写入 CV JSON 的 `operating_point`，其中
+`train_oof_metrics` 是阈值选择侧指标，`test_metrics` 是外部测试集上的实际
+FPR、FNR 与 error recall。发生域偏移时，外部测试 FPR 可能高于 10%，此时
+应报告实际值，不能在测试集上重新调阈值。
 
-内层 early-stopping 验证集也先聚合到 `sequence` 级，再按正负标签
-分层抽取；同一 sequence 必须只有一个标签。每折 JSON 的
-`fold_metrics[].split_counts` 会记录 train/valid/OOF 的正负行数和正负
-sequence 数。默认要求每块的少数类至少有 5 个 sequence，否则训练直接
+内层 early-stopping 验证集按 `sequence` 分组抽取，同一 sequence 不跨
+train/valid；允许一个 sequence 同时包含正确样本及其构造错误样本。每折 JSON
+的 `fold_metrics[].split_counts` 会记录 train/valid/OOF 的正确/错误行数、
+相关 sequence 数和 mixed group 数。默认要求每块的少数类至少有 5 个
+sequence，否则训练直接
 失败并提示调整折数、验证比例或补充负例：
 
 ```yaml
@@ -81,49 +91,22 @@ training:
   min_class_groups_per_split: 5
 ```
 
-示例结果: 
+新结果的核心字段示例：
 
-```
-"accuracy": 0.867053755800786,  准确率：(TP+TN) / ALL
-"auc": 0.8965088797455758,      模型区分正负样本的能力，不受数据分布影响
-"confusion_matrix": [
-    [
-        89943,
-        131
-    ],
-    [
-        23819,
-        66255
-    ]
-],
-"classification_report": {
-    "0": {
-        "precision": 0.790624285789631,
-        "recall": 0.9985456402513488,
-        "f1-score": 0.8825035813104652,
-        "support": 90074.0
-    },
-    "1": {
-        "precision": 0.9980266923748983,
-        "recall": 0.7355618713502231,
-        "f1-score": 0.8469257318164387,
-        "support": 90074.0
-    },
-    "accuracy": 0.867053755800786,
-    "macro avg": {
-        "precision": 0.8943254890822646,
-        "recall": 0.867053755800786,
-        "f1-score": 0.864714656563452,
-        "support": 180148.0
-    },
-    "weighted avg": {
-        "precision": 0.8943254890822646,
-        "recall": 0.867053755800786,
-        "f1-score": 0.8647146565634519,
-        "support": 180148.0
-    }
+```json
+{
+  "metric_semantics": "error_identification_positive_v1",
+  "positive_class": "incorrect_identification",
+  "roc_auc": 0.90,
+  "error_pr_auc": 0.62,
+  "fnr_at_fpr5": 0.28,
+  "error_recall_at_fpr10": 0.80,
+  "n_actual_correct": 1000,
+  "n_actual_error": 200
 }
 ```
+
+没有 `metric_semantics` 的历史结果使用旧口径，不应与新结果直接混合。
 
 图
 

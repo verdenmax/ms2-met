@@ -84,13 +84,15 @@ def test_threshold_ties_inclusive():
     assert out[(0, 0.01)]["ens_recall"] == pytest.approx(1.0)  # >= thr
 
 
-def test_thr_matches_working_points_quantile():
+def test_error_positive_working_point_controls_false_alarm_rate():
     import cv_core
     rng = np.random.default_rng(0)
     y = np.array([0] * 100 + [1] * 100)
     s = np.concatenate([rng.random(100), rng.random(100) + .5])
-    thr = cv_core.working_points(y, s)["neg_recall_95"]["threshold"]
-    assert thr == pytest.approx(float(np.quantile(s[y == 0], 0.95)))
+    point = cv_core.working_points(y, s)["fpr_5"]
+    assert point["fpr"] <= 0.05
+    assert point["error_threshold"] == cv_core.threshold_at_fpr(
+        y, s, target_fpr=0.05)
 
 
 def test_no_top_level_lightgbm_import():
