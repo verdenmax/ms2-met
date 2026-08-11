@@ -172,25 +172,44 @@ def test_workflows_use_configured_labeling(configured, expected, workflow_name):
     assert features["total_label_shift"] == pytest.approx(expected_shift)
     assert features["total_silac_shift"] == pytest.approx(expected_shift)
     assert features["labeling"] == canonical_labeling_name(heavy_type)
-    if heavy_type is HeavyType.SILAC:
-        assert features["isotope_model_valid"] == 1
-        assert np.isnan(features["isotope_correlation"])
-    else:
-        assert features["isotope_model_valid"] == 0
-        assert np.isnan(features["isotope_correlation"])
+    assert features["isotope_model"] == "ideal_full_label_v1"
+    assert features["isotope_model_valid"] == 1
+    assert np.isnan(features["isotope_correlation"])
 
 
-def test_silac_isotope_envelope_removes_fixed_label_atoms():
+def test_ideal_isotope_envelopes_are_labeling_specific():
     from spectrum.labeling import HeavyType
     from spectrum.psm_info import get_theoretical_isotope_ratios
 
-    silac = get_theoretical_isotope_ratios(
-        "PEPTIDEK", heavy_type=HeavyType.SILAC)
-    natural = get_theoretical_isotope_ratios(
-        "PEPTIDEK", heavy_type=HeavyType.CHEAVY)
-    assert silac[0] == pytest.approx(1.0)
-    assert silac[1] < natural[1]
-    assert silac[2] < natural[2]
+    envelopes = {
+        heavy_type: get_theoretical_isotope_ratios(
+            "PEPTIDEK", heavy_type=heavy_type)
+        for heavy_type in HeavyType
+    }
+    assert all(ratios[0] == pytest.approx(1.0)
+               for ratios in envelopes.values())
+    assert len({round(ratios[1], 12)
+                for ratios in envelopes.values()}) == 3
+
+
+@pytest.mark.parametrize(
+    ("heavy_type", "expected"),
+    [
+        ("CHEAVY", [1.0, 0.0049902154359982255,
+                     0.0041155869265009516]),
+        ("NHEAVY", [1.0, 0.022968374016725454,
+                     0.004256602218591709]),
+    ],
+)
+def test_uniform_label_ideal_envelope_pins_fixed_element_physics(
+        heavy_type, expected):
+    """G = C2H5NO2; the selected uniform-label element is fixed/heavy."""
+    from spectrum.labeling import HeavyType
+    from spectrum.psm_info import get_theoretical_isotope_ratios
+
+    observed = get_theoretical_isotope_ratios(
+        "G", heavy_type=HeavyType[heavy_type])
+    assert observed == pytest.approx(expected, rel=1e-12, abs=1e-12)
 
 
 def test_isotope_envelope_includes_known_modification_composition():
@@ -206,6 +225,16 @@ def test_isotope_envelope_rejects_unknown_modification():
 
     with pytest.raises(ValueError, match="Unimod"):
         get_theoretical_isotope_ratios("PEPTIDEK", [(3, 999999)])
+
+
+@pytest.mark.parametrize("heavy_type", ["CHEAVY", "NHEAVY"])
+def test_uniform_label_isotope_envelope_rejects_modifications(heavy_type):
+    from spectrum.labeling import HeavyType
+    from spectrum.psm_info import get_theoretical_isotope_ratios
+
+    with pytest.raises(NotImplementedError, match="unmodified"):
+        get_theoretical_isotope_ratios(
+            "PEPTIDEM", [(7, 35)], HeavyType[heavy_type])
 
 
 def test_workflow_labeling_defaults_to_silac_and_rejects_unknown():

@@ -13,6 +13,7 @@ from spectrum.psm_info import PSMInfo
 from spectrum.psm_info import get_theoretical_isotope_ratios
 from spectrum.labeling import (
     HeavyType,
+    IDEAL_FULL_LABEL_ISOTOPE_MODEL,
     canonical_labeling_name,
     get_heavy_increase_mass,
     parse_heavy_type,
@@ -47,13 +48,12 @@ def _extract_isotope_features(
     mass_tol_ppm: float,
     heavy_type: HeavyType,
 ) -> dict:
-    """Extract isotope evidence only where the current model is valid.
+    """Extract isotope evidence under the ideal full-label model.
 
-    Uniform 13C/15N envelopes depend on labeling enrichment/purity, which is
-    not configured by this project. Returning NaN prevents a placeholder zero
-    from masquerading as a measured correlation.
+    SILAC, uniform C13, and uniform N15 all assume 100% isotope purity and
+    100% biological incorporation.  Purity-aware lower-mass isotopologues are
+    outside this first-stage model.
     """
-    model_valid = heavy_type is HeavyType.SILAC
     has_heavy_signal = (
         len(heavy_xic) > 0
         and np.any(np.asarray(heavy_xic["intensity"]) > 0)
@@ -63,28 +63,24 @@ def _extract_isotope_features(
         apex_idx = int(np.argmax(heavy_xic["intensity"]))
         mass_shift_error = float(heavy_xic["ppm_error"][apex_idx])
 
-    if not model_valid:
-        return {
-            "isotope_correlation": float("nan"),
-            "isotope_model_valid": 0,
-            "mass_shift_error": mass_shift_error,
-        }
     try:
         theoretical = np.array(get_theoretical_isotope_ratios(
             sequence, modifications, heavy_type), dtype="f8")
-    except ValueError:
+    except (NotImplementedError, ValueError):
         logging.warning(
             "Cannot construct isotope envelope for sequence=%s mods=%s",
             sequence, modifications, exc_info=True)
         return {
             "isotope_correlation": float("nan"),
             "isotope_model_valid": 0,
+            "isotope_model": IDEAL_FULL_LABEL_ISOTOPE_MODEL,
             "mass_shift_error": mass_shift_error,
         }
     if not has_heavy_signal:
         return {
             "isotope_correlation": float("nan"),
             "isotope_model_valid": 1,
+            "isotope_model": IDEAL_FULL_LABEL_ISOTOPE_MODEL,
             "mass_shift_error": float("nan"),
         }
 
@@ -119,6 +115,7 @@ def _extract_isotope_features(
     return {
         "isotope_correlation": correlation,
         "isotope_model_valid": 1,
+        "isotope_model": IDEAL_FULL_LABEL_ISOTOPE_MODEL,
         "mass_shift_error": mass_shift_error,
     }
 

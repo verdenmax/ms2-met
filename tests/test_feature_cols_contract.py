@@ -57,7 +57,7 @@ def test_hard_negative_provenance_is_always_metadata():
     expected = {
         "rt", "negative_source", "negative_confidence", "query_id",
         "parent_id", "group_id", "generator", "generator_seed",
-        "heavy_confirmed", "labeling",
+        "heavy_confirmed", "labeling", "isotope_model",
     }
     assert expected <= META_COLUMNS
 

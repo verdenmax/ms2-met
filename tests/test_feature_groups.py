@@ -69,6 +69,7 @@ def test_precursor_window_position_is_not_observed_ms1_evidence():
 
 
 def test_evaluability_and_observation_counts_have_correct_groups():
+    assert "isotope_model" in METADATA_COLUMNS
     assert "precursor_xic_empty" in ELIGIBILITY_FEATURES
     assert "q1a_total_count" in MS2_OBSERVED_FEATURES
     assert "n_fragments_in_F" in MS2_PREDICTED_FEATURES

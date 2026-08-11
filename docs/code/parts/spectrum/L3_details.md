@@ -68,6 +68,7 @@
 - SILAC：每个 K +8.014204（C(-6)¹³C(6)N(-2)¹⁵N(2)）、R +10.008275（C(-6)N(-4)¹³C(6)¹⁵N(4)），硬编码常量。
 - CHEAVY：`Composition(seq)['C'] × (¹³C−¹²C=1.003355)`；NHEAVY：`['N'] × (¹⁵N−¹⁴N=0.997035)`。
 - 重标前体 m/z = (轻前体质量 + 质量增量)/charge。
+- 理想同位素包络 `ideal_full_label_v1`：假设标记纯度、掺入率均为 100%；SILAC 从残余天然丰度组成中扣除 K/R 固定重原子，CHEAVY 扣除全部 C，NHEAVY 扣除全部 N，再卷积其余 C/H/N/O/S 得到归一化 M0/M1/M2。C13/N15 修饰肽及不完全标记 H-1/H-2 尚未支持。
 - **⚠️ 修饰原子的重标未实现**：CHEAVY/NHEAVY 全代谢标记下，修饰基团里的 C/N 原子同样应被 ¹³C/¹⁵N 替换，但 `get_heavy_increase_mass` 只统计序列骨架/侧链原子。为避免静默返回错误质量，`get_C_N_HEAVY_precursor_mz` / `get_fragment_ions` 在 `heavy_type∈{CHEAVY,NHEAVY}` 且肽段带修饰（`_modify` 非空）时经 `_assert_heavy_supported` 抛 `NotImplementedError`（代码内 TODO）。SILAC 只标记 K/R、不涉及修饰，**不受影响**；无修饰的 CHEAVY/NHEAVY 仍正确。
 - `has_label_site(sequence, heavy_type)`：判断肽段是否存在标记位点。SILAC 仅当含 K/R 才有重标搭档（否则重=轻、不可校验）；CHEAVY/NHEAVY 为全原子标记，任何非空肽段都含 C/N 故恒 True；空序列 False。上游 `tools/extract_common`、`tools/trap_domain_filter` 用它筛掉无法做轻重校验的肽段。
 

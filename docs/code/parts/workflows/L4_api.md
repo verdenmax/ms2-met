@@ -40,7 +40,7 @@
 ## workflows/single_work.py
 
 - `multi_batch_work(psm1: PSMInfo, dia_data1: DIAData, psm2: PSMInfo, dia_data2: DIAData, config: ConfigParser) -> dict` — 双文件/双 PSM 特征提取，返回完整特征 dict。
-- `single_pair_work(psm: PSMInfo, dia_data: DIAData, config: ConfigParser, pred_frags: dict | None = None, speclib_enabled: bool = False) -> dict` — 单文件特征提取（内部经 `get_heavy_info(HeavyType.SILAC)` 推 heavy），schema 与 `multi_batch_work` 对齐。`speclib_enabled` 时循环内收集可分碎片记录并在 `return` 前合并谱库预测强度特征（I1/I2/I3/J2/J5/coelut，详见 pred_integrate 节）。
+- `single_pair_work(psm: PSMInfo, dia_data: DIAData, config: ConfigParser, pred_frags: dict | None = None, speclib_enabled: bool = False) -> dict` — 单文件特征提取（内部按 `[general] labeling` 解析 `HeavyType` 后经 `get_heavy_info` 推 heavy），schema 与 `multi_batch_work` 对齐。`speclib_enabled` 时循环内收集可分碎片记录并在 `return` 前合并谱库预测强度特征（I1/I2/I3/J2/J5/coelut，详见 pred_integrate 节）。
 - `calc_xic_score(light_xic, heavy_xic, center_rt: float|None=None, heavy_center_rt: float|None=None, intensity_threshold: float=1e-10) -> dict` — 一对 XIC 的 19 字段打分（pearson/cosine/apex_delta(±)/mz_avg_err/强度比/snr/峰形/cycle_offset…）；空对返回 `_default_xic_score()`。
 - `extract_ion_pearson_features(ions_pearsons: list) -> dict` — count/p25/p50/p75/mean/std/min/high_ratio；`count==1` 时 std=NaN。
 - `extract_ion_numeric_features(values: list, prefix: str) -> dict` — `{prefix}_mean/p50/std/max`，清洗 NaN/Inf。
@@ -99,6 +99,7 @@
 
 接入参数变更：
 - `single_pair_work(psm, dia_data, config, pred_frags=None, speclib_enabled=False)` — 循环内收集**可分**碎片记录，`return` 前合并 I1 + `has_lib_pred`/`psm_is_split_window`/`heavy_out_of_range`（仅当 `speclib_enabled`）。
+- `_extract_isotope_features(...) -> dict` — 按 `ideal_full_label_v1` 提取 heavy M0/M1/M2，与理论残余天然丰度包络计算 `isotope_correlation`；三种标记的未修饰肽均置 `isotope_model_valid=1`，并输出非训练元数据 `isotope_model`。C13/N15 修饰肽保持不支持；纯度感知 H-1/H-2 尚未实现。
 - `PairFlow._build_pred_store() -> PredStore|None` — `[speclib] speclib_dir` 配了才一遍流式扫库（记 hit/miss）。
 - `PairFlow._build_raw_tasks(..., pred_store=None)` — `feature_type=0` 时给每个任务 dict 附 `pred_frags`（命中=预测碎片 dict，未命中=None；speclib 关闭则不附）。
 

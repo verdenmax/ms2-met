@@ -74,10 +74,13 @@ The canonical distribution feature is `total_label_shift`. Legacy
 `total_silac_shift` is accepted only for SILAC tables; pre-fix C13/N15 values
 are rejected because they were calculated with SILAC chemistry.
 
-For uniform C13/N15, the current natural-abundance isotope-envelope feature is
-not scientifically calibrated without labeling enrichment/purity. Feature
-extraction therefore writes `isotope_correlation=NaN` and
-`isotope_model_valid=0` rather than treating a placeholder zero as evidence.
+For unmodified uniform C13/N15 peptides, feature extraction uses the explicit
+`ideal_full_label_v1` isotope-envelope assumption: isotope purity and
+biological incorporation are both 100%. C13 fixes every carbon atom and N15
+fixes every nitrogen atom; the remaining elements produce the residual
+natural-abundance M0/M1/M2 envelope. The output records
+`isotope_model=ideal_full_label_v1` and `isotope_model_valid=1`. Purity-aware
+H-1/H-2 lower-mass isotopologues remain outside this first-stage model.
 
 ## Output labels
 

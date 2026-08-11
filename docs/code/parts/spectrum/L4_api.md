@@ -76,8 +76,14 @@ pass-1：仅取每谱 scan 号、`seek(peak_num*16)` 跳过峰（不解码），
 
 ## spectrum/psm_info.py
 
-### 模块常量
-`MASS_DELTA_C13_C12=1.003355`、`MASS_DELTA_N15_N14=0.997035`、`PROTON_MASS=1.00727646677`；模块加载时读 `unimod.xml` 为全局 `unimods`。
+### `spectrum/labeling.py`
+
+- 模块常量：`MASS_DELTA_C13_C12=1.003355`、`MASS_DELTA_N15_N14=0.997035`、`IDEAL_FULL_LABEL_ISOTOPE_MODEL="ideal_full_label_v1"`。
+- `get_fixed_heavy_atom_counts(sequence, heavy_type) -> dict[str,int]` — 返回理想完全标记下不再参与残余天然同位素包络的固定重原子：SILAC 为 K/R 标记 C/N，CHEAVY 为全部 C，NHEAVY 为全部 N。
+
+### `spectrum/psm_info.py`
+
+模块常量 `PROTON_MASS=1.00727646677`；模块加载时读 `unimod.xml` 为全局 `unimods`。
 
 ### `class HeavyType(Enum)`
 `SILAC=1`、`CHEAVY=2`、`NHEAVY=3`。
@@ -94,6 +100,7 @@ pass-1：仅取每谱 scan 号、`seek(peak_num*16)` 跳过峰（不解码），
 - `get_SILAC_precursor_mz() -> float` / `get_C_N_HEAVY_precursor_mz(heavy_type) -> float` — 重标前体 m/z（后者带修饰 + CHEAVY/NHEAVY 会抛 `NotImplementedError`）。
 - `get_fragment_ions(heavy_type) -> (b_ans, y_ans)` — 元素为 `("b"/"y", 序号, light_mass, heavy_mass)`（带修饰 + CHEAVY/NHEAVY 会抛 `NotImplementedError`）。
 - `get_heavy_info(heavy_type) -> (heavy_precursor_mz, b_ions + y_ions)`。
+- `get_theoretical_isotope_ratios(sequence, modifications=(), heavy_type=SILAC) -> list[float]` — 在 `ideal_full_label_v1` 假设下返回归一化 `[M0,M1,M2]`；C13/N15 带修饰时抛 `NotImplementedError`。
 
 ### `get_SILAC_increase_mass(sequence) -> float`
 K +8.014204、R +10.008275。

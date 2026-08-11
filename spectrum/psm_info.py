@@ -9,9 +9,12 @@ from spectrum.labeling import (
     HeavyType,
     MASS_DELTA_C13_C12,
     MASS_DELTA_N15_N14,
+    get_fixed_heavy_atom_counts,
     get_heavy_increase_mass,
     get_silac_increase_mass,
     has_label_site,
+    parse_heavy_type,
+    supports_modified_peptide,
 )
 
 
@@ -239,15 +242,22 @@ def get_theoretical_isotope_ratios(
     modifications=(),
     heavy_type: HeavyType = HeavyType.SILAC,
 ) -> list[float]:
-    """Return theoretical nominal [M0, M1, M2] ratios.
+    """Return ideal-full-label nominal [M0, M1, M2] ratios.
 
-    Known Unimod compositions are included.  For SILAC, the labelled C/N
-    atoms on K and R are fixed heavy atoms and therefore do not contribute to
-    the *residual natural-isotope* envelope around the heavy monoisotopic
-    peak.  The three-bin convolution also includes the important +2
-    contributions from 18O and 34S, which the previous Poisson-M+1 shortcut
-    omitted.
+    The selected label's atoms are fixed heavy isotopes at 100% isotope purity
+    and 100% biological incorporation, so they do not contribute to the
+    residual natural-isotope envelope around the heavy monoisotopic peak.
+    Known Unimod compositions are included for SILAC.  Uniform C13/N15 still
+    rejects modifications because their labelled C/N mass shifts are not yet
+    implemented.  The three-bin convolution includes the important +2
+    contributions from 18O and 34S.
     """
+    selected = parse_heavy_type(heavy_type)
+    if modifications and not supports_modified_peptide(selected):
+        raise NotImplementedError(
+            "ideal full-label C13/N15 isotope envelopes currently support "
+            "unmodified peptides only")
+
     comp = mass.Composition(sequence)
     for _, modification_id in modifications:
         try:
@@ -259,9 +269,9 @@ def get_theoretical_isotope_ratios(
             ) from exc
         comp += mod_comp
 
-    if heavy_type is HeavyType.SILAC:
-        comp["C"] -= 6 * (sequence.count("K") + sequence.count("R"))
-        comp["N"] -= 2 * sequence.count("K") + 4 * sequence.count("R")
+    for element, fixed_count in get_fixed_heavy_atom_counts(
+            sequence, selected).items():
+        comp[element] -= fixed_count
 
     if any(float(count) < 0 for count in comp.values()):
         raise ValueError(f"invalid isotope composition for {sequence!r}: {comp}")

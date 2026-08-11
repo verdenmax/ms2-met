@@ -29,15 +29,15 @@
 
 ## 特征提取流程（`single_pair_work` / `multi_batch_work`）
 
-两函数结构对称，输出**同一 schema**（schema parity 是硬约束，type 0/1/2 必须列对齐）。差异：单文件版从 `psm.get_heavy_info(HeavyType.SILAC)` 在同一 `DIAData` 内推出 heavy 母离子与碎片；双文件版直接用两个 PSM、两个 DIAData。
+两函数结构对称，输出**同一 schema**（schema parity 是硬约束，type 0/1/2 必须列对齐）。差异：单文件版按 `[general] labeling` 解析出的 `HeavyType`，从 `psm.get_heavy_info(heavy_type)` 在同一 `DIAData` 内推出 heavy 母离子与碎片；双文件版直接用两个 PSM、两个 DIAData。
 
 每条 PSM 的特征分几大块：
 
 1. **母离子 XIC**：`xic_peaks_extreact` 取轻/重标母离子 XIC → `calc_xic_score` 给 19 个 `precursor_*` 特征；空对（任一 XIC 空或全零）走默认全零分支并置 `precursor_xic_empty=1`。
-2. **同位素 + 质量校验**：在 heavy M0 apex RT 处插值取 M0/M1/M2 强度，与 `get_theoretical_isotope_ratios` 做 cosine → `isotope_correlation`；apex 处 ppm → `mass_shift_error`。同位素间距 `1.003355 / charge`。
+2. **同位素 + 质量校验**：三种标记均采用 `ideal_full_label_v1`（标记纯度和生物掺入率 100%）。SILAC 固定 K/R 标记原子，C13 固定全部 C，N15 固定全部 N；剩余元素形成天然丰度 M0/M1/M2 包络。在 heavy M0 apex RT 处插值取 M0/M1/M2 强度，与 `get_theoretical_isotope_ratios` 做 cosine → `isotope_correlation`；apex 处 ppm → `mass_shift_error`。输出 `isotope_model=ideal_full_label_v1`、支持行 `isotope_model_valid=1`。同位素间距 `1.003355 / charge`；不完全标记的 H-1/H-2 低质量侧峰尚未建模。
 3. **碎片离子循环**：遍历 b/y 理论碎片，逐对取 MS2 XIC（`xic_ms2_peaks_extract`），`calc_xic_score` 打分后累计到 `pearsons_map`（b/y/all）与十余个碎片级列表；同时喂给 `Q1aAccumulator`。
 4. **碎片聚合**：`extract_ion_pearson_features`（分位数/均值/std/high_ratio）、`extract_ion_numeric_features`（mean/p50/std/max）汇总各列表；强度加权 `frag_corr_weighted`；H/L 比一致性 `_calc_hl_ratio_consistency`。
-5. **序列/窗口/Q1a**：`kr_count`、`modification_count`、`total_silac_shift`、`window_width`、`precursor_centering`、`heavy_in_raw`，最后 merge `q1a_acc.compute_features()`。
+5. **序列/窗口/Q1a**：`kr_count`、`modification_count`、`total_label_shift`（及兼容别名 `total_silac_shift`）、`labeling`、`window_width`、`precursor_centering`、`heavy_in_raw`，最后 merge `q1a_acc.compute_features()`。
 
 ### 碎片跳过语义（边界设计）
 

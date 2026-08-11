@@ -56,7 +56,7 @@
 - 只有没有 `feature_arm` 的历史配置才使用自动检测：`explicit` 非空则直接
   使用，否则取所有输入表头的交集并剔除 META/EXCLUDED。
 - 剔除三类：
-  - `META_COLUMNS`：标识/标签列（`sequence/charge/raw_title*/protein_names/label/label_type/precursor_mz/sequence_len`），与 `tools/eval_baseline.py` 一致。
+  - `META_COLUMNS`：标识/标签/模型假设列（`sequence/charge/raw_title*/protein_names/label/label_type/precursor_mz/sequence_len/labeling/isotope_model`），与 `tools/eval_baseline.py` 一致。
   - `EXCLUDED_EXTRA`：非物理过拟合或跨数据集泄露列——`modification_count`（修饰→负例的伪规则）、`window_width`（=数据集 ID 代理）、`fragment_xic_empty_count`（常量 0）、`fragment_same_mass_count` / `fragment_heavy_absent_count`（被 DIA 窗宽决定，cross_test 下成 dataset 代理）。
   - `target_col`。
 - 结果为空抛 `ValueError`（P2-7）。

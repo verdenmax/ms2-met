@@ -20,6 +20,7 @@ from typing import Iterable, Sequence
 # in features.csv but are not model inputs.
 METADATA_COLUMNS = frozenset({
     "sequence", "charge", "raw_title1", "raw_title2", "labeling",
+    "isotope_model",
     "protein_names", "label", "label_type",
     "precursor_mz", "sequence_len", "rt",
     "negative_source", "negative_confidence", "query_id", "parent_id",

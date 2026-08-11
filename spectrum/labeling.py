@@ -19,6 +19,7 @@ from pyteomics import mass
 
 MASS_DELTA_C13_C12 = 1.003355
 MASS_DELTA_N15_N14 = 0.997035
+IDEAL_FULL_LABEL_ISOTOPE_MODEL = "ideal_full_label_v1"
 
 
 class HeavyType(Enum):
@@ -88,6 +89,33 @@ def get_heavy_increase_mass(
     if selected is HeavyType.CHEAVY:
         return float(composition["C"] * MASS_DELTA_C13_C12)
     return float(composition["N"] * MASS_DELTA_N15_N14)
+
+
+def get_fixed_heavy_atom_counts(
+    sequence: str,
+    heavy_type: HeavyType,
+) -> dict[str, int]:
+    """Return atoms treated as deterministic heavy isotopes.
+
+    The ideal full-label model assumes isotope purity and biological
+    incorporation are both 100%.  Fixed atoms therefore shift the heavy
+    monoisotopic mass but do not contribute to the residual natural-isotope
+    M+1/M+2 envelope.
+    """
+    seq = str(sequence).upper()
+    selected = parse_heavy_type(heavy_type)
+    if selected is HeavyType.SILAC:
+        n_lys = seq.count("K")
+        n_arg = seq.count("R")
+        return {
+            "C": 6 * (n_lys + n_arg),
+            "N": 2 * n_lys + 4 * n_arg,
+        }
+
+    composition = mass.Composition(seq)
+    if selected is HeavyType.CHEAVY:
+        return {"C": int(composition["C"])}
+    return {"N": int(composition["N"])}
 
 
 def has_label_site(

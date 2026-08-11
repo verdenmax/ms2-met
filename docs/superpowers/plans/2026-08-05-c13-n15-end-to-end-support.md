@@ -1,5 +1,12 @@
 # SILAC / Uniform C13 / Uniform N15 End-to-End Support Plan
 
+> **Status update (2026-08-11):** The original conservative decision below to
+> disable C13/N15 isotope evidence has been superseded by
+> `ideal_full_label_v1`. Unmodified uniform-label peptides now assume 100%
+> isotope purity and 100% biological incorporation; purity-aware H-1/H-2
+> isotopologues remain future work. The historical checklist is retained to
+> document the earlier migration decisions.
+
 > Implementation must proceed task by task with the checkboxes below. This
 > document is a repair plan only; creating it does not authorize code changes.
 
