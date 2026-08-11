@@ -580,6 +580,8 @@ def generate_queries(cfg: QueryBuildConfig) -> dict:
                     "heavy_precursor_mz": (
                         candidate_mz + candidate_shift / charge),
                     "sequence_len": len(candidate),
+                    "sequence_kr_count": (
+                        candidate.count("K") + candidate.count("R")),
                     "kr_count": candidate.count("K") + candidate.count("R"),
                     "label_shift": candidate_shift,
                     "parent_sequence": sequence,
@@ -833,7 +835,7 @@ def _resolve_distribution_columns(
 ) -> tuple[tuple[str, ...], str | None, bool]:
     """Validate matching fields and resolve the SILAC-only legacy alias."""
     requested = list(cfg.distribution_columns)
-    uniform_label = cfg.labeling in (HeavyType.CHEAVY, HeavyType.NHEAVY)
+    uniform_label = cfg.labeling in (HeavyType.C13, HeavyType.N15)
     if uniform_label and "total_silac_shift" in requested:
         raise ValueError(
             "C13/N15 assembly requires total_label_shift; "

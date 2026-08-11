@@ -389,8 +389,8 @@ def test_q1a_features_are_not_in_sequence_only_group():
     for q1a_feat in q1a_features:
         assert q1a_feat not in groups["sequence_only"], (
             f"{q1a_feat} accidentally classified as sequence_only")
-        assert q1a_feat in groups["silac_only"], (
-            f"{q1a_feat} missing from silac_only")
+        assert q1a_feat in groups["label_evidence_only"], (
+            f"{q1a_feat} missing from label_evidence_only")
 
 
 # ----------------------------------------------------------------------

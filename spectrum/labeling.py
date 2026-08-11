@@ -24,24 +24,28 @@ IDEAL_FULL_LABEL_ISOTOPE_MODEL = "ideal_full_label_v1"
 
 class HeavyType(Enum):
     SILAC = 1
+    C13 = 2
+    N15 = 3
+    # Deprecated source-compatibility aliases.  Serialized/user-facing names
+    # are c13/n15 and new code should use C13/N15.
     CHEAVY = 2
     NHEAVY = 3
 
 
 _ALIASES = {
     "silac": HeavyType.SILAC,
-    "c13": HeavyType.CHEAVY,
-    "13c": HeavyType.CHEAVY,
-    "cheavy": HeavyType.CHEAVY,
-    "n15": HeavyType.NHEAVY,
-    "15n": HeavyType.NHEAVY,
-    "nheavy": HeavyType.NHEAVY,
+    "c13": HeavyType.C13,
+    "13c": HeavyType.C13,
+    "cheavy": HeavyType.C13,
+    "n15": HeavyType.N15,
+    "15n": HeavyType.N15,
+    "nheavy": HeavyType.N15,
 }
 
 _CANONICAL_NAMES = {
     HeavyType.SILAC: "silac",
-    HeavyType.CHEAVY: "c13",
-    HeavyType.NHEAVY: "n15",
+    HeavyType.C13: "c13",
+    HeavyType.N15: "n15",
 }
 
 
@@ -86,7 +90,7 @@ def get_heavy_increase_mass(
         return get_silac_increase_mass(sequence)
 
     composition = mass.Composition(str(sequence).upper())
-    if selected is HeavyType.CHEAVY:
+    if selected is HeavyType.C13:
         return float(composition["C"] * MASS_DELTA_C13_C12)
     return float(composition["N"] * MASS_DELTA_N15_N14)
 
@@ -113,7 +117,7 @@ def get_fixed_heavy_atom_counts(
         }
 
     composition = mass.Composition(seq)
-    if selected is HeavyType.CHEAVY:
+    if selected is HeavyType.C13:
         return {"C": int(composition["C"])}
     return {"N": int(composition["N"])}
 

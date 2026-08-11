@@ -73,3 +73,15 @@ def test_canonical_shift_feature_replaces_legacy_alias(tmp_path):
     features = resolve_feature_cols([], [str(path)], "label")
     assert "total_label_shift" in features
     assert "total_silac_shift" not in features
+
+
+def test_canonical_sequence_count_replaces_legacy_alias(tmp_path):
+    import pandas as pd
+
+    path = tmp_path / "features.csv"
+    pd.DataFrame(columns=[
+        "label", "precursor_pearson", "sequence_kr_count", "kr_count",
+    ]).to_csv(path, index=False)
+    features = resolve_feature_cols([], [str(path)], "label")
+    assert "sequence_kr_count" in features
+    assert "kr_count" not in features

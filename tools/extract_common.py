@@ -532,7 +532,7 @@ def filter_by_label_site(psms: list, heavy_type: HeavyType) -> list:
     """Drop PSMs (both target and trap) with no metabolic-label site under
     heavy_type — they cannot be light/heavy validated (spec §12 class 4).
 
-    Under SILAC this drops no-K/R peptides; under CHEAVY/NHEAVY every peptide
+    Under SILAC this drops no-K/R peptides; under C13/N15 every peptide
     is labeled so nothing is dropped.
     """
     kept = []
@@ -682,14 +682,32 @@ def extract_n_engines(config: configparser.ConfigParser) -> list:
     return psms
 
 
-def write_psms_to_json(psms: list, output_path: str):
-    """把 PSMInfo 列表序列化到 JSON。"""
+def write_psms_to_json(
+    psms: list,
+    output_path: str,
+    *,
+    labeling: HeavyType | str | None = None,
+    source_config_path: str | None = None,
+):
+    """把 PSMInfo 列表序列化到 JSON，并可写出化学信息 sidecar。
+
+    ``labeling=None`` 仅为旧的库调用保留。命令行生产路径始终传入标记
+    类型并生成 ``*.json.manifest.json``。
+    """
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump([p.to_dict() for p in psms], f, indent=2)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump([p.to_dict() for p in psms], f, indent=2,
+                  ensure_ascii=False)
+        f.write("\n")
     logging.info(f"已写入 {len(psms)} 条 PSM 到 {output_path}")
+    if labeling is not None:
+        from spectrum.psm_dataset_manifest import write_manifest
+        write_manifest(
+            output_path, psms, labeling,
+            source_config_path=source_config_path,
+        )
 
 
 def main():
@@ -733,7 +751,12 @@ def main():
 
     psms = extract_n_engines(config)
     result_file = config["extract"]["result_file"]
-    write_psms_to_json(psms, result_file)
+    write_psms_to_json(
+        psms,
+        result_file,
+        labeling=_parse_labeling(config),
+        source_config_path=args.configpath,
+    )
 
 
 if __name__ == "__main__":

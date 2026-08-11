@@ -55,10 +55,12 @@ EXCLUDED_EXTRA = TRAINING_EXCLUDED_COLUMNS
 
 
 def prefer_canonical_shift_feature(columns):
-    """Drop the deprecated shift alias when the canonical feature exists."""
+    """Drop deprecated feature aliases when canonical names exist."""
     result = list(columns)
     if "total_label_shift" in result and "total_silac_shift" in result:
         result.remove("total_silac_shift")
+    if "sequence_kr_count" in result and "kr_count" in result:
+        result.remove("kr_count")
     return result
 
 

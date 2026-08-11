@@ -79,14 +79,14 @@ pass-1：仅取每谱 scan 号、`seek(peak_num*16)` 跳过峰（不解码），
 ### `spectrum/labeling.py`
 
 - 模块常量：`MASS_DELTA_C13_C12=1.003355`、`MASS_DELTA_N15_N14=0.997035`、`IDEAL_FULL_LABEL_ISOTOPE_MODEL="ideal_full_label_v1"`。
-- `get_fixed_heavy_atom_counts(sequence, heavy_type) -> dict[str,int]` — 返回理想完全标记下不再参与残余天然同位素包络的固定重原子：SILAC 为 K/R 标记 C/N，CHEAVY 为全部 C，NHEAVY 为全部 N。
+- `get_fixed_heavy_atom_counts(sequence, heavy_type) -> dict[str,int]` — 返回理想完全标记下不再参与残余天然同位素包络的固定重原子：SILAC 为 K/R 标记 C/N，C13 为全部 C，N15 为全部 N。
 
 ### `spectrum/psm_info.py`
 
 模块常量 `PROTON_MASS=1.00727646677`；模块加载时读 `unimod.xml` 为全局 `unimods`。
 
 ### `class HeavyType(Enum)`
-`SILAC=1`、`CHEAVY=2`、`NHEAVY=3`。
+规范成员为 `SILAC=1`、`C13=2`、`N15=3`。旧源码名 `CHEAVY` / `NHEAVY` 仅作为兼容别名保留；序列化名称始终为 `silac` / `c13` / `n15`。
 
 ### `class PSMInfo`
 `__init__(sequence, charge, modify, rt, precursor_mz, raw_title, protein_names, q_value=None, score=None, label_type=None)`，`modify` 为 `list[(0基位置, unimod_id)]`。
@@ -96,9 +96,9 @@ pass-1：仅取每谱 scan 号、`seek(peak_num*16)` 跳过峰（不解码），
 - `get_key_with_raw() -> (..., raw_title)` — 含 raw 的去重键。
 - `valid() -> bool` — 含 `X` 即 False。
 - `get_modify_mass(end_idx) -> float` — `[0, end_idx]` 内修饰单同位素质量之和。
-- `_assert_heavy_supported(heavy_type) -> None` — 守卫：`heavy_type∈{CHEAVY,NHEAVY}` 且 `_modify` 非空时抛 `NotImplementedError`（修饰原子重标未实现，避免静默错误质量）。
-- `get_SILAC_precursor_mz() -> float` / `get_C_N_HEAVY_precursor_mz(heavy_type) -> float` — 重标前体 m/z（后者带修饰 + CHEAVY/NHEAVY 会抛 `NotImplementedError`）。
-- `get_fragment_ions(heavy_type) -> (b_ans, y_ans)` — 元素为 `("b"/"y", 序号, light_mass, heavy_mass)`（带修饰 + CHEAVY/NHEAVY 会抛 `NotImplementedError`）。
+- `_assert_heavy_supported(heavy_type) -> None` — 守卫：`heavy_type∈{C13,N15}` 且 `_modify` 非空时抛 `NotImplementedError`（修饰原子的来源/引入时机未知，避免静默错误质量）。
+- `get_SILAC_precursor_mz() -> float` / `get_uniform_label_precursor_mz(heavy_type) -> float` — 重标前体 m/z（后者带修饰 + C13/N15 会抛 `NotImplementedError`）；`get_C_N_HEAVY_precursor_mz` 是旧兼容别名。
+- `get_fragment_ions(heavy_type) -> (b_ans, y_ans)` — 元素为 `("b"/"y", 序号, light_mass, heavy_mass)`（带修饰 + C13/N15 会抛 `NotImplementedError`）。
 - `get_heavy_info(heavy_type) -> (heavy_precursor_mz, b_ions + y_ions)`。
 - `get_theoretical_isotope_ratios(sequence, modifications=(), heavy_type=SILAC) -> list[float]` — 在 `ideal_full_label_v1` 假设下返回归一化 `[M0,M1,M2]`；C13/N15 带修饰时抛 `NotImplementedError`。
 
@@ -106,7 +106,7 @@ pass-1：仅取每谱 scan 号、`seek(peak_num*16)` 跳过峰（不解码），
 K +8.014204、R +10.008275。
 
 ### `get_heavy_increase_mass(sequence, heavy_type) -> float`
-SILAC 委托上者；CHEAVY=`C数×1.003355`；NHEAVY=`N数×0.997035`。**仅统计序列原子，不含修饰原子**——带修饰肽段的 CHEAVY/NHEAVY 已在调用方 (`_assert_heavy_supported`) 拦截抛错。
+SILAC 委托上者；C13=`C数×1.003355`；N15=`N数×0.997035`。**仅统计序列原子，不含修饰原子**——带修饰肽段的 C13/N15 已由工作流策略过滤，底层仍由 `_assert_heavy_supported` 拦截。
 
 ### `get_theoretical_isotope_ratios(sequence) -> list`
 返回 `[1.0, λ, λ²/2]`（Poisson 近似 M0/M1/M2）。

@@ -282,8 +282,9 @@ def multi_batch_work(
     w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
     heavy_precursor_mz, fragment_ions = psm1.get_heavy_info(heavy_type)
     w_heavy_for_q1a = dia_data2.get_window_info(heavy_precursor_mz)
-    q1a_acc = Q1aAccumulator(
-        split_window=is_split_window(w_light_for_q1a, w_heavy_for_q1a))
+    psm_is_split_window = is_split_window(
+        w_light_for_q1a, w_heavy_for_q1a)
+    q1a_acc = Q1aAccumulator(split_window=psm_is_split_window)
 
     # 枚举所有的信息
     for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
@@ -480,8 +481,10 @@ def multi_batch_work(
         fragment_smoothnesses, "all_smoothness"))
 
     # 序列级特征
-    features["kr_count"] = psm1._sequence.count('K') + \
-        psm1._sequence.count('R')
+    sequence_kr_count = (psm1._sequence.count('K') +
+                         psm1._sequence.count('R'))
+    features["sequence_kr_count"] = sequence_kr_count
+    features["kr_count"] = sequence_kr_count  # deprecated compatibility alias
     features["modification_count"] = len(psm1._modify)
     total_label_shift = get_heavy_increase_mass(
         psm1._sequence, heavy_type)
@@ -499,6 +502,15 @@ def multi_batch_work(
 
     # --- Q1a: finalize and merge features ---
     features.update(q1a_acc.compute_features())
+    if psm_is_split_window is None:
+        # The expected heavy precursor has no valid DIA window.  Preserve
+        # "unknown" for the split/co-isolation descriptor and make the
+        # eligibility fields internally consistent.
+        features["psm_is_split_window"] = float("nan")
+        features["heavy_in_raw"] = 0
+    else:
+        features["psm_is_split_window"] = int(psm_is_split_window)
+    features["heavy_out_of_range"] = 1 - features["heavy_in_raw"]
 
     return features
 
@@ -506,7 +518,7 @@ def multi_batch_work(
 def heavy_coelut_at_light_apex(light_xic, heavy_xic) -> float:
     """Heavy fragment intensity AT the light fragment's apex cycle (+-1).
 
-    Encodes the "light constrains heavy" rule: a real SILAC pair co-elutes,
+    Encodes the "light constrains heavy" rule: a real label pair co-elutes,
     so the heavy must peak at the SAME global DIA cycle as its trusted light
     partner. Off-peak interference (heavy peak at a different cycle) is
     therefore excluded.
@@ -736,7 +748,7 @@ def single_pair_work(
         _heavy_ap = (float(np.max(heavy_ions_xic["intensity"]))
                      if len(heavy_ions_xic) else 0.0)
         # heavy_coelut: heavy intensity AT the light fragment's apex cycle
-        # (+-1). A real SILAC pair co-elutes; off-peak interference -> ~0.
+        # (+-1). A real label pair co-elutes; off-peak interference -> ~0.
         # ("light constrains heavy", spec 13 / coelut features.)
         _heavy_coelut = heavy_coelut_at_light_apex(
             light_ions_xic, heavy_ions_xic)
@@ -900,8 +912,9 @@ def single_pair_work(
         fragment_smoothnesses, "all_smoothness"))
 
     # 序列级特征
-    features["kr_count"] = psm._sequence.count('K') + \
-        psm._sequence.count('R')
+    sequence_kr_count = psm._sequence.count('K') + psm._sequence.count('R')
+    features["sequence_kr_count"] = sequence_kr_count
+    features["kr_count"] = sequence_kr_count  # deprecated compatibility alias
     features["modification_count"] = len(psm._modify)
     total_label_shift = get_heavy_increase_mass(psm._sequence, heavy_type)
     features["total_label_shift"] = total_label_shift
@@ -922,6 +935,11 @@ def single_pair_work(
 
     features.update(q1a_acc.compute_features())
 
+    # Acquisition eligibility is observed without a predicted spectrum.
+    # Keep these fields available for cohort filtering in every run.
+    features["psm_is_split_window"] = 0 if is_same_ms2 else 1
+    features["heavy_out_of_range"] = 0 if heavy_in_raw else 1
+
     if speclib_enabled:
         from workflows.pred_integrate import (compute_speclib_i1,
                                               compute_speclib_i2_i3_j2,
@@ -935,8 +953,6 @@ def single_pair_work(
                                  ConfigKeys.PRED_SIGNAL_ALPHA, fallback=0.2)
                  if config.has_section(ConfigKeys.SPECLIB) else 0.2)
         features["has_lib_pred"] = 1 if pred_frags else 0
-        features["psm_is_split_window"] = 0 if is_same_ms2 else 1
-        features["heavy_out_of_range"] = 0 if heavy_in_raw else 1
         features.update(compute_speclib_i1(
             speclib_frag_records, pred_frags, pred_top_k, len(psm._sequence)))
         features.update(compute_speclib_i2_i3_j2(

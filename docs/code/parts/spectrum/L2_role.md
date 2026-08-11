@@ -40,7 +40,7 @@
 | 符号 | 签名 | 简述 |
 |---|---|---|
 | `PSMInfo` | class | 一个 PSM（序列/电荷/修饰/RT/前体 m/z/...），可 `to_dict`/`from_dict` |
-| `HeavyType` | Enum | `SILAC` / `CHEAVY`(¹³C) / `NHEAVY`(¹⁵N) |
+| `HeavyType` | Enum | `SILAC` / `C13` / `N15`（旧 `CHEAVY` / `NHEAVY` 为别名） |
 | `PSMInfo.get_heavy_info` | `(heavy_type) → (heavy_precursor_mz, ions)` | 重标前体 m/z + b/y 离子（轻+重质量）|
 | `PSMInfo.get_fragment_ions` | `(heavy_type) → (b_ions, y_ions)` | 含修饰质量的理论碎片离子 |
 | `PSMInfo.get_key` / `get_key_with_raw` | — | PSM 去重键（序列+电荷+修饰[+raw]）|

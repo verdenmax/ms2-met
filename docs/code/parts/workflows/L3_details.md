@@ -8,7 +8,7 @@
 2. `distribute()` 第一阶段：对每个 `raw_path_N` 用进程池调 `data_to_npz`，把 DIA 数据写成 `<name>.dia.npz`，得到 `name → shared_path` 映射。各 worker 用 `DIAData.load_from_file(..., use_mmap=True)` 内存映射加载，物理内存共享、零拷贝。
 3. `distribute()` 第二阶段：把 `psm_info` 按 `PSMInfo.get_key` 分组（同序列/电荷/…的重复样本聚到一起），按 `feature_type` 生成任务，按 `shared_path` 分桶，每桶切成 `BATCH_SIZE=5000` 的 chunk 提交进程池。
 4. 各批 worker 调 `single_pair_work` 或 `multi_batch_work` 算出特征 dict，拼上元数据与 `label`，`as_completed` 收集成 `pd.DataFrame`；落盘前经 `feature_postfilter.filter_heavy_out_of_range` 删除 `heavy_out_of_range==1`（**正负例都删**，默认开，`[general] filter_heavy_out_of_range`）后写 `result_file`。理由：重标前体出采集范围 ⇒ 无 SILAC 重通道、碎片无法验证；只删负例会让模型学到"出界⇒正例"伪规则，故对称删除。
-   - ⚠️ 该过滤**依赖 `heavy_out_of_range` 列存在**，而此列**仅在 `if speclib_enabled` 内产出**（`single_work.py:882`）。故未配 `[speclib]`（或 feature_type 1/2 的 `multi_batch_work` 路径）时列缺失，过滤为无操作。所有 baseline 配置都含 `[speclib]`，故正常运行时过滤生效。`heavy_in_raw` 在两条路径都算，若要让过滤对非 speclib 也生效，可将 `heavy_out_of_range` 移出 speclib 块无条件产出。
+   - `feature_type=0` 的 `heavy_out_of_range` 已与谱库解耦，无论是否配置 `[speclib]` 都会产出并参与对称过滤。历史表或尚未补齐该字段的其他路径缺列时，过滤为无操作。
 
 ### feature_type 三种模式（`distribute` / flow_utils 批函数）
 
@@ -37,7 +37,7 @@
 2. **同位素 + 质量校验**：三种标记均采用 `ideal_full_label_v1`（标记纯度和生物掺入率 100%）。SILAC 固定 K/R 标记原子，C13 固定全部 C，N15 固定全部 N；剩余元素形成天然丰度 M0/M1/M2 包络。在 heavy M0 apex RT 处插值取 M0/M1/M2 强度，与 `get_theoretical_isotope_ratios` 做 cosine → `isotope_correlation`；apex 处 ppm → `mass_shift_error`。输出 `isotope_model=ideal_full_label_v1`、支持行 `isotope_model_valid=1`。同位素间距 `1.003355 / charge`；不完全标记的 H-1/H-2 低质量侧峰尚未建模。
 3. **碎片离子循环**：遍历 b/y 理论碎片，逐对取 MS2 XIC（`xic_ms2_peaks_extract`），`calc_xic_score` 打分后累计到 `pearsons_map`（b/y/all）与十余个碎片级列表；同时喂给 `Q1aAccumulator`。
 4. **碎片聚合**：`extract_ion_pearson_features`（分位数/均值/std/high_ratio）、`extract_ion_numeric_features`（mean/p50/std/max）汇总各列表；强度加权 `frag_corr_weighted`；H/L 比一致性 `_calc_hl_ratio_consistency`。
-5. **序列/窗口/Q1a**：`kr_count`、`modification_count`、`total_label_shift`（及兼容别名 `total_silac_shift`）、`labeling`、`window_width`、`precursor_centering`、`heavy_in_raw`，最后 merge `q1a_acc.compute_features()`。
+5. **序列/窗口/Q1a**：`sequence_kr_count`、`modification_count`、`total_label_shift`（旧兼容别名为 `kr_count` / `total_silac_shift`）、`labeling`、`window_width`、`precursor_centering`、`heavy_in_raw`，最后 merge `q1a_acc.compute_features()`。
 
 ### 碎片跳过语义（边界设计）
 

@@ -116,6 +116,9 @@ def test_multi_batch_work_skips_when_heavy_out_of_raw():
     )
     assert features["q1a_total_count"] == 0
     assert np.isnan(features["q1a_recall_unshifted_separable"])
+    assert features["heavy_in_raw"] == 0
+    assert features["heavy_out_of_range"] == 1
+    assert np.isnan(features["psm_is_split_window"])
 
 
 def test_single_pair_work_emits_q1a_features():

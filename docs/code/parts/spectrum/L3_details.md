@@ -63,18 +63,18 @@
 - `modify` 为 `list[(0基位置, unimod_id)]`。`get_modify_mass(end_idx)` 累加 ≤end_idx 的修饰单同位素质量（来自全局 `unimod.xml` 的 `mass.Unimod`）。
 - `get_fragment_ions` 用 `mass.fast_mass(subseq, ion_type='b'/'y')`，b 离子加前缀修饰质量、y 离子加 (全修饰 − 前 n-i-1 修饰)；同时给出重标质量 `+ get_heavy_increase_mass`。返回 `("b"/"y", 序号, light_mass, heavy_mass)`。
 
-### SILAC / C/N 重标质量
+### SILAC / C13 / N15 重标质量
 
 - SILAC：每个 K +8.014204（C(-6)¹³C(6)N(-2)¹⁵N(2)）、R +10.008275（C(-6)N(-4)¹³C(6)¹⁵N(4)），硬编码常量。
-- CHEAVY：`Composition(seq)['C'] × (¹³C−¹²C=1.003355)`；NHEAVY：`['N'] × (¹⁵N−¹⁴N=0.997035)`。
+- C13：`Composition(seq)['C'] × (¹³C−¹²C=1.003355)`；N15：`['N'] × (¹⁵N−¹⁴N=0.997035)`。
 - 重标前体 m/z = (轻前体质量 + 质量增量)/charge。
-- 理想同位素包络 `ideal_full_label_v1`：假设标记纯度、掺入率均为 100%；SILAC 从残余天然丰度组成中扣除 K/R 固定重原子，CHEAVY 扣除全部 C，NHEAVY 扣除全部 N，再卷积其余 C/H/N/O/S 得到归一化 M0/M1/M2。C13/N15 修饰肽及不完全标记 H-1/H-2 尚未支持。
-- **⚠️ 修饰原子的重标未实现**：CHEAVY/NHEAVY 全代谢标记下，修饰基团里的 C/N 原子同样应被 ¹³C/¹⁵N 替换，但 `get_heavy_increase_mass` 只统计序列骨架/侧链原子。为避免静默返回错误质量，`get_C_N_HEAVY_precursor_mz` / `get_fragment_ions` 在 `heavy_type∈{CHEAVY,NHEAVY}` 且肽段带修饰（`_modify` 非空）时经 `_assert_heavy_supported` 抛 `NotImplementedError`（代码内 TODO）。SILAC 只标记 K/R、不涉及修饰，**不受影响**；无修饰的 CHEAVY/NHEAVY 仍正确。
+- 理想同位素包络 `ideal_full_label_v1`：假设标记纯度、掺入率均为 100%；SILAC 从残余天然丰度组成中扣除 K/R 固定重原子，C13 扣除序列的全部 C，N15 扣除序列的全部 N，再卷积其余 C/H/N/O/S 得到归一化 M0/M1/M2。不完全标记 H-1/H-2 尚未支持。
+- **⚠️ 修饰原子的标记状态未建模**：不能按“修饰”这一类别统一决定重标。生物合成且供体来自标记代谢池的修饰可能被标记；裂解/制样后引入的烷基化等通常不被代谢标记；中性丢失等碎裂现象属于离子级过程。当前 PSM 表达不含原子来源/引入时机，因此 C13/N15 修饰 PSM 由 `modified_psm_policy=drop_with_audit` 在工作流分发前显式过滤并审计，底层质量函数仍抛错防止绕过。SILAC 的 K/R 标签质量不依赖 PTM 原子组成。
 - `has_label_site(sequence, heavy_type)`：判断肽段是否存在标记位点。SILAC 仅当含 K/R 才有重标搭档（否则重=轻、不可校验）；CHEAVY/NHEAVY 为全原子标记，任何非空肽段都含 C/N 故恒 True；空序列 False。上游 `tools/extract_common`、`tools/trap_domain_filter` 用它筛掉无法做轻重校验的肽段。
 
 ### 同位素比例与乱序
 
-- `get_theoretical_isotope_ratios`：Poisson 近似，λ 由各元素重同位素天然丰度加权（¹³C 0.01109、²H 0.000115、¹⁵N 0.00364、¹⁷O 0.00038、³³S 0.0079），返回 `[1, λ, λ²/2]`。
+- `get_theoretical_isotope_ratios`：按 C/H/N/O/S 的 M0/M1/M2 天然丰度逐原子卷积，包含 ¹⁸O/³⁴S 的 +2 贡献，返回以 M0 归一化的三点包络。
 - `sequence_controlled_shuffle`：保留 C 端 `anchor_len`（默认 2，保 y1/y2 离子）个残基，仅对核心区 `shuffle_ratio` 比例打乱；`seed` 给定时用独立 `random.Random(seed)` 保证可复现。
 
 ## 字段解析规则

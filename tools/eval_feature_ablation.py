@@ -1,13 +1,14 @@
-"""特征分组对照实验：用 4 组特征集分别训练，看 SILAC 配对信号的真实贡献。
+"""特征分组对照实验：用 4 组特征集训练，看代谢轻/重配对证据的贡献。
 
 特征分组:
-  - sequence_only: 仅肽段序列属性（modification_count, kr_count, sequence_len,
+  - sequence_only: 仅肽段序列属性（modification_count, sequence_kr_count,
+    sequence_len,
     valid_fragment_ions_num, total_label_shift, window_width, precursor_centering,
     precursor_mz, charge）
-  - silac_only:    仅 SILAC 配对类（precursor_*, all_*, b_*, y_*, isotope_correlation,
+  - label_evidence_only: 仅轻/重配对类（precursor_*, all_*, b_*, y_*, isotope_correlation,
     mass_shift_error, frag_corr_weighted, matched_intensity_percent）
   - all:           全部
-  - silac_minus_intensity: SILAC 但去掉绝对强度类（precursor_*_max_int 等），
+  - label_evidence_minus_intensity: 配对证据去掉绝对强度类，
     避免和肽段丰度泄漏
 
 Every metric treats incorrect identifications as the positive class.
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 SEQUENCE_FEATURES = {
-    "modification_count", "kr_count", "sequence_len",
+    "modification_count", "sequence_kr_count", "kr_count", "sequence_len",
     "valid_fragment_ions_num", "total_label_shift", "total_silac_shift",
     "window_width", "precursor_centering",
     "heavy_in_raw",
@@ -60,12 +61,13 @@ ID_COLUMNS = {
 
 
 def split_features(all_features: list[str]) -> dict[str, list[str]]:
-    silac_all = [f for f in all_features if f not in SEQUENCE_FEATURES]
-    silac_no_intensity = [f for f in silac_all if f not in INTENSITY_FEATURES]
+    label_evidence = [f for f in all_features if f not in SEQUENCE_FEATURES]
+    label_evidence_no_intensity = [
+        f for f in label_evidence if f not in INTENSITY_FEATURES]
     return {
         "sequence_only": [f for f in all_features if f in SEQUENCE_FEATURES],
-        "silac_only": silac_all,
-        "silac_minus_intensity": silac_no_intensity,
+        "label_evidence_only": label_evidence,
+        "label_evidence_minus_intensity": label_evidence_no_intensity,
         "all": list(all_features),
     }
 

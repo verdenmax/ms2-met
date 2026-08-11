@@ -1,4 +1,4 @@
-"""Scientific feature registry for SILAC-DIA confidence experiments.
+"""Scientific feature registry for metabolic-label DIA confidence experiments.
 
 This module is the single source of truth for two separate decisions:
 
@@ -57,6 +57,7 @@ ELIGIBILITY_FEATURES = frozenset({
 # Candidate/acquisition descriptors that contain no measured light-heavy
 # agreement. Counts here quantify evidence opportunity, not successful match.
 CONTEXT_FEATURES = frozenset({
+    "sequence_kr_count",
     "kr_count",
     "total_label_shift",
     "total_silac_shift",  # legacy alias; removed when canonical is present
@@ -297,6 +298,8 @@ REGISTERED_COLUMNS = _registered_columns()
 
 
 _CANONICAL_NAME_OVERRIDES = {
+    "sequence_kr_count": "context_sequence_lysine_arginine_count",
+    "kr_count": "context_sequence_lysine_arginine_count",
     "precursor_centering": "context_light_precursor_dia_window_position",
     "valid_fragment_ions_num": "ms2_attempted_fragment_pair_count",
     "total_label_shift": "context_total_label_mass_shift_da",
@@ -403,6 +406,8 @@ def resolve_experiment_arm(
     result = [column for column in available_columns if column in allowed]
     if "total_label_shift" in result and "total_silac_shift" in result:
         result.remove("total_silac_shift")
+    if "sequence_kr_count" in result and "kr_count" in result:
+        result.remove("kr_count")
     if not result:
         raise ValueError(f"experiment arm {arm!r} resolved to zero features")
     return result

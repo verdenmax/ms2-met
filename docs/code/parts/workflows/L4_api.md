@@ -98,7 +98,7 @@
 - `compute_speclib_i1(frag_records, pred_frags, top_k, seq_len) -> dict` — 纯函数：对已可分的逐碎片记录（`ion_type`/`ion_num`/`light_apex`/`heavy_apex`）配上预测强度，取预测最强 top-K，**按 ion-type 分开**算谱角（`spec_pattern_SA_b`/`_SA_y`/`_SA`=两者均值）+ **Spearman 排序相关**（`spec_pattern_spearman_b`/`_spearman_y`/`_spearman`=均值；每类 ≥3 根，n=2 退化 → NaN；pred vs heavy，抗 b2 主导/b:y 缩放偏差）+ 预测加权 `spec_pattern_LH_consistency` + `n_fragments_in_F`；无覆盖/退化 → 固定列 NaN（DEBUG 日志）。
 
 接入参数变更：
-- `single_pair_work(psm, dia_data, config, pred_frags=None, speclib_enabled=False)` — 循环内收集**可分**碎片记录，`return` 前合并 I1 + `has_lib_pred`/`psm_is_split_window`/`heavy_out_of_range`（仅当 `speclib_enabled`）。
+- `single_pair_work(psm, dia_data, config, pred_frags=None, speclib_enabled=False)` — `psm_is_split_window`/`heavy_out_of_range` 始终输出；仅当 `speclib_enabled` 时收集预测谱碎片记录并合并 I1 等预测强度特征与 `has_lib_pred`。
 - `_extract_isotope_features(...) -> dict` — 按 `ideal_full_label_v1` 提取 heavy M0/M1/M2，与理论残余天然丰度包络计算 `isotope_correlation`；三种标记的未修饰肽均置 `isotope_model_valid=1`，并输出非训练元数据 `isotope_model`。C13/N15 修饰肽保持不支持；纯度感知 H-1/H-2 尚未实现。
 - `PairFlow._build_pred_store() -> PredStore|None` — `[speclib] speclib_dir` 配了才一遍流式扫库（记 hit/miss）。
 - `PairFlow._build_raw_tasks(..., pred_store=None)` — `feature_type=0` 时给每个任务 dict 附 `pred_frags`（命中=预测碎片 dict，未命中=None；speclib 关闭则不附）。

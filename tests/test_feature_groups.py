@@ -103,6 +103,8 @@ def test_canonical_names_are_unique_except_deprecated_shift_alias():
     assert duplicates == {}
     assert canonical_feature_name("total_silac_shift") == (
         canonical_feature_name("total_label_shift"))
+    assert canonical_feature_name("kr_count") == (
+        canonical_feature_name("sequence_kr_count"))
 
 
 @pytest.mark.parametrize("arm", sorted(EXPERIMENT_ARMS))

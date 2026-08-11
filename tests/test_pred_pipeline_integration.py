@@ -103,6 +103,8 @@ def test_single_pair_work_unchanged_when_speclib_disabled():
                              pred_frags=None, speclib_enabled=False)
     assert "has_lib_pred" not in feats
     assert "spec_pattern_SA" not in feats
+    assert feats["psm_is_split_window"] == 1
+    assert feats["heavy_out_of_range"] == 0
 
 
 def test_pred_presence_floor_key_exists():

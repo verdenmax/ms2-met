@@ -25,7 +25,7 @@
 
 - 目的：SILAC 轻重标验证只能作用在**有重标位点**的肽上。无标记位点的肽其"重标版"≡轻标，本工具原理上无法验证，落在能力边界外（speclib spec §12 类4）。
 - **正负例都剔**（标记位点与标签无关）；**默认开、无条件运行**，不依赖 `[entrapment]` 段。
-- 判据来自 `spectrum.psm_info.has_label_site(seq, heavy_type)`：SILAC → 序列含 **K 或 R**；CHEAVY(¹³C)/NHEAVY(¹⁵N) → 全原子代谢标记，任何肽必含 C 和 N → 恒 True → **no-op（一条不剔）**；空序列 → False（剔）。
+- 判据来自 `spectrum.psm_info.has_label_site(seq, heavy_type)`：SILAC → 序列含 **K 或 R**；C13/N15 → 全序列代谢标记，任何肽必含 C 和 N → 恒 True → **no-op（一条不剔）**；空序列 → False（剔）。
 - 标记方案由 `[extract] labeling` 决定（缺省 `silac`，向后兼容），大小写不敏感，别名：`silac`；`c13/13c/cheavy`；`n15/15n/nheavy`。非法值 → `ValueError`（fail-fast）。
 - 调用点：`extract_n_engines` 中、`label_type` 已设置之后、**先于** 污染库 / entrapment 过滤（均为删行）。日志打印剔除的 positive / negative 数。
 
@@ -115,9 +115,9 @@
 
 | 组 | 含义 |
 |---|---|
-| `sequence_only` | 仅肽段序列属性（`SEQUENCE_FEATURES`：modification_count、kr_count、sequence_len、valid_fragment_ions_num、total_silac_shift、window_width、precursor_centering、heavy_in_raw）|
-| `silac_only` | 全特征 − sequence 特征 |
-| `silac_minus_intensity` | silac_only 再去掉绝对强度类（`INTENSITY_FEATURES`：precursor_*_max_int、*_snr* 等），避免肽段丰度泄漏 |
+| `sequence_only` | 仅肽段序列属性（`SEQUENCE_FEATURES`：modification_count、sequence_kr_count、sequence_len、valid_fragment_ions_num、total_label_shift、window_width、precursor_centering、heavy_in_raw；旧 kr_count/total_silac_shift 为兼容别名）|
+| `label_evidence_only` | 全特征 − sequence 特征 |
+| `label_evidence_minus_intensity` | label_evidence_only 再去掉绝对强度类（`INTENSITY_FEATURES`：precursor_*_max_int、*_snr* 等），避免肽段丰度泄漏 |
 | `all` | 全部 |
 
 - 全特征 = 全列 − `ID_COLUMNS`。

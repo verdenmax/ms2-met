@@ -9,7 +9,7 @@
 - `SUPPORTED_ENGINES = {"pfind", "diann", "alphadia"}`
 - `DEFAULT_DROP_LEVELS = {"L0", "L1"}`、`VALID_ENTRAPMENT_LEVELS = {"L0".."L4"}`
 - `_LEVEL_SEVERITY`：L0=0 … L4=4（数字越小越严重）。
-- `_LABELING_ALIASES`：`silac`→SILAC；`c13`/`13c`/`cheavy`→CHEAVY；`n15`/`15n`/`nheavy`→NHEAVY。
+- 标记别名：`silac`→SILAC；`c13`/`13c`/`cheavy`→C13；`n15`/`15n`/`nheavy`→N15（旧 CHEAVY/NHEAVY 仅作源码兼容别名）。
 
 ### 主要函数
 
@@ -20,10 +20,10 @@
 - `load_entrapment_classifications(tsv_path) -> dict[(seq,charge,raw)->level]`：加载 classified.tsv（含校验/跳过/冲突合并），路径不存在抛 `FileNotFoundError`，缺列抛 `ValueError`。
 - `filter_by_entrapment(psms, classifications, drop_levels=DEFAULT_DROP_LEVELS) -> list[PSMInfo]`：剔除命中 drop_levels 的 negative。
 - `_parse_labeling(config) -> HeavyType`：读 `[extract] labeling`（缺省 `silac`），大小写不敏感别名映射；非法值抛 `ValueError`。
-- `filter_by_label_site(psms, heavy_type) -> list[PSMInfo]`：剔除在 `heavy_type` 下无标记位点的 PSM（正负例都剔）。SILAC 剔无 K/R；CHEAVY/NHEAVY 为 no-op。委托 `spectrum.psm_info.has_label_site`。
+- `filter_by_label_site(psms, heavy_type) -> list[PSMInfo]`：剔除在 `heavy_type` 下无标记位点的 PSM（正负例都剔）。SILAC 剔无 K/R；C13/N15 为 no-op。委托 `spectrum.psm_info.has_label_site`。
 - `filter_by_contaminant(psms, contaminant_index, match_li=True) -> list[PSMInfo]`：剔除映射到污染蛋白(cRAP)的 PSM（正负例都剔）。`contaminant_index` 由调用方经 `spectrum.entrapment_classifier.load_target_fasta` 预建；本函数对每条肽段调 `classify_peptide`：精确子串(L0)，或 `match_li` 时 L↔I 子串(L1)，即判为污染。
 - `extract_n_engines(config) -> list[PSMInfo]`：顶层装配（加载引擎 + 构造 + **无条件 no-label-site 过滤** + 可选污染库过滤 + 可选 entrapment 过滤）。
-- `write_psms_to_json(psms, output_path)`：序列化 `PSMInfo.to_dict()`，自动建目录。
+- `write_psms_to_json(psms, output_path, labeling=..., source_config_path=...)`：主文件继续序列化为兼容 JSON 数组，同时写 `*.json.manifest.json`，记录标记化学、理想同位素模型、PSM/修饰计数与输入/配置摘要。
 
 ### 配置（INI）
 
@@ -101,7 +101,7 @@ python tools/eval_baseline.py \
 
 ### 主要函数
 
-- `split_features(all_features) -> dict[str, list[str]]`：分出 `sequence_only / silac_only / silac_minus_intensity / all`。
+- `split_features(all_features) -> dict[str, list[str]]`：分出 `sequence_only / label_evidence_only / label_evidence_minus_intensity / all`。
 - `cv_one(X, y, name, n_splits=5) -> dict`：单组 5-fold CV，返回特征数、
   error-positive ROC-AUC/error PR-AUC、FNR@FPR5、error recall@FPR10、
   fold mean±std 与 working points。

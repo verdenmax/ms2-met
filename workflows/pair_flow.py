@@ -21,8 +21,10 @@ from workflows.single_work import (
     multi_batch_work,
     resolve_workflow_heavy_type,
 )
-from spectrum.labeling import canonical_labeling_name
+from spectrum.labeling import HeavyType, canonical_labeling_name
+from spectrum.psm_dataset_manifest import validate_manifest
 from workflows.feature_postfilter import filter_heavy_out_of_range
+from workflows.modified_psm_policy import apply_modified_psm_policy
 from manager.light_result_manager import LightResultManager
 from spectrum.psm_info import PSMInfo
 
@@ -460,8 +462,44 @@ class PairFlow:
             ConfigKeys.GENERAL, ConfigKeys.LABELING, canonical_labeling)
         logging.info("代谢标记模式: %s", canonical_labeling)
 
+        # Custom JSON is chemistry-neutral only when its sidecar says so.
+        # Existing SILAC datasets predate the sidecar and remain readable;
+        # C13/N15 must never guess because every expected heavy mass changes.
+        search_engine_type = self._config.getint(
+            ConfigKeys.INPUT, ConfigKeys.SEARCH_ENGINE_TYPE, fallback=1)
+        dataset_manifest = None
+        if search_engine_type == 0:
+            light_result_path = os.path.expanduser(
+                self._config[ConfigKeys.INPUT][ConfigKeys.LIGHT_RESULT_PATH])
+            dataset_manifest = validate_manifest(
+                light_result_path,
+                heavy_type,
+                require=heavy_type in (HeavyType.C13, HeavyType.N15),
+            )
+
         # 加载DIA-NN 结果，加载 Data manager
         self.load()
+        if dataset_manifest is not None:
+            declared_count = dataset_manifest["dataset"].get("n_psms")
+            if declared_count != len(self._light_result.psm_info):
+                raise ValueError(
+                    "PSM manifest 的 n_psms 与实际 JSON 行数不一致: "
+                    f"manifest={declared_count}, "
+                    f"actual={len(self._light_result.psm_info)}")
+
+        result_file = os.path.expanduser(self._config.get(
+            ConfigKeys.GENERAL, ConfigKeys.RESULT_FILE,
+            fallback="result.csv"))
+        modified_policy = self._config.get(
+            ConfigKeys.GENERAL, ConfigKeys.MODIFIED_PSM_POLICY,
+            fallback="reject")
+        self._light_result.psm_info, _ = apply_modified_psm_policy(
+            self._light_result.psm_info,
+            heavy_type,
+            modified_policy,
+            result_file=result_file,
+        )
+        self._light_result.peptide_len = len(self._light_result.psm_info)
 
         # TODO: 根据不同的谱图标题，分配到不同的任务，多进程执行
         # 分配不同的进程运行

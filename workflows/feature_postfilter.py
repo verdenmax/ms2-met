@@ -6,7 +6,7 @@ CSV is written and consumed by downstream training/eval.
 
 Currently one filter:
 
-  - ``filter_heavy_out_of_range``: drops PSMs whose heavy SILAC precursor m/z
+  - ``filter_heavy_out_of_range``: drops PSMs whose expected heavy precursor m/z
     fell outside the raw's acquisition range (``heavy_out_of_range == 1``).
     Such PSMs have no acquired heavy channel, so they cannot be validated by
     SILAC fragment evidence. They are dropped for BOTH classes (positive and
@@ -28,7 +28,7 @@ def filter_heavy_out_of_range(df: pd.DataFrame):
 
     Args:
         df: assembled per-PSM features table. May or may not carry the
-            ``heavy_out_of_range`` column (e.g. non-speclib feature paths).
+            ``heavy_out_of_range`` column (e.g. historical feature tables).
 
     Returns:
         ``(kept_df, n_pos_dropped, n_neg_dropped)``. ``kept_df`` has a reset

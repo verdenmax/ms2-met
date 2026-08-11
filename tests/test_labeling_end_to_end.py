@@ -11,12 +11,12 @@ import pytest
     [
         ("silac", "SILAC"),
         (" SILAC ", "SILAC"),
-        ("c13", "CHEAVY"),
-        ("13C", "CHEAVY"),
-        ("cheavy", "CHEAVY"),
-        ("n15", "NHEAVY"),
-        ("15N", "NHEAVY"),
-        ("nheavy", "NHEAVY"),
+        ("c13", "C13"),
+        ("13C", "C13"),
+        ("cheavy", "C13"),
+        ("n15", "N15"),
+        ("15N", "N15"),
+        ("nheavy", "N15"),
     ],
 )
 def test_parse_heavy_type_aliases(value, expected_name):
@@ -37,8 +37,8 @@ def test_parse_heavy_type_accepts_enum_and_rejects_unknown():
     ("heavy_type", "canonical"),
     [
         ("SILAC", "silac"),
-        ("CHEAVY", "c13"),
-        ("NHEAVY", "n15"),
+        ("C13", "c13"),
+        ("N15", "n15"),
     ],
 )
 def test_canonical_labeling_names(heavy_type, canonical):

@@ -6,7 +6,7 @@ Two filters implemented now (contaminant list = TODO, spec §12 class 2):
     in the human proteome -> mass-spec-indistinguishable -> drop.
     (reuses spectrum.entrapment_classifier)
   - class 3  heavy-out-of-window: heavy precursor m/z outside this raw's
-    acquisition range (`heavy_out_of_range == 1`) -> SILAC channel missing
+    acquisition range (`heavy_out_of_range == 1`) -> heavy channel missing
     -> drop.
   - class 4  no-label-site: peptide has no K/R -> no heavy partner
     (heavy == light) -> light/heavy validation undefined -> drop.
