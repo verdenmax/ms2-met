@@ -16,3 +16,7 @@ scikit-learn
 matplotlib
 pyyaml
 joblib
+
+# Phase-1 deep-learning baseline (tools/deep_trainer). For a CUDA-specific
+# wheel, follow the PyTorch installer for the target machine instead.
+torch

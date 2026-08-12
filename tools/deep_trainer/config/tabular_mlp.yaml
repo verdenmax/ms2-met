@@ -1,0 +1,42 @@
+experiment:
+  # Start with M20 for the direct comparison to the strongest current model.
+  # Use [M5, M10, M20] for the complete nested-negative learning curve.
+  negative_pool_models: [M20]
+
+protocol:
+  test_fraction: 0.20
+  min_test_errors_per_tier: 100
+  split_candidates: 128
+
+preprocessing:
+  # Fitted independently inside every outer fold on inner-training rows only.
+  add_missing_indicators: true
+
+model:
+  type: tabular_mlp_v1
+  hidden_dims: [128, 64]
+  dropout: 0.15
+
+training:
+  seed: 42
+  # Same first/early-stopping metric as the controlled LightGBM baseline.
+  early_stopping_metric: roc_auc
+  device: auto
+  deterministic: true
+  torch_num_threads: 0
+  epochs: 60
+  batch_size: 2048
+  inference_batch_size: 8192
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  gradient_clip_norm: 5.0
+  patience: 8
+  min_delta: 0.0001
+  # Keep false for the first fair comparison with the controlled LightGBM run.
+  class_weighting: none
+
+evaluation_semantics:
+  positive_class: incorrect_identification
+  stored_label: 1=correct_identification, 0=incorrect_identification
+  model_score: trust_score=P(correct_identification)
+  metric_score: error_score=1-trust_score

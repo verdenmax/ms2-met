@@ -33,6 +33,8 @@ CV_OVERWRITE_FLAG = $(if $(filter 1 true yes,$(CV_OVERWRITE)),--overwrite,)
 FIXED_NEGPOOL_OUTPUT_ROOT ?= $(CV_OUTPUT_ROOT)/fixed-negpool
 FIXED_NEGPOOL_BOOTSTRAPS ?= 1000
 FIXED_NEGPOOL_TEST_FRACTION ?= 0.20
+DEEP_OUTPUT_ROOT ?= runs/deep_trainer
+DEEP_CONFIG ?= tools/deep_trainer/config/tabular_mlp.yaml
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -217,6 +219,7 @@ help:
 	@echo "  make train-fixed-test-negpool-2da FEATURE_ROOT=/path/to/results  固定 E20 测试集比较 M5/M10/M20"
 	@echo "  make train-fixed-test-negpool-all FEATURE_ROOT=/path/to/results  三数据集固定测试实验"
 	@echo "  make train-fixed-test-negpool-combined FEATURE_ROOT=/path/to/results  三数据集合并后全局固定测试"
+	@echo "  make train-deep-mlp-combined FEATURE_ROOT=/path/to/results  同一 combined E20 协议训练表格 MLP"
 	@echo ""
 	@echo "  Formal MS1/MS2 ablation（共同队列 + 注册表特征组）："
 	@echo "  make train-ablation-neg20-2da FEATURE_ROOT=/path/to/results  2da 预跑（8 组）"
@@ -1124,6 +1127,7 @@ train-cv-2da: $(FEATURE_ROOT)/baseline_2da_clean/features.csv
 .PHONY: train-fixed-test-negpool-2da train-fixed-test-negpool-5da
 .PHONY: train-fixed-test-negpool-normal train-fixed-test-negpool-all
 .PHONY: train-fixed-test-negpool-combined
+.PHONY: train-deep-mlp-combined
 
 CV_CLEAN_YAMLS := cv_in_2da_clean cv_in_5da_clean cv_in_normal_clean \
                   cv_cross_test_2da_clean cv_cross_test_5da_clean cv_cross_test_normal_clean
@@ -1330,6 +1334,24 @@ train-fixed-test-negpool-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES)
 	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/combined" \
 	    --test-fraction "$(FIXED_NEGPOOL_TEST_FRACTION)" \
 	    --bootstrap-reps "$(FIXED_NEGPOOL_BOOTSTRAPS)" $(CV_OVERWRITE_FLAG)
+
+# Phase 1 deep-learning baseline. Reuses the exact feature arm, cohort,
+# sequence-grouped fixed E20 test and reusable folds of fixed-negpool; only the
+# LightGBM implementation is replaced by a fold-local-preprocessed PyTorch MLP.
+train-deep-mlp-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES)
+	@mkdir -p "$(DEEP_OUTPUT_ROOT)/configs"
+	$(PY) tools/spec_trainer/gen_cv_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(DEEP_OUTPUT_ROOT)/reference-cv" \
+	    --config-dir "$(DEEP_OUTPUT_ROOT)/configs" \
+	    --feature-arm evidence_all
+	$(PY) -m tools.deep_trainer.experiment \
+	    --config "$(DEEP_CONFIG)" \
+	    --split-config "$(DEEP_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --dataset combined \
+	    --output-root "$(DEEP_OUTPUT_ROOT)/tabular-mlp/combined" \
+	    $(CV_OVERWRITE_FLAG)
 
 train-neg05-all: $(NEG05_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures
