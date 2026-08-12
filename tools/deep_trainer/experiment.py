@@ -113,9 +113,10 @@ def _assert_output_available(root, overwrite):
             "refusing to overwrite an existing deep-trainer result bundle; "
             "choose a new output root or pass --overwrite:\n  "
             + "\n  ".join(map(str, existing)))
-    if root.exists() and any(root.iterdir()) and not overwrite:
+    if root.exists() and (not root.is_dir() or any(root.iterdir())) \
+            and not overwrite:
         raise FileExistsError(
-            f"refusing to replace nonempty output directory: {root}")
+            f"refusing to replace nonempty output path: {root}")
 
 
 def _publish_bundle(staging, root, overwrite):
@@ -148,8 +149,8 @@ def _publish_bundle(staging, root, overwrite):
             + "\n  ".join(missing))
     backup = None
     if root.exists():
-        if not overwrite and any(root.iterdir()):
-            raise FileExistsError(f"output directory is not empty: {root}")
+        if not overwrite and (not root.is_dir() or any(root.iterdir())):
+            raise FileExistsError(f"output path is not empty: {root}")
         backup = root.with_name(f".{root.name}.backup.{uuid.uuid4().hex}")
         os.replace(root, backup)
     try:
@@ -160,7 +161,10 @@ def _publish_bundle(staging, root, overwrite):
         raise
     if backup is not None and backup.exists():
         try:
-            shutil.rmtree(backup)
+            if backup.is_dir():
+                shutil.rmtree(backup)
+            else:
+                backup.unlink()
         except OSError as exc:
             logging.warning("published bundle but could not remove %s: %s",
                             backup, exc)

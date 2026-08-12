@@ -8,6 +8,10 @@ import numpy as np
 import pandas as pd
 
 
+_METRIC_SEMANTICS = "error_identification_positive_v1"
+_POSITIVE_CLASS = "incorrect_identification"
+
+
 def load_frozen_lightgbm_predictions(
     protocol_root,
     test_frame,
@@ -85,6 +89,7 @@ def paired_cluster_bootstrap(
 ):
     """Compare models on identical rows via grouped paired bootstrap."""
     columns = [
+        "metric_semantics", "positive_class",
         "model_a", "model_b", "metric", "delta_b_minus_a",
         "bootstrap_mean_delta", "ci95_low", "ci95_high",
         "probability_improved", "higher_is_better", "n_bootstrap",
@@ -145,6 +150,8 @@ def paired_cluster_bootstrap(
             higher_is_better = metric != "locked_fnr_at_fpr5"
             delta = observed[model_b][metric] - observed[model_a][metric]
             rows.append({
+                "metric_semantics": _METRIC_SEMANTICS,
+                "positive_class": _POSITIVE_CLASS,
                 "model_a": model_a,
                 "model_b": model_b,
                 "metric": metric,

@@ -318,8 +318,14 @@ def _build_frozen_protocol(tmp_path):
         ]},
         "frozen_bundle": {
             "schema": "fixed_negpool_frozen_bundle_v2", "complete": True,
+            "feature_cols": list(prepared.feature_cols),
+            "feature_cols_sha256": fixed_negpool._feature_schema_sha256(
+                prepared.feature_cols),
             "artifact_sha256": fixed_negpool._frozen_bundle_hashes(
                 protocol_root),
+        },
+        "models": {
+            "M20": {"feature_cols": list(prepared.feature_cols)},
         },
     }
     (protocol_root / "summary.json").write_text(
@@ -350,6 +356,11 @@ def test_run_experiment_consumes_frozen_protocol_end_to_end(tmp_path):
     assert summary["generalization_audit"][
         "candidate_family_leakage_protected"] is True
     assert (output / "paired_model_bootstrap.csv").is_file()
+    bootstrap = pd.read_csv(output / "paired_model_bootstrap.csv")
+    assert set(bootstrap["metric_semantics"]) == {
+        "error_identification_positive_v1"}
+    assert set(bootstrap["positive_class"]) == {
+        "incorrect_identification"}
     assert (output / "missingness_audit.csv").is_file()
     status = json.loads((output / "bundle_status.json").read_text())
     assert status["status"] == "complete"
@@ -371,6 +382,19 @@ def test_prepare_protocol_rejects_modified_feature_or_fold_map(tmp_path):
     feature = feature_root / "baseline_2da_neg20" / "features.csv"
     feature.write_text(feature.read_text() + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="feature content differs"):
+        prepare_protocol(split_path, feature_root, "2da", protocol_root)
+
+
+def test_prepare_protocol_rejects_feature_resolution_drift(tmp_path):
+    from tools.deep_trainer.spec_adapter import prepare_protocol
+    import yaml
+
+    feature_root, split_path, _, protocol_root = _build_frozen_protocol(
+        tmp_path)
+    split = yaml.safe_load(split_path.read_text(encoding="utf-8"))
+    split["data"]["drop_features"] = ["precursor_pearson"]
+    split_path.write_text(yaml.safe_dump(split), encoding="utf-8")
+    with pytest.raises(ValueError, match="feature schema differs"):
         prepare_protocol(split_path, feature_root, "2da", protocol_root)
 
 

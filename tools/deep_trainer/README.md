@@ -42,8 +42,11 @@ make train-fixed-test-negpool-combined \
   FEATURE_ROOT=/path/to/feature_result/ms2-met-runs-08-08
 ```
 
-MLP 会校验九个输入 CSV 的完整 SHA256、全部 `sample_id` 和 fold map；任意不一致
-都会停止。默认运行三个 seed，并用临时目录完成整包构建后再原子发布。
+MLP 会校验九个输入 CSV 的完整 SHA256、LightGBM 冻结的有序特征列表、全部
+`sample_id` 和 fold map；任意不一致都会停止。LightGBM 协议和深度学习结果都先
+在同级临时目录完成整包构建，再原子发布；失败的 `--overwrite` 会保留旧结果。
+旧的冻结协议若没有 `feature_cols_sha256`，需要用当前代码重新运行一次
+`train-fixed-test-negpool-combined`。
 
 默认只训练 M20。若要同时训练 M5/M10/M20，复制配置并修改：
 

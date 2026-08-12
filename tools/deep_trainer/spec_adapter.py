@@ -182,6 +182,47 @@ def _assert_frozen_inputs(summary, feature_root, dataset):
             f"{mismatches}")
 
 
+def _feature_schema_sha256(feature_cols):
+    payload = json.dumps(
+        list(feature_cols), ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _assert_frozen_feature_schema(prepared, summary, preflight):
+    """Require the deep arm to use the exact ordered LightGBM inputs."""
+    frozen = summary.get("frozen_bundle", {})
+    expected = frozen.get("feature_cols")
+    expected_hash = frozen.get("feature_cols_sha256")
+    if not isinstance(expected, list) or not expected_hash:
+        raise ValueError(
+            "frozen LightGBM bundle lacks an ordered feature-schema contract; "
+            "rerun the fixed-negpool experiment")
+    if _feature_schema_sha256(expected) != expected_hash:
+        raise ValueError("frozen LightGBM feature-schema hash is invalid")
+    anchored = preflight.get("feature_schema", {})
+    if (anchored.get("ordered_feature_cols") != expected
+            or anchored.get("sha256") != expected_hash):
+        raise ValueError(
+            "frozen LightGBM summary feature schema differs from the hashed "
+            "preflight contract")
+    actual = list(prepared.feature_cols)
+    if actual != expected:
+        raise ValueError(
+            "deep feature schema differs from frozen LightGBM inputs: "
+            f"frozen={expected}, current={actual}")
+    models = summary.get("models", {})
+    if not models:
+        raise ValueError("frozen LightGBM bundle contains no trained models")
+    mismatches = [
+        name for name, model in models.items()
+        if model.get("feature_cols") != expected
+    ]
+    if mismatches:
+        raise ValueError(
+            "frozen LightGBM models disagree with the feature-schema "
+            f"contract: {mismatches}")
+
+
 def _protocol_parameters(preflight):
     fixed = preflight.get("fixed_split", {})
     try:
@@ -348,6 +389,8 @@ def prepare_protocol(
         )
     else:
         raise ValueError("dataset must be combined, 2da, 5da, or normal")
+
+    _assert_frozen_feature_schema(prepared, summary, frozen_preflight)
 
     frame, membership, fold_map, group_col, inner_columns = (
         _apply_frozen_assignments(prepared, required, config, summary))

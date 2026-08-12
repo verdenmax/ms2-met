@@ -24,6 +24,8 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,6 +62,12 @@ _LEAKAGE_GROUP = "leakage_group_id"
 RELATIONSHIP_COLUMNS = (
     "query_id", "group_id", "pair_id", "candidate_family_id",
     "peptide_group_id", "parent_id",
+)
+FAMILY_RELATIONSHIP_COLUMNS = (
+    "group_id", "candidate_family_id", "peptide_group_id", "parent_id",
+)
+ROOT_FAMILY_RELATIONSHIP_COLUMNS = (
+    "group_id", "candidate_family_id", "peptide_group_id",
 )
 
 
@@ -150,11 +158,57 @@ def _assign_leakage_groups(frame, base_group_col):
                 "same-sequence leakage is prevented"),
         }
 
-    relation_values = frame[relation_columns].astype("string")
-    has_relation_id = relation_values.apply(
+    family_columns = [
+        column for column in FAMILY_RELATIONSHIP_COLUMNS
+        if column in relation_columns
+    ]
+    family_values = frame[family_columns].astype("string")
+    has_family_id = family_values.apply(
         lambda column: column.str.strip().fillna("").ne(""))
-    row_has_relation_id = has_relation_id.any(axis=1)
-    complete_relation_coverage = bool(row_has_relation_id.all())
+    row_has_family_id = (
+        has_family_id.any(axis=1)
+        if family_columns else pd.Series(False, index=frame.index)
+    )
+    complete_family_coverage = bool(row_has_family_id.all())
+
+    # query_id/pair_id are often row-unique identifiers.  They are useful
+    # graph tokens, but their mere presence cannot prove that a generated
+    # candidate is connected to its parent.  When query rows exist, require
+    # every declared parent token to occur on at least one other row in the
+    # family-ID namespace.
+    query_rows = (
+        frame["query_id"].astype("string").str.strip().fillna("").ne("")
+        if "query_id" in frame else pd.Series(False, index=frame.index)
+    )
+    root_columns = [
+        column for column in ROOT_FAMILY_RELATIONSHIP_COLUMNS
+        if column in family_columns
+    ]
+    root_token_rows = {}
+    for row_position, values in enumerate(
+            frame[root_columns].itertuples(index=False, name=None)):
+        if query_rows.iloc[row_position]:
+            continue
+        for value in values:
+            if pd.isna(value) or not str(value).strip():
+                continue
+            root_token_rows.setdefault(str(value).strip(), set()).add(
+                row_position)
+    unresolved_parent_rows = 0
+    if "parent_id" in frame:
+        parent_values = frame["parent_id"].astype("string").str.strip()
+        for row_position in np.flatnonzero(query_rows.to_numpy()):
+            value = parent_values.iloc[row_position]
+            if pd.isna(value) or not value:
+                unresolved_parent_rows += 1
+                continue
+            linked_rows = root_token_rows.get(str(value), set())
+            if not linked_rows:
+                unresolved_parent_rows += 1
+    elif query_rows.any():
+        unresolved_parent_rows = int(query_rows.sum())
+    complete_family_linkage = (
+        complete_family_coverage and unresolved_parent_rows == 0)
     n_rows = len(frame)
     parent = np.arange(n_rows, dtype=np.int64)
     rank = np.zeros(n_rows, dtype=np.int8)
@@ -218,20 +272,25 @@ def _assign_leakage_groups(frame, base_group_col):
     return _LEAKAGE_GROUP, {
         "mode": (
             "sequence_family_connected_components_v1"
-            if complete_relation_coverage else
+            if complete_family_linkage else
             "sequence_family_connected_components_partial_ids_v1"),
         "base_group_col": base_group_col,
         "relationship_columns_available": relation_columns,
+        "family_relationship_columns_available": family_columns,
+        "root_family_columns_available": root_columns,
         "relationship_ids_applied": True,
-        "n_rows_with_relationship_id": int(row_has_relation_id.sum()),
+        "n_rows_with_relationship_id": int(row_has_family_id.sum()),
         "relationship_id_coverage_fraction": float(
-            row_has_relation_id.mean()),
-        "candidate_family_leakage_protected": complete_relation_coverage,
+            row_has_family_id.mean()),
+        "n_query_rows": int(query_rows.sum()),
+        "n_unresolved_query_parent_rows": unresolved_parent_rows,
+        "candidate_family_leakage_protected": complete_family_linkage,
         "limitation": (
-            None if complete_relation_coverage else
-            "relationship IDs are missing on some rows; available families "
-            "are grouped, but global candidate-family non-leakage cannot be "
-            "claimed"),
+            None if complete_family_linkage else
+            "family-linking IDs are missing on some rows or a generated "
+            "query does not resolve to another row through its parent ID; "
+            "available relations are grouped, but global candidate-family "
+            "non-leakage cannot be claimed"),
         "n_connected_groups": int(len(group_sizes)),
         "n_multirow_groups": int((group_sizes > 1).sum()),
         "max_group_rows": int(group_sizes.max()),
@@ -661,6 +720,10 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
             headers[pool] == headers["neg20"] for pool in POOL_NAMES),
         "nesting": nesting,
         "shared_values": shared_values,
+        "feature_schema": {
+            "ordered_feature_cols": list(feature_cols),
+            "sha256": _feature_schema_sha256(feature_cols),
+        },
         "cohort": cohort_audit,
         "fixed_split": split_audit,
         "fixed_folds": fold_audit,
@@ -843,6 +906,10 @@ def prepare_combined_fixed_negpool(feature_root, cfg, *,
             "grouping": grouping_audit,
         },
         "datasets": dataset_validation,
+        "feature_schema": {
+            "ordered_feature_cols": list(first.feature_cols),
+            "sha256": _feature_schema_sha256(first.feature_cols),
+        },
         "cohort": cohort_audit,
         "fixed_split": split_audit,
         "fixed_folds": fold_audit,
@@ -882,6 +949,8 @@ def _flat_result_row(model_name, subset, metrics):
     fpr5 = metrics["fpr_5"]
     fpr10 = metrics["fpr_10"]
     return {
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
         "model": model_name,
         "test_subset": subset,
         "n_rows": int(len(labels)),
@@ -903,6 +972,8 @@ def _macro_domain_row(model_name, domain_rows):
         "observed_fpr_at_fpr5", "locked_error_recall_at_fpr10",
         "observed_fpr_at_fpr10")
     return {
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
         "model": model_name,
         "test_subset": "macro_equal_dataset_weight",
         "test_dataset": "macro_equal_weight",
@@ -920,6 +991,7 @@ def _bootstrap_paired(test_frame, model_predictions, reps, seed, group_col):
     """Paired sequence-cluster bootstrap on the unchanged full E20 test."""
     if reps < 1:
         return pd.DataFrame(columns=[
+            "metric_semantics", "positive_class",
             "model_a", "model_b", "metric", "delta_b_minus_a",
             "bootstrap_mean_delta", "ci95_low", "ci95_high",
             "probability_improved", "n_bootstrap"])
@@ -983,6 +1055,8 @@ def _bootstrap_paired(test_frame, model_predictions, reps, seed, group_col):
             delta = observed[model_b][metric] - observed[model_a][metric]
             higher_is_better = metric != "locked_fnr_at_fpr5"
             rows.append({
+                "metric_semantics": METRIC_SEMANTICS_VERSION,
+                "positive_class": "incorrect_identification",
                 "model_a": model_a,
                 "model_b": model_b,
                 "metric": metric,
@@ -1075,12 +1149,78 @@ def _known_outputs(output_root):
 
 
 def _assert_output_available(output_root, overwrite):
-    existing = [path for path in _known_outputs(output_root) if path.exists()]
+    root = Path(output_root)
+    existing = [path for path in _known_outputs(root) if path.exists()]
     if existing and not overwrite:
         raise FileExistsError(
             "refusing to overwrite an existing fixed-negpool bundle; choose "
             "a new output root or pass --overwrite:\n  "
             + "\n  ".join(map(str, existing)))
+    if root.exists() and (not root.is_dir() or any(root.iterdir())) \
+            and not overwrite:
+        raise FileExistsError(
+            f"refusing to replace nonempty output path: {root}")
+
+
+def _publish_bundle(staging, root, overwrite, *, prepare_only, dataset):
+    """Publish a validated fixed-negpool bundle and restore on swap failure."""
+    staging, root = Path(staging), Path(root)
+    required = [
+        staging / "bundle_status.json",
+        staging / "preflight.json",
+        staging / "manifests" / "membership.csv",
+        staging / "manifests" / "fixed_test_manifest.csv",
+        staging / "manifests" / "fold_map.csv",
+    ]
+    if not prepare_only:
+        required.extend([
+            staging / "summary.json",
+            staging / "config_used.yaml",
+            staging / "fixed_test_summary.csv",
+            staging / "tier_summary.csv",
+            staging / "paired_bootstrap.csv",
+            staging / "predictions" / "fixed_test_predictions.csv",
+        ])
+        if dataset == "combined":
+            required.extend([
+                staging / "domain_summary.csv",
+                staging / "domain_tier_summary.csv",
+                staging / "paired_bootstrap_by_domain.csv",
+            ])
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise ValueError(
+            "refusing to publish an incomplete fixed-negpool bundle:\n  "
+            + "\n  ".join(missing))
+    status = json.loads(
+        (staging / "bundle_status.json").read_text(encoding="utf-8"))
+    expected_status = "prepare_only" if prepare_only else "complete"
+    if status.get("status") != expected_status:
+        raise ValueError(
+            f"fixed-negpool status must be {expected_status!r}, got "
+            f"{status.get('status')!r}")
+
+    backup = None
+    if root.exists():
+        if not overwrite and (not root.is_dir() or any(root.iterdir())):
+            raise FileExistsError(f"output path is not empty: {root}")
+        backup = root.with_name(f".{root.name}.backup.{uuid.uuid4().hex}")
+        os.replace(root, backup)
+    try:
+        os.replace(staging, root)
+    except Exception:
+        if backup is not None and backup.exists() and not root.exists():
+            os.replace(backup, root)
+        raise
+    if backup is not None and backup.exists():
+        try:
+            if backup.is_dir():
+                shutil.rmtree(backup)
+            else:
+                backup.unlink()
+        except OSError as exc:
+            logging.warning(
+                "published bundle but could not remove %s: %s", backup, exc)
 
 
 def _write_prepared(prepared, output_root):
@@ -1123,16 +1263,21 @@ def _frozen_bundle_hashes(output_root):
     }
 
 
-def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
-                      test_fraction=0.20, min_test_errors_per_tier=100,
-                      split_candidates=128, bootstrap_reps=1000,
-                      bootstrap_seed=20260810, overwrite=False,
-                      prepare_only=False, argv=None):
-    """Run the complete controlled experiment and write one result bundle."""
+def _feature_schema_sha256(feature_cols):
+    payload = json.dumps(
+        list(feature_cols), ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _run_fixed_negpool_into_root(
+        config_path, feature_root, dataset, output_root, *,
+        test_fraction=0.20, min_test_errors_per_tier=100,
+        split_candidates=128, bootstrap_reps=1000,
+        bootstrap_seed=20260810, prepare_only=False, argv=None):
+    """Build one result bundle in an empty staging root."""
     with open(config_path, encoding="utf-8") as handle:
         cfg = yaml.safe_load(handle)
     _assert_formal_config(cfg)
-    _assert_output_available(output_root, overwrite)
     log_path = Path(output_root) / "logs" / "fixed_negpool.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
@@ -1161,6 +1306,11 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
             split_candidates=split_candidates)
     _write_prepared(prepared, output_root)
     if prepare_only:
+        _atomic_json(str(Path(output_root) / "bundle_status.json"), {
+            "status": "prepare_only",
+            "metric_semantics": METRIC_SEMANTICS_VERSION,
+            "positive_class": "incorrect_identification",
+        })
         return {"mode": "prepare_only", **prepared.validation}
 
     root = Path(output_root)
@@ -1392,6 +1542,9 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
     frozen_bundle = {
         "schema": "fixed_negpool_frozen_bundle_v2",
         "complete": True,
+        "feature_cols": list(prepared.feature_cols),
+        "feature_cols_sha256": _feature_schema_sha256(
+            prepared.feature_cols),
         "artifact_sha256": _frozen_bundle_hashes(root),
     }
     summary = {
@@ -1469,8 +1622,48 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
             argv or ["tools/spec_trainer/src/fixed_negpool.py"]),
     }
     _atomic_json(str(root / "summary.json"), summary)
+    _atomic_json(str(root / "bundle_status.json"), {
+        "status": "complete",
+        "metric_semantics": METRIC_SEMANTICS_VERSION,
+        "positive_class": "incorrect_identification",
+    })
     logging.info("fixed-negpool complete: %s", root / "summary.json")
     return summary
+
+
+def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
+                      test_fraction=0.20, min_test_errors_per_tier=100,
+                      split_candidates=128, bootstrap_reps=1000,
+                      bootstrap_seed=20260810, overwrite=False,
+                      prepare_only=False, argv=None):
+    """Build then atomically publish one controlled result bundle."""
+    root = Path(output_root)
+    _assert_output_available(root, overwrite)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(
+        prefix=f".{root.name}.staging.", dir=root.parent))
+    try:
+        result = _run_fixed_negpool_into_root(
+            config_path, feature_root, dataset, staging,
+            test_fraction=test_fraction,
+            min_test_errors_per_tier=min_test_errors_per_tier,
+            split_candidates=split_candidates,
+            bootstrap_reps=bootstrap_reps,
+            bootstrap_seed=bootstrap_seed,
+            prepare_only=prepare_only,
+            argv=argv,
+        )
+        if not prepare_only:
+            result = json.loads(json.dumps(result).replace(
+                str(staging), str(root)))
+            _atomic_json(str(staging / "summary.json"), result)
+        _publish_bundle(
+            staging, root, overwrite, prepare_only=prepare_only,
+            dataset=dataset)
+        return result
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 def _parser():

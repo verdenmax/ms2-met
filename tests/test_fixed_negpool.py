@@ -180,6 +180,50 @@ def test_partial_relationship_ids_do_not_overclaim_family_protection():
     assert audit["relationship_id_coverage_fraction"] == pytest.approx(2 / 3)
 
 
+def test_unique_query_ids_do_not_claim_candidate_family_protection():
+    import fixed_negpool
+
+    frame = pd.DataFrame({
+        "sequence": ["A", "B", "C"],
+        "query_id": ["Q1", "Q2", "Q3"],
+    })
+    _, audit = fixed_negpool._assign_leakage_groups(frame, "sequence")
+    assert audit["relationship_ids_applied"] is True
+    assert audit["family_relationship_columns_available"] == []
+    assert audit["candidate_family_leakage_protected"] is False
+    assert audit["relationship_id_coverage_fraction"] == 0.0
+
+
+def test_unresolved_query_parent_does_not_claim_family_protection():
+    import fixed_negpool
+
+    frame = pd.DataFrame({
+        "sequence": ["PARENT", "CHILD"],
+        "query_id": [pd.NA, "Q1"],
+        "group_id": ["P1", pd.NA],
+        "parent_id": [pd.NA, "MISSING_PARENT"],
+    })
+    _, audit = fixed_negpool._assign_leakage_groups(frame, "sequence")
+    assert audit["n_query_rows"] == 1
+    assert audit["n_unresolved_query_parent_rows"] == 1
+    assert audit["candidate_family_leakage_protected"] is False
+
+
+def test_sibling_queries_cannot_resolve_each_others_missing_parent():
+    import fixed_negpool
+
+    frame = pd.DataFrame({
+        "sequence": ["UNRELATED_ROOT", "CHILD_A", "CHILD_B"],
+        "query_id": [pd.NA, "Q1", "Q2"],
+        "group_id": ["OTHER", pd.NA, pd.NA],
+        "parent_id": [pd.NA, "P1", "P1"],
+    })
+    _, audit = fixed_negpool._assign_leakage_groups(frame, "sequence")
+    assert audit["n_query_rows"] == 2
+    assert audit["n_unresolved_query_parent_rows"] == 2
+    assert audit["candidate_family_leakage_protected"] is False
+
+
 def test_prepare_combined_uses_global_sequence_split_and_twelve_strata(
         tmp_path):
     import fixed_negpool
@@ -227,6 +271,36 @@ def test_paired_bootstrap_has_all_predeclared_comparisons():
     assert set(zip(result["model_a"], result["model_b"])) == {
         ("M5", "M10"), ("M10", "M20"), ("M5", "M20")}
     assert set(result["n_bootstrap"]) == {20}
+    assert set(result["metric_semantics"]) == {
+        "error_identification_positive_v1"}
+    assert set(result["positive_class"]) == {"incorrect_identification"}
+
+
+def test_failed_fixed_bundle_overwrite_preserves_previous_result(
+        tmp_path, monkeypatch):
+    import fixed_negpool
+
+    output = tmp_path / "existing"
+    output.mkdir()
+    (output / "summary.json").write_text(
+        '{"old": true}', encoding="utf-8")
+    (output / "keep.txt").write_text("old bundle", encoding="utf-8")
+
+    def fail_in_staging(*args, **kwargs):
+        staging = Path(args[3])
+        staging.mkdir(parents=True, exist_ok=True)
+        (staging / "partial.txt").write_text("partial", encoding="utf-8")
+        raise RuntimeError("synthetic training failure")
+
+    monkeypatch.setattr(
+        fixed_negpool, "_run_fixed_negpool_into_root", fail_in_staging)
+    with pytest.raises(RuntimeError, match="synthetic training failure"):
+        fixed_negpool.run_fixed_negpool(
+            tmp_path / "config.yaml", tmp_path / "features", "2da",
+            output, overwrite=True)
+    assert json.loads((output / "summary.json").read_text()) == {"old": True}
+    assert (output / "keep.txt").read_text() == "old bundle"
+    assert not (output / "partial.txt").exists()
 
 
 def test_make_fixed_negpool_2da_uses_runtime_roots(tmp_path):
@@ -293,6 +367,9 @@ def test_run_fixed_negpool_writes_complete_paired_bundle(tmp_path):
     fixed = pd.read_csv(output_root / "fixed_test_summary.csv")
     assert fixed["model"].tolist() == ["M5", "M10", "M20"]
     assert fixed["n_rows"].nunique() == 1
+    assert set(fixed["metric_semantics"]) == {
+        "error_identification_positive_v1"}
+    assert set(fixed["positive_class"]) == {"incorrect_identification"}
     assert len(pd.read_csv(output_root / "tier_summary.csv")) == 9
     assert len(pd.read_csv(output_root / "paired_bootstrap.csv")) == 12
     loaded = json.loads((output_root / "summary.json").read_text())
