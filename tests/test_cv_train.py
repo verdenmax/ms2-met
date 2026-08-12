@@ -346,10 +346,11 @@ def test_main_cross_test_mode(tmp_path):
     assert op["target_fpr"] == 0.10
     assert op["threshold_source"] == \
         "pooled_train_oof_single_member_scores"
-    assert "test_metrics" in op
+    assert "test_metrics" not in op
     assert op["external_ensemble"]["method"] == \
         "fold_calibrated_majority_vote"
-    assert op["test_metrics"]["n_actual_correct"] == int(
+    assert op["external_ensemble"]["test_metrics"][
+        "n_actual_correct"] == int(
         (dfB["label"] == 1).sum())
     assert res["n_actual_correct"] == int((dfB["label"] == 1).sum())
     assert res["n_actual_error"] == int((dfB["label"] == 0).sum())

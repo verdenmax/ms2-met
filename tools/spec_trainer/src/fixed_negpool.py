@@ -56,6 +56,11 @@ _OUTER_FOLD = "outer_fold"
 _DATASET = "dataset"
 _SOURCE_SAMPLE_ID = "source_sample_id"
 _STRATUM = "dataset_tier_stratum"
+_LEAKAGE_GROUP = "leakage_group_id"
+RELATIONSHIP_COLUMNS = (
+    "query_id", "group_id", "pair_id", "candidate_family_id",
+    "peptide_group_id", "parent_id",
+)
 
 
 @dataclass
@@ -69,6 +74,7 @@ class PreparedFixedNegpool:
     identity_cols: list[str]
     cohort_audit: dict
     validation: dict
+    split_group_col: str
 
 
 def feature_paths(feature_root, dataset):
@@ -107,6 +113,129 @@ def _identity_text(frame, columns):
         values = frame[column].astype(str)
         encoded = encoded + values.str.len().astype(str) + ":" + values + "|"
     return encoded
+
+
+def _nonempty_relation_columns(frame):
+    available = []
+    for column in RELATIONSHIP_COLUMNS:
+        if column not in frame:
+            continue
+        values = frame[column].astype("string").str.strip()
+        if values.notna().any() and values.fillna("").ne("").any():
+            available.append(column)
+    return available
+
+
+def _assign_leakage_groups(frame, base_group_col):
+    """Group the connected components of sequence and candidate relations.
+
+    A synthetic negative may have a different sequence from its parent.  A
+    plain sequence split would therefore leak that family across partitions.
+    When upstream relationship IDs are available, unioning their tokens with
+    the sequence tokens makes every connected family one indivisible group.
+    """
+    if base_group_col not in frame:
+        raise ValueError(f"split group column {base_group_col!r} is missing")
+    if frame[base_group_col].isna().any():
+        raise ValueError(f"split group column {base_group_col!r} has nulls")
+    relation_columns = _nonempty_relation_columns(frame)
+    if not relation_columns:
+        return base_group_col, {
+            "mode": "sequence_only",
+            "base_group_col": base_group_col,
+            "relationship_columns_available": [],
+            "candidate_family_leakage_protected": False,
+            "limitation": (
+                "upstream feature rows do not contain pair/family IDs; only "
+                "same-sequence leakage is prevented"),
+        }
+
+    relation_values = frame[relation_columns].astype("string")
+    has_relation_id = relation_values.apply(
+        lambda column: column.str.strip().fillna("").ne(""))
+    row_has_relation_id = has_relation_id.any(axis=1)
+    complete_relation_coverage = bool(row_has_relation_id.all())
+    n_rows = len(frame)
+    parent = np.arange(n_rows, dtype=np.int64)
+    rank = np.zeros(n_rows, dtype=np.int8)
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return int(index)
+
+    def union(left, right):
+        left, right = find(left), find(right)
+        if left == right:
+            return
+        if rank[left] < rank[right]:
+            left, right = right, left
+        parent[right] = left
+        if rank[left] == rank[right]:
+            rank[left] += 1
+
+    first_seen = {}
+    token_columns = (base_group_col, *relation_columns)
+    for row_index, values in enumerate(
+            frame[list(token_columns)].itertuples(index=False, name=None)):
+        for column, value in zip(token_columns, values):
+            if pd.isna(value) or not str(value).strip():
+                continue
+            # Relationship IDs deliberately share one namespace.  For
+            # example, a parent row may expose ``group_id=P1`` while its
+            # generated child exposes ``parent_id=P1``; those two rows still
+            # belong to one indivisible candidate family.  Sequence remains
+            # namespaced so an accidental text collision with an opaque ID
+            # cannot join unrelated peptides.
+            if column == base_group_col:
+                namespace = "sequence"
+            elif column in {
+                    "group_id", "candidate_family_id", "peptide_group_id",
+                    "parent_id"}:
+                namespace = "candidate_family"
+            else:
+                namespace = column
+            token = f"{namespace}:{str(value).strip()}"
+            previous = first_seen.setdefault(token, row_index)
+            union(row_index, previous)
+
+    component_tokens = {}
+    for token, row_index in first_seen.items():
+        root = find(row_index)
+        current = component_tokens.get(root)
+        if current is None or token < current:
+            component_tokens[root] = token
+    identifiers = [
+        hashlib.sha256(
+            f"connected_candidate_family_v1|{component_tokens[find(i)]}"
+            .encode("utf-8")
+        ).hexdigest()
+        for i in range(n_rows)
+    ]
+    frame[_LEAKAGE_GROUP] = identifiers
+    group_sizes = pd.Series(identifiers).value_counts()
+    return _LEAKAGE_GROUP, {
+        "mode": (
+            "sequence_family_connected_components_v1"
+            if complete_relation_coverage else
+            "sequence_family_connected_components_partial_ids_v1"),
+        "base_group_col": base_group_col,
+        "relationship_columns_available": relation_columns,
+        "relationship_ids_applied": True,
+        "n_rows_with_relationship_id": int(row_has_relation_id.sum()),
+        "relationship_id_coverage_fraction": float(
+            row_has_relation_id.mean()),
+        "candidate_family_leakage_protected": complete_relation_coverage,
+        "limitation": (
+            None if complete_relation_coverage else
+            "relationship IDs are missing on some rows; available families "
+            "are grouped, but global candidate-family non-leakage cannot be "
+            "claimed"),
+        "n_connected_groups": int(len(group_sizes)),
+        "n_multirow_groups": int((group_sizes > 1).sum()),
+        "max_group_rows": int(group_sizes.max()),
+    }
 
 
 def _load_identity_tables(paths, target_col):
@@ -413,7 +542,8 @@ def _group_fold_manifest(frame, group_col, inner_columns):
 
 def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
                           min_test_errors_per_tier=100,
-                          split_candidates=128):
+                          split_candidates=128,
+                          generate_assignments=True):
     """Validate pools and return the single master cohort/split/fold map."""
     target_col = cfg["data"]["target_col"]
     group_col = cfg["data"].get("group_col")
@@ -463,33 +593,53 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
     cohort = cohort.copy()
     _validate_frame(cohort, feature_cols, target_col, group_col)
 
-    seed = int(cfg["training"].get("cv_seed", 42))
-    split, split_audit = _choose_fixed_test(
-        cohort, group_col, test_fraction, seed,
-        n_candidates=split_candidates)
-    cohort[_SPLIT] = split
-    test_counts = (
-        cohort.loc[cohort[_SPLIT].eq("test")]
-        .groupby(_TIER, sort=True).size().to_dict()
-    )
-    insufficient = {
-        tier: int(test_counts.get(tier, 0)) for tier in ERROR_TIERS
-        if test_counts.get(tier, 0) < min_test_errors_per_tier
-    }
-    if insufficient:
-        raise ValueError(
-            "fixed test has too few error rows in tiers "
-            f"{insufficient}; require >= {min_test_errors_per_tier}. "
-            "Increase the holdout fraction or negative-pool cutoff before "
-            "training")
-
-    inner_columns, fold_audit = _assign_reusable_folds(
-        cohort, cfg, group_col)
-    group_map = _group_fold_manifest(cohort, group_col, inner_columns)
+    split_group_col, grouping_audit = _assign_leakage_groups(
+        cohort, group_col)
+    if generate_assignments:
+        seed = int(cfg["training"].get("cv_seed", 42))
+        split, split_audit = _choose_fixed_test(
+            cohort, split_group_col, test_fraction, seed,
+            n_candidates=split_candidates)
+        cohort[_SPLIT] = split
+        test_counts = (
+            cohort.loc[cohort[_SPLIT].eq("test")]
+            .groupby(_TIER, sort=True).size().to_dict()
+        )
+        insufficient = {
+            tier: int(test_counts.get(tier, 0)) for tier in ERROR_TIERS
+            if test_counts.get(tier, 0) < min_test_errors_per_tier
+        }
+        if insufficient:
+            raise ValueError(
+                "fixed test has too few error rows in tiers "
+                f"{insufficient}; require >= {min_test_errors_per_tier}. "
+                "Increase the holdout fraction or negative-pool cutoff "
+                "before training")
+        inner_columns, fold_audit = _assign_reusable_folds(
+            cohort, cfg, split_group_col)
+        group_map = _group_fold_manifest(
+            cohort, split_group_col, inner_columns)
+    else:
+        # Validation-only callers reconstruct identities and the leakage-group
+        # key, then obtain every assignment from an already frozen manifest.
+        # No random split/fold generator is invoked in this mode.
+        cohort[_SPLIT] = "deferred_to_frozen_manifest"
+        cohort[_OUTER_FOLD] = -1
+        test_counts = {}
+        split_audit = {
+            "method": "not_generated_consume_frozen_manifest",
+            "assignment_owner": "completed_fixed_negpool_bundle",
+        }
+        fold_audit = dict(split_audit)
+        group_map = cohort[[split_group_col]].drop_duplicates().reset_index(
+            drop=True)
 
     in_cohort = set(cohort[_SAMPLE_ID])
     membership = master_identity[
         [_SAMPLE_ID, *identity_cols, target_col, _SOURCE_ROW]].copy()
+    for column in RELATIONSHIP_COLUMNS:
+        if column in master and column not in membership:
+            membership[column] = master[column].to_numpy()
     membership[_TIER] = master[_TIER].to_numpy()
     membership["in_cohort"] = membership[_SAMPLE_ID].isin(in_cohort)
     split_map = cohort.set_index(_SAMPLE_ID)[_SPLIT]
@@ -497,6 +647,7 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
         "excluded_by_cohort")
 
     validation = {
+        "protocol_schema": "fixed_negpool_protocol_v2",
         "metric_semantics": METRIC_SEMANTICS_VERSION,
         "positive_class": "incorrect_identification",
         "identity": {
@@ -504,6 +655,7 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
             "serialization": "length_prefixed_utf8_fields_v1",
             "sample_id": "sha256",
             "candidate_diagnostics": identity_diagnostics,
+            "split_grouping": grouping_audit,
         },
         "headers_identical": all(
             headers[pool] == headers["neg20"] for pool in POOL_NAMES),
@@ -524,7 +676,7 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
         frame=cohort, membership=membership,
         group_fold_map=group_map, feature_cols=feature_cols,
         identity_cols=identity_cols, cohort_audit=cohort_audit,
-        validation=validation)
+        validation=validation, split_group_col=split_group_col)
 
 
 def _namespace_sample_ids(frame, dataset):
@@ -552,7 +704,8 @@ def _sum_class_counts(audits, side):
 def prepare_combined_fixed_negpool(feature_root, cfg, *,
                                    test_fraction=0.20,
                                    min_test_errors_per_tier=100,
-                                   split_candidates=128):
+                                   split_candidates=128,
+                                   generate_assignments=True):
     """Prepare one globally grouped 2da+5da+normal fixed E20 experiment.
 
     Each dataset is independently audited for E5/E10/E20 nesting and shared
@@ -574,7 +727,8 @@ def prepare_combined_fixed_negpool(feature_root, cfg, *,
         prepared_by_dataset[dataset] = prepare_fixed_negpool(
             feature_paths(feature_root, dataset), cfg,
             test_fraction=test_fraction, min_test_errors_per_tier=1,
-            split_candidates=split_candidates)
+            split_candidates=split_candidates,
+            generate_assignments=generate_assignments)
 
     first = prepared_by_dataset[datasets[0]]
     for dataset, prepared in prepared_by_dataset.items():
@@ -607,39 +761,56 @@ def prepare_combined_fixed_negpool(feature_root, cfg, *,
     cohort[_STRATUM] = (
         cohort[_DATASET].astype(str) + "::" + cohort[_TIER].astype(str))
 
-    seed = int(cfg["training"].get("cv_seed", 42))
-    split, split_audit = _choose_fixed_test(
-        cohort, group_col, test_fraction, seed,
-        n_candidates=split_candidates, stratum_col=_STRATUM,
-        min_test_by_stratum={
-            f"{dataset}::{tier}": min_test_errors_per_tier
-            for dataset in datasets for tier in ERROR_TIERS
-        })
-    cohort[_SPLIT] = split
-    test = cohort.loc[cohort[_SPLIT].eq("test")]
-    dataset_tier_counts = test.groupby(
-        [_DATASET, _TIER], sort=True).size().to_dict()
-    insufficient = {
-        f"{dataset}::{tier}": int(
-            dataset_tier_counts.get((dataset, tier), 0))
-        for dataset in datasets for tier in ERROR_TIERS
-        if dataset_tier_counts.get((dataset, tier), 0)
-        < min_test_errors_per_tier
-    }
-    if insufficient:
-        raise ValueError(
-            "combined fixed test has too few error rows in dataset/tier "
-            f"strata {insufficient}; require >= "
-            f"{min_test_errors_per_tier}")
+    split_group_col, grouping_audit = _assign_leakage_groups(
+        cohort, group_col)
 
-    inner_columns, fold_audit = _assign_reusable_folds(
-        cohort, cfg, group_col, stratum_col=_STRATUM)
-    group_map = _group_fold_manifest(cohort, group_col, inner_columns)
+    if generate_assignments:
+        seed = int(cfg["training"].get("cv_seed", 42))
+        split, split_audit = _choose_fixed_test(
+            cohort, split_group_col, test_fraction, seed,
+            n_candidates=split_candidates, stratum_col=_STRATUM,
+            min_test_by_stratum={
+                f"{dataset}::{tier}": min_test_errors_per_tier
+                for dataset in datasets for tier in ERROR_TIERS
+            })
+        cohort[_SPLIT] = split
+        test = cohort.loc[cohort[_SPLIT].eq("test")]
+        dataset_tier_counts = test.groupby(
+            [_DATASET, _TIER], sort=True).size().to_dict()
+        insufficient = {
+            f"{dataset}::{tier}": int(
+                dataset_tier_counts.get((dataset, tier), 0))
+            for dataset in datasets for tier in ERROR_TIERS
+            if dataset_tier_counts.get((dataset, tier), 0)
+            < min_test_errors_per_tier
+        }
+        if insufficient:
+            raise ValueError(
+                "combined fixed test has too few error rows in dataset/tier "
+                f"strata {insufficient}; require >= "
+                f"{min_test_errors_per_tier}")
+        inner_columns, fold_audit = _assign_reusable_folds(
+            cohort, cfg, split_group_col, stratum_col=_STRATUM)
+        group_map = _group_fold_manifest(
+            cohort, split_group_col, inner_columns)
+    else:
+        cohort[_SPLIT] = "deferred_to_frozen_manifest"
+        cohort[_OUTER_FOLD] = -1
+        dataset_tier_counts = {}
+        split_audit = {
+            "method": "not_generated_consume_frozen_manifest",
+            "assignment_owner": "completed_fixed_negpool_bundle",
+        }
+        fold_audit = dict(split_audit)
+        group_map = cohort[[split_group_col]].drop_duplicates().reset_index(
+            drop=True)
     split_map = cohort.set_index(_SAMPLE_ID)[_SPLIT]
     membership[_SPLIT] = membership[_SAMPLE_ID].map(split_map).fillna(
         "excluded_by_cohort")
 
-    pooled_tier_counts = test.groupby(_TIER, sort=True).size().to_dict()
+    pooled_tier_counts = (
+        test.groupby(_TIER, sort=True).size().to_dict()
+        if generate_assignments else {})
     cohort_audits = {
         dataset: prepared.cohort_audit
         for dataset, prepared in prepared_by_dataset.items()
@@ -661,6 +832,7 @@ def prepare_combined_fixed_negpool(feature_root, cfg, *,
         for dataset, prepared in prepared_by_dataset.items()
     }
     validation = {
+        "protocol_schema": "fixed_negpool_protocol_v2",
         "metric_semantics": METRIC_SEMANTICS_VERSION,
         "positive_class": "incorrect_identification",
         "mode": "combined_2da_5da_normal",
@@ -668,7 +840,7 @@ def prepare_combined_fixed_negpool(feature_root, cfg, *,
             "columns": first.identity_cols,
             "local_sample_id": "sha256_length_prefixed_identity_fields",
             "combined_sample_id": "sha256(dataset|local_sample_id)",
-            "grouping": "global_sequence_across_all_datasets",
+            "grouping": grouping_audit,
         },
         "datasets": dataset_validation,
         "cohort": cohort_audit,
@@ -691,7 +863,7 @@ def prepare_combined_fixed_negpool(feature_root, cfg, *,
         frame=cohort, membership=membership,
         group_fold_map=group_map, feature_cols=first.feature_cols,
         identity_cols=first.identity_cols, cohort_audit=cohort_audit,
-        validation=validation)
+        validation=validation, split_group_col=split_group_col)
 
 
 def _locked_metrics(labels, trust_scores, vote_fractions, weights=None):
@@ -915,17 +1087,40 @@ def _write_prepared(prepared, output_root):
     root = Path(output_root)
     _atomic_csv(str(root / "manifests" / "membership.csv"),
                 prepared.membership)
-    identity = [
+    identity = list(dict.fromkeys([
         _SAMPLE_ID, _SOURCE_SAMPLE_ID, _DATASET,
         *prepared.identity_cols, "label", _TIER, _STRATUM, _SPLIT,
-        _OUTER_FOLD,
-    ]
+        _OUTER_FOLD, prepared.split_group_col, *RELATIONSHIP_COLUMNS,
+    ]))
     fixed = prepared.frame[
         [column for column in identity if column in prepared.frame]].copy()
     _atomic_csv(str(root / "manifests" / "fixed_test_manifest.csv"), fixed)
     _atomic_csv(str(root / "manifests" / "fold_map.csv"),
                 prepared.group_fold_map)
     _atomic_json(str(root / "preflight.json"), prepared.validation)
+
+
+def _frozen_bundle_hashes(output_root):
+    """Anchor every protocol/comparator input consumed by deep trainers."""
+    root = Path(output_root)
+    paths = {
+        "preflight": root / "preflight.json",
+        "membership": root / "manifests" / "membership.csv",
+        "fixed_test_manifest": (
+            root / "manifests" / "fixed_test_manifest.csv"),
+        "fold_map": root / "manifests" / "fold_map.csv",
+        "fixed_test_predictions": (
+            root / "predictions" / "fixed_test_predictions.csv"),
+    }
+    missing = [str(path) for path in paths.values() if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "cannot freeze an incomplete fixed-negpool bundle:\n  "
+            + "\n  ".join(missing))
+    return {
+        name: _file_fingerprint(path)["sha256"]
+        for name, path in paths.items()
+    }
 
 
 def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
@@ -994,7 +1189,7 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
     else:
         shutil.copyfile(config_path, config_used)
     target_col = cfg["data"]["target_col"]
-    group_col = cfg["data"]["group_col"]
+    group_col = prepared.split_group_col
     train_master = prepared.frame.loc[
         prepared.frame[_SPLIT].eq("train")].copy()
     test = prepared.frame.loc[
@@ -1194,6 +1389,11 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
         _atomic_csv(str(root / "paired_bootstrap_by_domain.csv"),
                     domain_bootstrap)
 
+    frozen_bundle = {
+        "schema": "fixed_negpool_frozen_bundle_v2",
+        "complete": True,
+        "artifact_sha256": _frozen_bundle_hashes(root),
+    }
     summary = {
         "metric_semantics": METRIC_SEMANTICS_VERSION,
         "positive_class": "incorrect_identification",
@@ -1215,6 +1415,10 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
                 model: list(tiers) for model, tiers in MODEL_TIERS.items()},
             "same_correct_training_rows": True,
             "same_outer_and_inner_group_assignments": True,
+            "split_group_col": group_col,
+            "split_grouping": prepared.validation["identity"].get(
+                "split_grouping", prepared.validation["identity"].get(
+                    "grouping")),
             "class_weighting": False,
             "feature_arm": cfg["data"]["feature_arm"],
             "cohort": cfg["data"]["cohort"],
@@ -1229,6 +1433,7 @@ def run_fixed_negpool(config_path, feature_root, dataset, output_root, *,
                 "not as a raw number across tiers with different prevalence"),
         },
         "validation": prepared.validation,
+        "frozen_bundle": frozen_bundle,
         "models": model_summaries,
         "bootstrap": {
             "n_requested": bootstrap_reps,

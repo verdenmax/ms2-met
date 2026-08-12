@@ -56,7 +56,8 @@ ID_COLUMNS = {
     "protein_names", "label", "label_type",
     "precursor_mz", "rt",
     "negative_source", "negative_confidence", "query_id", "parent_id",
-    "group_id", "generator", "generator_seed", "heavy_confirmed",
+    "group_id", "pair_id", "candidate_family_id", "peptide_group_id",
+    "generator", "generator_seed", "heavy_confirmed",
 }
 
 

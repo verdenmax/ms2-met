@@ -44,6 +44,17 @@ def test_single_flow_writes_numeric_label_from_label_type():
             _psm("UNKNOWN", None), features={"feat1": 3.0})
 
 
+def test_single_flow_persists_candidate_family_metadata():
+    from workflows.flow_utils import _make_result_row_single
+
+    psm = _psm("FAMILY_PEP", "negative")
+    psm._parent_id = "P1"
+    psm._candidate_family_id = "F1"
+    row = _make_result_row_single(psm, features={"feat1": 1.0})
+    assert row["parent_id"] == "P1"
+    assert row["candidate_family_id"] == "F1"
+
+
 def test_single_flow_dict_used_by_process_batch_single():
     """Confirm that process_batch_single uses _make_result_row_single
     (so the fix actually propagates to the CSV)."""

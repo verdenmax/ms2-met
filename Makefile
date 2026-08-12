@@ -28,6 +28,7 @@ FEATURE_ROOT ?= runs
 CV_OUTPUT_ROOT ?= runs/spec_trainer
 CV_CONFIG_DIR ?= $(CV_OUTPUT_ROOT)/configs
 CV_FEATURE_ARM ?= evidence_all
+FIXED_NEGPOOL_FEATURE_ARM ?= evidence_all
 CV_OVERWRITE ?= 0
 CV_OVERWRITE_FLAG = $(if $(filter 1 true yes,$(CV_OVERWRITE)),--overwrite,)
 FIXED_NEGPOOL_OUTPUT_ROOT ?= $(CV_OUTPUT_ROOT)/fixed-negpool
@@ -35,6 +36,7 @@ FIXED_NEGPOOL_BOOTSTRAPS ?= 1000
 FIXED_NEGPOOL_TEST_FRACTION ?= 0.20
 DEEP_OUTPUT_ROOT ?= runs/deep_trainer
 DEEP_CONFIG ?= tools/deep_trainer/config/tabular_mlp.yaml
+DEEP_PROTOCOL_ROOT ?= $(FIXED_NEGPOOL_OUTPUT_ROOT)/combined
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -1279,7 +1281,7 @@ train-fixed-test-negpool-2da: $(FIXED_NEGPOOL_2DA_FEATURES)
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/reference-cv" \
 	    --config-dir "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs" \
-	    --feature-arm evidence_all
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
 	$(PY) tools/spec_trainer/src/fixed_negpool.py \
 	    --config "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
 	    --feature-root "$(FEATURE_ROOT)" --dataset 2da \
@@ -1293,7 +1295,7 @@ train-fixed-test-negpool-5da: $(FIXED_NEGPOOL_5DA_FEATURES)
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/reference-cv" \
 	    --config-dir "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs" \
-	    --feature-arm evidence_all
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
 	$(PY) tools/spec_trainer/src/fixed_negpool.py \
 	    --config "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs/cv_in_5da_neg20.yaml" \
 	    --feature-root "$(FEATURE_ROOT)" --dataset 5da \
@@ -1307,7 +1309,7 @@ train-fixed-test-negpool-normal: $(FIXED_NEGPOOL_NORMAL_FEATURES)
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/reference-cv" \
 	    --config-dir "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs" \
-	    --feature-arm evidence_all
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
 	$(PY) tools/spec_trainer/src/fixed_negpool.py \
 	    --config "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs/cv_in_normal_neg20.yaml" \
 	    --feature-root "$(FEATURE_ROOT)" --dataset normal \
@@ -1327,7 +1329,7 @@ train-fixed-test-negpool-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES)
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(FIXED_NEGPOOL_OUTPUT_ROOT)/reference-cv" \
 	    --config-dir "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs" \
-	    --feature-arm evidence_all
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
 	$(PY) tools/spec_trainer/src/fixed_negpool.py \
 	    --config "$(FIXED_NEGPOOL_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
 	    --feature-root "$(FEATURE_ROOT)" --dataset combined \
@@ -1338,20 +1340,31 @@ train-fixed-test-negpool-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES)
 # Phase 1 deep-learning baseline. Reuses the exact feature arm, cohort,
 # sequence-grouped fixed E20 test and reusable folds of fixed-negpool; only the
 # LightGBM implementation is replaced by a fold-local-preprocessed PyTorch MLP.
-train-deep-mlp-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES)
+train-deep-mlp-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
+	$(DEEP_PROTOCOL_ROOT)/summary.json
 	@mkdir -p "$(DEEP_OUTPUT_ROOT)/configs"
 	$(PY) tools/spec_trainer/gen_cv_configs.py \
 	    --feature-root "$(FEATURE_ROOT)" \
 	    --output-root "$(DEEP_OUTPUT_ROOT)/reference-cv" \
 	    --config-dir "$(DEEP_OUTPUT_ROOT)/configs" \
-	    --feature-arm evidence_all
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
 	$(PY) -m tools.deep_trainer.experiment \
 	    --config "$(DEEP_CONFIG)" \
 	    --split-config "$(DEEP_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
 	    --feature-root "$(FEATURE_ROOT)" \
+	    --protocol-root "$(DEEP_PROTOCOL_ROOT)" \
 	    --dataset combined \
 	    --output-root "$(DEEP_OUTPUT_ROOT)/tabular-mlp/combined" \
 	    $(CV_OVERWRITE_FLAG)
+
+# A completed LightGBM bundle is the frozen owner of membership/folds and its
+# input SHA256 values. This rule deliberately does not regenerate/overwrite an
+# existing protocol implicitly; use train-fixed-test-negpool-combined when a
+# new feature snapshot needs a new frozen protocol.
+$(DEEP_PROTOCOL_ROOT)/summary.json:
+	@echo "[error] missing frozen fixed-negpool protocol: $@" >&2
+	@echo "Run make train-fixed-test-negpool-combined FEATURE_ROOT=... first." >&2
+	@false
 
 train-neg05-all: $(NEG05_FEATURES)
 	@mkdir -p runs/spec_trainer/models runs/spec_trainer/results runs/spec_trainer/figures

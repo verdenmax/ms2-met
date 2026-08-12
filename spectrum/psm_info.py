@@ -45,6 +45,12 @@ class PSMInfo:
         q_value: float | None = None,
         score: float | None = None,
         label_type: str | None = None,
+        query_id: str | None = None,
+        parent_id: str | None = None,
+        group_id: str | None = None,
+        pair_id: str | None = None,
+        candidate_family_id: str | None = None,
+        peptide_group_id: str | None = None,
     ):
 
         self._sequence = sequence
@@ -57,6 +63,12 @@ class PSMInfo:
         self._q_value = q_value
         self._score = score
         self._label_type = label_type
+        self._query_id = query_id
+        self._parent_id = parent_id
+        self._group_id = group_id
+        self._pair_id = pair_id
+        self._candidate_family_id = candidate_family_id
+        self._peptide_group_id = peptide_group_id
 
     def to_dict(self):
         """将对象转为 JSON 兼容的字典"""
@@ -76,6 +88,12 @@ class PSMInfo:
             d["score"] = float(self._score)
         if self._label_type is not None:
             d["label_type"] = self._label_type
+        for name in (
+                "query_id", "parent_id", "group_id", "pair_id",
+                "candidate_family_id", "peptide_group_id"):
+            value = getattr(self, f"_{name}")
+            if value is not None:
+                d[name] = value
         return d
 
     @classmethod
@@ -93,6 +111,12 @@ class PSMInfo:
             q_value=data.get("q_value"),
             score=data.get("score"),
             label_type=data.get("label_type"),
+            query_id=data.get("query_id"),
+            parent_id=data.get("parent_id"),
+            group_id=data.get("group_id"),
+            pair_id=data.get("pair_id"),
+            candidate_family_id=data.get("candidate_family_id"),
+            peptide_group_id=data.get("peptide_group_id"),
         )
 
     def __repr__(self):

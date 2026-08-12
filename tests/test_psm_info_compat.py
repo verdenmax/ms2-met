@@ -23,6 +23,7 @@ def test_psminfo_new_fields_default_none():
     assert psm._q_value is None
     assert psm._score is None
     assert psm._label_type is None
+    assert psm._candidate_family_id is None
 
 
 def test_psminfo_new_fields_set():
@@ -49,6 +50,19 @@ def test_psminfo_to_dict_includes_new_fields_when_set():
     assert d["q_value"] == 0.001
     assert d["score"] == 20.5
     assert d["label_type"] == "positive"
+
+
+def test_psminfo_relationship_metadata_roundtrip():
+    psm = _make_basic_psm(
+        query_id="Q1", parent_id="P1", group_id="G1",
+        pair_id="PAIR1", candidate_family_id="F1", peptide_group_id="PG1")
+    restored = PSMInfo.from_dict(psm.to_dict())
+    assert restored._query_id == "Q1"
+    assert restored._parent_id == "P1"
+    assert restored._group_id == "G1"
+    assert restored._pair_id == "PAIR1"
+    assert restored._candidate_family_id == "F1"
+    assert restored._peptide_group_id == "PG1"
 
 
 def test_psminfo_from_dict_old_json_no_new_fields():

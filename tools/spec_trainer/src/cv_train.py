@@ -233,11 +233,16 @@ def _file_fingerprint(path):
     stat = os.stat(path)
     with open(path, "rb") as handle:
         header = handle.readline()
+        digest = hashlib.sha256()
+        digest.update(header)
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
     return {
         "path": os.path.abspath(path),
         "size_bytes": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
         "header_sha256": hashlib.sha256(header).hexdigest(),
+        "sha256": digest.hexdigest(),
     }
 
 
@@ -659,7 +664,6 @@ def main(argv=None):
         summary.update(test_agg)
         for key, locked in test_agg["locked_operating_points"].items():
             operating_points[key]["external_ensemble"] = locked
-            operating_points[key]["test_metrics"] = locked["test_metrics"]
         test_missingness = _missingness_audit(
             test_df, feature_cols, target_col)
         sequence_overlap = _sequence_overlap(df, test_df, group_col)
@@ -779,7 +783,8 @@ def main(argv=None):
     _atomic_json(artifact_paths["result"], summary)
 
     primary = operating_points[primary_key]
-    applied = primary.get("test_metrics", primary["train_oof_metrics"])
+    applied = primary.get("external_ensemble", {}).get(
+        "test_metrics", primary["train_oof_metrics"])
     logging.info(
         "CV(%s) done: error-positive ROC-AUC=%.4f; target FPR<=%.3f, "
         "error threshold=%.6g, observed FPR=%s, error recall=%s; "

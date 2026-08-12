@@ -13,6 +13,21 @@ from workflows.single_work import multi_batch_work, single_pair_work
 from constant.keys import ConfigKeys
 
 
+RELATIONSHIP_FIELDS = (
+    "query_id", "parent_id", "group_id", "pair_id",
+    "candidate_family_id", "peptide_group_id",
+)
+
+
+def _psm_relationship_metadata(psm) -> dict:
+    """Persist optional upstream candidate-family IDs into features.csv."""
+    return {
+        name: value
+        for name in RELATIONSHIP_FIELDS
+        if (value := getattr(psm, f"_{name}", None)) is not None
+    }
+
+
 def get_filename_stem(filepath: str) -> str:
     """ 从路径中获取这个文件的文件名，去除扩展 """
     filename = os.path.basename(filepath)
@@ -108,6 +123,7 @@ def process_psm_pair_shared(
         "label": label,
         "label_type": "positive" if label == 1 else "negative",
         "q_value": psm1._q_value,
+        **_psm_relationship_metadata(psm1),
         ** tot_features
     }
 
@@ -145,6 +161,7 @@ def _make_result_row_single(psm, features: dict) -> dict:
         "label": label,
         "label_type": label_type,
         "q_value": psm._q_value,
+        **_psm_relationship_metadata(psm),
         **features,
     }
 
@@ -248,6 +265,7 @@ def process_batch_pair(shared1: str, shared2: str, batch_items: list, config):
                 "sequence_len": len(psm1._sequence),
                 "label": label,
                 "label_type": "positive" if label == 1 else "negative",
+                **_psm_relationship_metadata(psm1),
                 ** tot_features
             })
         except Exception:
@@ -322,6 +340,7 @@ def process_batch_pair_shuffle(shared1: str, shared2: str, batch_items: list, co
                 "sequence_len": len(psm1._sequence),
                 "label": label,
                 "label_type": "positive" if label == 1 else "negative",
+                **_psm_relationship_metadata(psm1),
                 ** tot_features
             })
         except Exception:

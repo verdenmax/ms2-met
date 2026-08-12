@@ -135,6 +135,51 @@ def test_prepare_rejects_shared_feature_drift(tmp_path):
             min_test_errors_per_tier=1, split_candidates=8)
 
 
+def test_validation_only_prepare_does_not_generate_assignments(tmp_path):
+    import fixed_negpool
+
+    _write_pools(tmp_path)
+    prepared = fixed_negpool.prepare_fixed_negpool(
+        fixed_negpool.feature_paths(tmp_path, "2da"), _cfg(),
+        min_test_errors_per_tier=1, split_candidates=8,
+        generate_assignments=False)
+    assert set(prepared.frame["fixed_split"]) == {
+        "deferred_to_frozen_manifest"}
+    assert set(prepared.frame["outer_fold"]) == {-1}
+    assert prepared.validation["fixed_split"]["method"] == \
+        "not_generated_consume_frozen_manifest"
+
+
+def test_candidate_relationship_ids_form_connected_leakage_groups():
+    import fixed_negpool
+
+    frame = pd.DataFrame({
+        "sequence": ["PARENT", "CHILD", "OTHER"],
+        "group_id": ["P1", pd.NA, "P2"],
+        "parent_id": [pd.NA, "P1", "P2"],
+    })
+    group_col, audit = fixed_negpool._assign_leakage_groups(
+        frame, "sequence")
+    assert group_col == "leakage_group_id"
+    assert frame.loc[0, group_col] == frame.loc[1, group_col]
+    assert frame.loc[0, group_col] != frame.loc[2, group_col]
+    assert audit["relationship_ids_applied"] is True
+    assert audit["candidate_family_leakage_protected"] is True
+
+
+def test_partial_relationship_ids_do_not_overclaim_family_protection():
+    import fixed_negpool
+
+    frame = pd.DataFrame({
+        "sequence": ["KNOWN", "CHILD", "UNKNOWN"],
+        "parent_id": ["P1", "P1", pd.NA],
+    })
+    _, audit = fixed_negpool._assign_leakage_groups(frame, "sequence")
+    assert audit["relationship_ids_applied"] is True
+    assert audit["candidate_family_leakage_protected"] is False
+    assert audit["relationship_id_coverage_fraction"] == pytest.approx(2 / 3)
+
+
 def test_prepare_combined_uses_global_sequence_split_and_twelve_strata(
         tmp_path):
     import fixed_negpool

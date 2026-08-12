@@ -1,19 +1,16 @@
 experiment:
-  # Start with M20 for the direct comparison to the strongest current model.
-  # Use [M5, M10, M20] for the complete nested-negative learning curve.
   negative_pool_models: [M20]
 
 protocol:
-  # Labels come from the feature-extraction contract; the frozen LightGBM
-  # bundle owns row membership and folds.
   label_source: >-
     positive=tight cross-engine intersection with HUMAN species marker;
     error=loose cross-engine union with non-HUMAN species marker after
     label-site, contaminant, and configured entrapment filters
 
 preprocessing:
-  # Fitted independently inside every outer fold on inner-training rows only.
-  add_missing_indicators: true
+  # Sensitivity arm: same frozen rows/folds/features, but no binary missingness
+  # channels. Compare its paired fixed-test result with tabular_mlp.yaml.
+  add_missing_indicators: false
 
 model:
   type: tabular_mlp_v1
@@ -22,7 +19,6 @@ model:
 
 training:
   seeds: [42, 43, 44]
-  # Same first/early-stopping metric as the controlled LightGBM baseline.
   early_stopping_metric: roc_auc
   device: auto
   deterministic: true
@@ -35,7 +31,6 @@ training:
   gradient_clip_norm: 5.0
   patience: 8
   min_delta: 0.0001
-  # Keep false for the first fair comparison with the controlled LightGBM run.
   class_weighting: none
   min_class_groups_per_split: 5
 
