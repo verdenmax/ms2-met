@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from spectrum.dia_data import DIAData
+from spectrum.spectrum_utils import match_peak_panel_ppm
 
 
 def _make_minimal_dia(windows):
@@ -211,6 +212,15 @@ def test_charge_resolved_xic_rejects_invalid_charge_contract():
             rt=np.float32(10), xic_cycle_window=1,
             precursor_mz=np.float32(500), ions_mass=np.float32(200),
             mass_tol_ppm=np.float32(10), fragment_charges=(0, 1))
+
+
+def test_isotope_target_panel_counts_overlapping_centroid_once():
+    targets = np.array([500.0000, 500.0040])
+    mz = np.array([500.0020])
+    intensity = np.array([123.0])
+    ppm, observed = match_peak_panel_ppm(mz, intensity, targets, 10.0)
+    assert observed == pytest.approx(123.0)
+    assert abs(float(ppm)) < 10.0
 
 
 def test_ms2_xic_finds_window_beyond_5_scans():

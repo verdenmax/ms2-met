@@ -7,7 +7,9 @@ import numpy as np
 import pandas as pd
 
 from pyteomics import mzml
-from spectrum.spectrum_utils import match_peak_ppm, centroid_spectrum
+from spectrum.spectrum_utils import (
+    centroid_spectrum, match_peak_panel_ppm, match_peak_ppm,
+)
 
 
 DEFAULT_VALUE_NO_MOBILITY = 1e-6
@@ -1099,13 +1101,16 @@ class DIAData:
         else:
             return idx
 
-    def xic_peaks_extreact(
+    def xic_peaks_panel_extract(
         self,
         rt: np.float32, xic_cycle_window: int,
-        precursor_mz: np.float32,
+        precursor_mz_targets,
         mass_tol_ppm: np.float32,
     ) -> np.ndarray:
-        """ 过滤出这些保留时间内所有的ms1谱图，然后返回peaks  """
+        """Extract one MS1 XIC from a union of exact-mass targets."""
+        targets = np.asarray(precursor_mz_targets, dtype="f8")
+        if targets.ndim != 1 or not len(targets):
+            raise ValueError("precursor_mz_targets must be a non-empty panel")
 
         ans = []
 
@@ -1124,8 +1129,8 @@ class DIAData:
             # 当是 ms1 谱图的时候，取出这个precursor_mz 对应的信息
             (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
 
-            (ppm_error, match_intensity) = match_peak_ppm(
-                mz_arr, intensity_arr, precursor_mz, mass_tol_ppm)
+            (ppm_error, match_intensity) = match_peak_panel_ppm(
+                mz_arr, intensity_arr, targets, mass_tol_ppm)
 
             ans.append(
                 {"rt": self.rt_values[index],
@@ -1137,3 +1142,14 @@ class DIAData:
         arr = np.array([tuple(d.values()) for d in ans], dtype=XIC_DTYPE)
 
         return arr
+
+
+    def xic_peaks_extreact(
+        self,
+        rt: np.float32, xic_cycle_window: int,
+        precursor_mz: np.float32,
+        mass_tol_ppm: np.float32,
+    ) -> np.ndarray:
+        """Extract a single-target MS1 XIC (historical interface)."""
+        return self.xic_peaks_panel_extract(
+            rt, xic_cycle_window, [precursor_mz], mass_tol_ppm)

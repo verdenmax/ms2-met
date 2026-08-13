@@ -41,7 +41,7 @@ def test_writer_keeps_array_json_and_adds_chemistry_manifest(tmp_path):
         (tmp_path / "psms.json.manifest.json").read_text())
     assert manifest["schema"] == MANIFEST_SCHEMA
     assert manifest["labeling"] == "c13"
-    assert manifest["isotope_model"] == "ideal_full_label_v1"
+    assert manifest["isotope_model"] == "ideal_full_label_exact_mass_v2"
     assert manifest["dataset"]["n_psms"] == 2
     assert manifest["dataset"]["n_modified_psms"] == 1
     assert manifest["dataset"]["counts_by_label_type"] == {
@@ -59,6 +59,17 @@ def test_manifest_rejects_labeling_mismatch_and_dataset_mutation(tmp_path):
 
     output.write_text("[]\n", encoding="utf-8")
     with pytest.raises(ValueError, match="摘要不一致"):
+        validate_manifest(str(output), "c13", require=True)
+
+
+def test_manifest_rejects_stale_isotope_model(tmp_path):
+    output = tmp_path / "psms.json"
+    write_psms_to_json([_psm()], str(output), labeling="c13")
+    sidecar = tmp_path / "psms.json.manifest.json"
+    manifest = json.loads(sidecar.read_text())
+    manifest["isotope_model"] = "legacy_nominal_mass_model"
+    sidecar.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="同位素模型已过期"):
         validate_manifest(str(output), "c13", require=True)
 
 

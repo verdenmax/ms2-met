@@ -22,7 +22,7 @@ peak-shape correlation. High correlation ⇒ trustworthy ID; low ⇒ likely fals
 written to a CSV for downstream training / analysis.
 
 Uniform ¹³C/¹⁵N mode currently supports unmodified peptides. Its
-`ideal_full_label_v1` isotope-envelope model assumes 100% isotope purity and
+`ideal_full_label_exact_mass_v2` isotope-envelope model assumes 100% isotope purity and
 100% biological incorporation: all C atoms are fixed heavy in C13 mode and
 all N atoms are fixed heavy in N15 mode, while the remaining elements form
 the residual natural-abundance M0/M1/M2 envelope. PTM elemental composition
@@ -212,7 +212,7 @@ JSON 使用旧口径，不能仅修改字段名称后与新结果混用。
 | `work_directory` | 工作目录（缺省 `./workspace`）；每个 baseline 可独立以避免并行写冲突 |
 | `result_file` | 输出 CSV 路径 / output CSV path |
 
-C13/N15 的 `isotope_correlation` 使用 `ideal_full_label_v1`：标记纯度与生物
+C13/N15 的 `isotope_correlation` 使用 `ideal_full_label_exact_mass_v2`：标记纯度与生物
 掺入率均假设为 100%。输出列 `isotope_model` 记录该假设，支持的未修饰肽置
 `isotope_model_valid=1`。该阶段不模拟不完全标记产生的 H-1/H-2 等低质量侧峰。
 

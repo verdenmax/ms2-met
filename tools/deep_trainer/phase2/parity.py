@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 from spectrum.dia_data import XIC_DTYPE
+from spectrum.psm_info import get_theoretical_isotope_ratios
 from workflows.single_work import (
     _is_empty_xic_pair, calc_xic_score, extract_ion_pearson_features,
 )
@@ -17,7 +20,8 @@ from .schema import (
 
 PARITY_FEATURES = (
     "precursor_pearson", "precursor_cosine", "precursor_apex_delta",
-    "precursor_mz_avg_err", "b_count", "b_mean", "y_count", "y_mean",
+    "precursor_mz_avg_err", "isotope_correlation", "mass_shift_error",
+    "b_count", "b_mean", "y_count", "y_mean",
     "all_count", "all_mean", "frag_corr_weighted",
     "valid_fragment_ions_num", "fragment_xic_empty_count",
     "fragment_heavy_absent_count", "fragment_same_mass_count",
@@ -98,6 +102,30 @@ def reconstruct_legacy_features(sample: SignalSample,
             "precursor_mz_avg_err": score["mz_avg_err"],
         }
 
+    heavy_intensity = np.asarray(sample.precursor_intensity[1], dtype="f8")
+    if not np.any(heavy_intensity > 0):
+        result["isotope_correlation"] = float("nan")
+        result["mass_shift_error"] = float("nan")
+    else:
+        apex_slot = int(np.argmax(heavy_intensity))
+        observed = np.asarray([
+            sample.precursor_intensity[channel, apex_slot]
+            for channel in (1, 2, 3)
+        ], dtype="f8")
+        theoretical = np.asarray(get_theoretical_isotope_ratios(
+            str(sample.metadata["sequence"]),
+            json.loads(str(sample.metadata.get("modifications_json", "[]"))),
+            str(sample.metadata["labeling"]),
+        ), dtype="f8")
+        denominator = np.linalg.norm(observed) * np.linalg.norm(theoretical)
+        result["isotope_correlation"] = (
+            float(np.dot(observed, theoretical) / denominator)
+            if denominator > 0 else 0.0)
+        result["mass_shift_error"] = (
+            float(sample.precursor_ppm_error[1, apex_slot])
+            if sample.precursor_peak_mask[1, apex_slot]
+            else float("nan"))
+
     logical: dict[tuple[int, int], list[int]] = {}
     for index, (ion_type, ordinal) in enumerate(zip(
             sample.fragment_ion_type, sample.fragment_ordinal)):
@@ -107,15 +135,19 @@ def reconstruct_legacy_features(sample: SignalSample,
     empty_count = same_mass_count = heavy_absent_count = attempted = 0
     for (ion_code, _ordinal), indices in logical.items():
         statuses = set(int(sample.fragment_status[index]) for index in indices)
-        if len(statuses) != 1:
-            raise ValueError("charge records disagree on fragment status")
-        status = statuses.pop()
-        if status == FRAGMENT_STATUS_TO_CODE["heavy_out_of_range"]:
+        if statuses == {FRAGMENT_STATUS_TO_CODE["heavy_out_of_range"]}:
             heavy_absent_count += 1
             continue
-        if status == FRAGMENT_STATUS_TO_CODE["coisolated_same_mz"]:
+        if statuses == {FRAGMENT_STATUS_TO_CODE["coisolated_same_mz"]}:
             same_mass_count += 1
             continue
+        structural = {
+            FRAGMENT_STATUS_TO_CODE["heavy_out_of_range"],
+            FRAGMENT_STATUS_TO_CODE["coisolated_same_mz"],
+        }
+        if statuses & structural:
+            raise ValueError(
+                "fragment charges disagree on structural separability status")
         attempted += 1
         light = _pool_fragment_group(sample, indices, 0, settings)
         heavy = _pool_fragment_group(sample, indices, 1, settings)

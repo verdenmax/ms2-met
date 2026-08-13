@@ -172,7 +172,7 @@ def test_workflows_use_configured_labeling(configured, expected, workflow_name):
     assert features["total_label_shift"] == pytest.approx(expected_shift)
     assert features["total_silac_shift"] == pytest.approx(expected_shift)
     assert features["labeling"] == canonical_labeling_name(heavy_type)
-    assert features["isotope_model"] == "ideal_full_label_v1"
+    assert features["isotope_model"] == "ideal_full_label_exact_mass_v2"
     assert features["isotope_model_valid"] == 1
     assert np.isnan(features["isotope_correlation"])
 
@@ -210,6 +210,40 @@ def test_uniform_label_ideal_envelope_pins_fixed_element_physics(
     observed = get_theoretical_isotope_ratios(
         "G", heavy_type=HeavyType[heavy_type])
     assert observed == pytest.approx(expected, rel=1e-12, abs=1e-12)
+
+
+def test_uniform_label_exact_mass_targets_exclude_fixed_heavy_element():
+    from spectrum.labeling import MASS_DELTA_C13_C12, MASS_DELTA_N15_N14
+    from spectrum.psm_info import get_residual_isotopologue_targets
+
+    c13 = get_residual_isotopologue_targets("G", heavy_type="c13")
+    n15 = get_residual_isotopologue_targets("G", heavy_type="n15")
+    c13_m1 = [target.mass_shift for target in c13[1]]
+    n15_m1 = [target.mass_shift for target in n15[1]]
+    assert not any(np.isclose(value, MASS_DELTA_C13_C12, atol=1e-7)
+                   for value in c13_m1)
+    assert any(np.isclose(value, MASS_DELTA_N15_N14, atol=1e-7)
+               for value in c13_m1)
+    assert not any(np.isclose(value, MASS_DELTA_N15_N14, atol=1e-7)
+                   for value in n15_m1)
+    assert any(np.isclose(value, MASS_DELTA_C13_C12, atol=1e-7)
+               for value in n15_m1)
+
+
+@pytest.mark.parametrize("heavy_type", ["silac", "c13", "n15"])
+def test_exact_mass_target_abundances_equal_nominal_envelope(heavy_type):
+    from spectrum.psm_info import (
+        get_residual_isotopologue_targets, get_theoretical_isotope_ratios,
+    )
+
+    targets = get_residual_isotopologue_targets(
+        "PEPTIDEK", heavy_type=heavy_type)
+    from_targets = [
+        sum(target.relative_abundance for target in targets[nominal])
+        for nominal in (0, 1, 2)
+    ]
+    assert from_targets == pytest.approx(get_theoretical_isotope_ratios(
+        "PEPTIDEK", heavy_type=heavy_type), rel=1e-12, abs=1e-12)
 
 
 def test_isotope_envelope_includes_known_modification_composition():

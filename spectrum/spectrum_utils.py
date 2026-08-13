@@ -36,6 +36,48 @@ def match_peak_ppm(
     return np.float32(ppm_error), np.float32(total_intensity)
 
 
+def match_peak_panel_ppm(
+    mz_arr: np.ndarray,
+    intensity_arr: np.ndarray,
+    target_mz: np.ndarray,
+    mass_tol_ppm: np.float32,
+) -> tuple[np.float32, np.float32]:
+    """Match a target panel while counting every observed centroid once.
+
+    Natural-isotope exact masses can be closer than two ppm windows. A naïve
+    sum of independent ``match_peak_ppm`` calls double-counts centroids in
+    overlapping windows. This union matcher assigns each matched centroid to
+    its closest theoretical target for ppm reporting and sums it once.
+    """
+    targets = np.asarray(target_mz, dtype="f8")
+    if targets.ndim != 1 or not len(targets):
+        raise ValueError("target_mz must be a non-empty one-dimensional panel")
+    if not np.isfinite(targets).all() or (targets <= 0).any():
+        raise ValueError("target_mz must contain positive finite values")
+    mz_values = np.asarray(mz_arr, dtype="f8")
+    intensities = np.asarray(intensity_arr)
+    if len(mz_values) != len(intensities):
+        raise ValueError("mz_arr and intensity_arr must have equal lengths")
+    if not len(mz_values):
+        return np.float32(np.nan), np.float32(0.0)
+    ppm = (mz_values[None, :] - targets[:, None]) \
+        / targets[:, None] * 1e6
+    absolute = np.abs(ppm)
+    matched = np.any(absolute <= mass_tol_ppm, axis=0)
+    if not matched.any():
+        return np.float32(np.nan), np.float32(0.0)
+    matched_intensities = intensities[matched]
+    closest_target = np.argmin(absolute[:, matched], axis=0)
+    columns = np.arange(int(np.count_nonzero(matched)))
+    closest_ppm = ppm[:, matched][closest_target, columns]
+    total_intensity = float(np.sum(matched_intensities))
+    ppm_error = (
+        float(np.average(closest_ppm, weights=matched_intensities))
+        if total_intensity > 0 else float(np.mean(closest_ppm))
+    )
+    return np.float32(ppm_error), np.float32(total_intensity)
+
+
 def centroid_spectrum(
     mz: np.ndarray,
     intensity: np.ndarray,

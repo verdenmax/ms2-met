@@ -11,7 +11,9 @@ from spectrum.dia_data import DIAData, XIC_DTYPE
 from spectrum.labeling import (
     HeavyType, canonical_labeling_name, parse_heavy_type,
 )
-from spectrum.psm_info import PROTON_MASS, PSMInfo
+from spectrum.psm_info import (
+    PROTON_MASS, PSMInfo, get_isotopologue_mz_targets,
+)
 from workflows.pred_store import frag_key, frag_pos_for_ion
 from workflows.q1a_helpers import SHIFT_EPSILON
 
@@ -63,14 +65,12 @@ def _empty_xic() -> np.ndarray:
     return np.empty(0, dtype=XIC_DTYPE)
 
 
-def _peak_status(light_by_charge: dict[int, np.ndarray],
-                 heavy_by_charge: dict[int, np.ndarray]) -> str:
-    light_present = any(
-        len(xic) and np.any(xic["intensity"] > 0)
-        for xic in light_by_charge.values())
-    heavy_present = any(
-        len(xic) and np.any(xic["intensity"] > 0)
-        for xic in heavy_by_charge.values())
+def _peak_status(light_xic: np.ndarray, heavy_xic: np.ndarray) -> str:
+    """Describe peak presence for one charge-resolved fragment pair."""
+    light_present = bool(
+        len(light_xic) and np.any(light_xic["intensity"] > 0))
+    heavy_present = bool(
+        len(heavy_xic) and np.any(heavy_xic["intensity"] > 0))
     if light_present and heavy_present:
         return "valid"
     if not light_present and not heavy_present:
@@ -100,16 +100,17 @@ def extract_signal_sample(
     heavy_precursor_mz, fragment_ions = psm.get_heavy_info(
         selected_labeling)
 
+    isotope_targets = get_isotopologue_mz_targets(
+        heavy_precursor_mz, psm._charge, psm._sequence, psm._modify,
+        selected_labeling)
     precursor_mz = (
-        float(psm._precursor_mz),
-        float(heavy_precursor_mz),
-        float(heavy_precursor_mz + 1.003355 / psm._charge),
-        float(heavy_precursor_mz + 2 * 1.003355 / psm._charge),
+        [float(psm._precursor_mz)], isotope_targets[0],
+        isotope_targets[1], isotope_targets[2],
     )
     precursor_arrays = [[], [], [], [], []]
-    for mz in precursor_mz:
-        xic = dia_data.xic_peaks_extreact(
-            psm._rt, settings.xic_cycle_window, mz,
+    for mz_panel in precursor_mz:
+        xic = dia_data.xic_peaks_panel_extract(
+            psm._rt, settings.xic_cycle_window, mz_panel,
             settings.mass_tol_ppm)
         encoded = _encode_xic(
             xic, center_cycle=center_cycle, center_rt=center_rt,
@@ -162,13 +163,17 @@ def extract_signal_sample(
                 mass_tol_ppm=settings.mass_tol_ppm,
                 fragment_charges=settings.fragment_charges,
             )
-            status = _peak_status(light_by_charge, heavy_by_charge)
             separable = True
             attempted = True
 
         fragment_position = frag_pos_for_ion(
             ion_type, ordinal, len(psm._sequence))
         for charge in settings.fragment_charges:
+            charge_status = (
+                status if not attempted else _peak_status(
+                    light_by_charge.get(charge, _empty_xic()),
+                    heavy_by_charge.get(charge, _empty_xic()))
+            )
             encoded_pair = [
                 _encode_xic(
                     by_charge.get(charge, _empty_xic()),
@@ -203,7 +208,7 @@ def extract_signal_sample(
             fragment_values["separable"].append(separable)
             fragment_values["attempted"].append(attempted)
             fragment_values["status"].append(
-                FRAGMENT_STATUS_TO_CODE[status])
+                FRAGMENT_STATUS_TO_CODE[charge_status])
 
     n_fragments = len(fragment_values["ion_type"])
     trace_shape = (0, 2, settings.trace_length)
@@ -220,6 +225,10 @@ def extract_signal_sample(
         "heavy_precursor_mz": float(heavy_precursor_mz),
         "heavy_in_raw": int(heavy_in_raw),
         "precursor_channels": json.dumps(PRECURSOR_CHANNELS),
+        "isotope_m1_target_mz_json": json.dumps(
+            isotope_targets[1], separators=(",", ":")),
+        "isotope_m2_target_mz_json": json.dumps(
+            isotope_targets[2], separators=(",", ":")),
     })
     sample = SignalSample(
         metadata=sample_metadata,

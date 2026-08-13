@@ -10,7 +10,9 @@ from scipy.stats import pearsonr
 from numpy import interp
 
 from spectrum.psm_info import PSMInfo
-from spectrum.psm_info import get_theoretical_isotope_ratios
+from spectrum.psm_info import (
+    get_isotopologue_mz_targets, get_theoretical_isotope_ratios,
+)
 from spectrum.labeling import (
     HeavyType,
     IDEAL_FULL_LABEL_ISOTOPE_MODEL,
@@ -33,6 +35,19 @@ def resolve_workflow_heavy_type(config: ConfigParser) -> HeavyType:
         raw = config[ConfigKeys.GENERAL].get(
             ConfigKeys.LABELING, "silac")
     return parse_heavy_type(raw)
+
+
+def _extract_ms1_target_panel(dia_data, center_rt, xic_cycle_window,
+                              targets, mass_tol_ppm):
+    """Use exact-mass panel extraction with a legacy stand-in fallback."""
+    extractor = getattr(dia_data, "xic_peaks_panel_extract", None)
+    if extractor is not None:
+        return extractor(
+            center_rt, xic_cycle_window, targets, mass_tol_ppm)
+    # Lightweight third-party/test DIA stand-ins may only implement the old
+    # single-target interface. Production DIAData always takes the panel path.
+    return dia_data.xic_peaks_extreact(
+        center_rt, xic_cycle_window, targets[0], mass_tol_ppm)
 
 
 def _extract_isotope_features(
@@ -86,13 +101,14 @@ def _extract_isotope_features(
 
     apex_idx = int(np.argmax(heavy_xic["intensity"]))
     apex_rt = float(heavy_xic["rt"][apex_idx])
-    isotope_spacing = 1.003355 / charge
-    heavy_m1_xic = dia_data.xic_peaks_extreact(
-        center_rt, xic_cycle_window,
-        heavy_precursor_mz + isotope_spacing, mass_tol_ppm)
-    heavy_m2_xic = dia_data.xic_peaks_extreact(
-        center_rt, xic_cycle_window,
-        heavy_precursor_mz + 2 * isotope_spacing, mass_tol_ppm)
+    isotope_targets = get_isotopologue_mz_targets(
+        heavy_precursor_mz, charge, sequence, modifications, heavy_type)
+    heavy_m1_xic = _extract_ms1_target_panel(
+        dia_data, center_rt, xic_cycle_window,
+        isotope_targets[1], mass_tol_ppm)
+    heavy_m2_xic = _extract_ms1_target_panel(
+        dia_data, center_rt, xic_cycle_window,
+        isotope_targets[2], mass_tol_ppm)
     if len(heavy_m1_xic) > 0:
         heavy_m1_xic = heavy_m1_xic[np.argsort(heavy_m1_xic["rt"])]
     if len(heavy_m2_xic) > 0:

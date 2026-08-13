@@ -2,6 +2,8 @@ import logging
 import os
 import numpy as np
 import random
+from dataclasses import dataclass
+from itertools import combinations_with_replacement
 from pyteomics import mass
 from typing import Tuple
 
@@ -19,6 +21,15 @@ from spectrum.labeling import (
 
 
 PROTON_MASS = 1.00727646677
+
+
+@dataclass(frozen=True)
+class IsotopologueTarget:
+    """One exact-mass contributor to a nominal isotope channel."""
+
+    nominal_shift: int
+    mass_shift: float
+    relative_abundance: float
 
 
 # 定义在全局，就不用频繁初始化了
@@ -264,21 +275,12 @@ def get_SILAC_increase_mass(sequence: str):
     return get_silac_increase_mass(sequence)
 
 
-def get_theoretical_isotope_ratios(
+def _residual_isotope_composition(
     sequence: str,
     modifications=(),
     heavy_type: HeavyType = HeavyType.SILAC,
-) -> list[float]:
-    """Return ideal-full-label nominal [M0, M1, M2] ratios.
-
-    The selected label's atoms are fixed heavy isotopes at 100% isotope purity
-    and 100% biological incorporation, so they do not contribute to the
-    residual natural-isotope envelope around the heavy monoisotopic peak.
-    Known Unimod compositions are included for SILAC.  Uniform C13/N15 still
-    rejects modifications because their labelled C/N mass shifts are not yet
-    implemented.  The three-bin convolution includes the important +2
-    contributions from 18O and 34S.
-    """
+) -> mass.Composition:
+    """Return atoms that retain their terrestrial isotope distribution."""
     selected = parse_heavy_type(heavy_type)
     if modifications and not supports_modified_peptide(selected):
         raise NotImplementedError(
@@ -302,24 +304,130 @@ def get_theoretical_isotope_ratios(
 
     if any(float(count) < 0 for count in comp.values()):
         raise ValueError(f"invalid isotope composition for {sequence!r}: {comp}")
+    return comp
 
-    # Per-atom probabilities grouped by nominal mass shift. Values follow
-    # standard terrestrial abundances; bins above +2 are deliberately
-    # truncated because the feature observes only M0/M1/M2.
-    isotope_probabilities = {
-        "C": (0.9893, 0.0107, 0.0),
-        "H": (0.999885, 0.000115, 0.0),
-        "N": (0.99636, 0.00364, 0.0),
-        "O": (0.99757, 0.00038, 0.00205),
-        "S": (0.9499, 0.0075, 0.0425),
+
+def get_residual_isotopologue_targets(
+    sequence: str,
+    modifications=(),
+    heavy_type: HeavyType = HeavyType.SILAC,
+) -> dict[int, list[IsotopologueTarget]]:
+    """Return exact-mass targets for ideal-full-label M0/M1/M2 channels.
+
+    Fixed label atoms are excluded at 100% purity/incorporation.  Residual
+    natural-isotope contributors retain their distinct exact masses: e.g.
+    15N is not searched at the 13C offset.  M+2 includes direct +2 isotopes
+    (18O/34S) and every pair of +1 substitutions.  Relative abundances are
+    expressed against the all-monoisotopic composition.
+    """
+    comp = _residual_isotope_composition(
+        sequence, modifications, heavy_type)
+    one_step = []
+    direct_two = []
+    for element in ("C", "H", "N", "O", "S"):
+        count = int(comp.get(element, 0))
+        if count <= 0:
+            continue
+        isotopes = mass.nist_mass[element]
+        natural = [
+            (number, values[0], values[1])
+            for number, values in isotopes.items()
+            if number != 0 and values[1] > 0
+        ]
+        base_number, base_mass, base_abundance = max(
+            natural, key=lambda item: item[2])
+        for number, isotope_mass, abundance in natural:
+            nominal = int(number - base_number)
+            if nominal not in (1, 2):
+                continue
+            item = {
+                "element": element,
+                "count": count,
+                "nominal": nominal,
+                "mass_shift": float(isotope_mass - base_mass),
+                "ratio": float(abundance / base_abundance),
+            }
+            (one_step if nominal == 1 else direct_two).append(item)
+
+    targets = {
+        0: [IsotopologueTarget(0, 0.0, 1.0)],
+        1: [],
+        2: [],
     }
-    envelope = np.array([1.0, 0.0, 0.0], dtype="f8")
-    for element, probabilities in isotope_probabilities.items():
-        for _ in range(int(comp.get(element, 0))):
-            envelope = np.convolve(envelope, probabilities)[:3]
+    for item in one_step:
+        targets[1].append(IsotopologueTarget(
+            1, item["mass_shift"], item["count"] * item["ratio"]))
+    for item in direct_two:
+        targets[2].append(IsotopologueTarget(
+            2, item["mass_shift"], item["count"] * item["ratio"]))
+    for left_index, right_index in combinations_with_replacement(
+            range(len(one_step)), 2):
+        left = one_step[left_index]
+        right = one_step[right_index]
+        if left_index == right_index:
+            multiplicity = left["count"] * (left["count"] - 1) / 2
+        else:
+            multiplicity = left["count"] * right["count"]
+        if multiplicity <= 0:
+            continue
+        targets[2].append(IsotopologueTarget(
+            2,
+            left["mass_shift"] + right["mass_shift"],
+            multiplicity * left["ratio"] * right["ratio"],
+        ))
+
+    # Different elemental combinations can have the same exact mass to the
+    # precision relevant here. Merge them for a compact extraction panel.
+    for nominal in (1, 2):
+        merged: dict[float, float] = {}
+        for target in targets[nominal]:
+            key = round(target.mass_shift, 9)
+            merged[key] = merged.get(key, 0.0) + target.relative_abundance
+        targets[nominal] = [
+            IsotopologueTarget(nominal, shift, abundance)
+            for shift, abundance in sorted(merged.items())
+            if abundance > 0
+        ]
+    return targets
+
+
+def get_theoretical_isotope_ratios(
+    sequence: str,
+    modifications=(),
+    heavy_type: HeavyType = HeavyType.SILAC,
+) -> list[float]:
+    """Return ideal-full-label nominal [M0, M1, M2] ratios."""
+    targets = get_residual_isotopologue_targets(
+        sequence, modifications, heavy_type)
+    envelope = np.asarray([
+        sum(target.relative_abundance for target in targets[nominal])
+        for nominal in (0, 1, 2)
+    ], dtype="f8")
+
     if envelope[0] <= 0 or not np.all(np.isfinite(envelope)):
         raise ValueError(f"invalid theoretical isotope envelope: {envelope}")
     return (envelope / envelope[0]).tolist()
+
+
+def get_isotopologue_mz_targets(
+    heavy_m0_mz: float,
+    charge: int,
+    sequence: str,
+    modifications=(),
+    heavy_type: HeavyType = HeavyType.SILAC,
+) -> dict[int, list[float]]:
+    """Convert the residual exact-mass model into precursor m/z panels."""
+    if int(charge) <= 0:
+        raise ValueError("precursor charge must be positive")
+    targets = get_residual_isotopologue_targets(
+        sequence, modifications, heavy_type)
+    return {
+        nominal: [
+            float(heavy_m0_mz) + target.mass_shift / int(charge)
+            for target in values
+        ]
+        for nominal, values in targets.items()
+    }
 
 
 def sequence_controlled_shuffle(peptide, anchor_len=2, shuffle_ratio=0.5,

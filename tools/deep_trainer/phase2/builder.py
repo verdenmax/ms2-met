@@ -189,6 +189,9 @@ def _source_row_metadata(row, psm: PSMInfo) -> dict:
     metadata["modifications_json"] = json.dumps(
         [[int(position), int(unimod)] for position, unimod in psm._modify],
         separators=(",", ":"))
+    for column in row.index:
+        if column.startswith("inner_valid_for_fold_") and not pd.isna(row[column]):
+            metadata[column] = bool(row[column])
     return metadata
 
 

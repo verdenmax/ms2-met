@@ -19,7 +19,7 @@ from pyteomics import mass
 
 MASS_DELTA_C13_C12 = 1.003355
 MASS_DELTA_N15_N14 = 0.997035
-IDEAL_FULL_LABEL_ISOTOPE_MODEL = "ideal_full_label_v1"
+IDEAL_FULL_LABEL_ISOTOPE_MODEL = "ideal_full_label_exact_mass_v2"
 
 
 class HeavyType(Enum):

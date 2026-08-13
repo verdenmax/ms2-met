@@ -176,7 +176,8 @@ def schema_document(settings: ExtractionSettings) -> dict[str, Any]:
             "audit_only": [
                 "sequence", "protein_names", "label_type", "negative_tier",
                 "q_value", "raw_title", "dataset", "fixed_split",
-                "outer_fold", "absolute_rt", "precursor_charge",
+                "outer_fold", "inner_valid_for_fold_*", "absolute_rt",
+                "precursor_charge",
             ],
         },
     }

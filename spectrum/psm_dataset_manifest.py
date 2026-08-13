@@ -133,6 +133,12 @@ def validate_manifest(
     if manifest.get("schema") != MANIFEST_SCHEMA:
         raise ValueError(
             f"不支持的 PSM manifest schema: {manifest.get('schema')!r}")
+    if manifest.get("isotope_model") != IDEAL_FULL_LABEL_ISOTOPE_MODEL:
+        raise ValueError(
+            "PSM manifest 的同位素模型已过期: "
+            f"manifest={manifest.get('isotope_model')!r}, "
+            f"required={IDEAL_FULL_LABEL_ISOTOPE_MODEL!r}; 请用当前 "
+            "tools/extract_common.py 重新生成 PSM JSON 与 sidecar")
 
     expected = canonical_labeling_name(parse_heavy_type(expected_labeling))
     observed = manifest.get("labeling")

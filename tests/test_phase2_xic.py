@@ -7,6 +7,7 @@ import pytest
 from spectrum.dia_data import XIC_DTYPE
 from spectrum.psm_info import PSMInfo
 from tools.deep_trainer.phase2.extraction import extract_signal_sample
+from tools.deep_trainer.phase2.builder import _source_row_metadata
 from tools.deep_trainer.phase2.matching import (
     match_psms_to_protocol, select_pilot_rows,
 )
@@ -38,6 +39,9 @@ class _FakeDia:
 
     def xic_peaks_extreact(self, _rt, _window, mz, _ppm):
         return self._xic(1.0 + float(mz) / 1000.0)
+
+    def xic_peaks_panel_extract(self, _rt, _window, targets, _ppm):
+        return self._xic(1.0 + float(np.mean(targets)) / 1000.0)
 
     @staticmethod
     def check_in_raw(_mz):
@@ -100,6 +104,45 @@ def test_extract_signal_sample_preserves_masks_charge_and_skip_status():
     assert sample.fragment_attempted.tolist() == [False, False, True, True]
     assert not sample.fragment_prediction_present.any()
     assert np.isnan(sample.fragment_predicted_intensity).all()
+
+
+def test_fragment_peak_status_is_charge_resolved():
+    class ChargeTwoMissingDia(_FakeDia):
+        def xic_ms2_charge_resolved_extract(
+                self, _rt, _window, precursor_mz, ions_mass, mass_tol_ppm,
+                fragment_charges):
+            values, total = super().xic_ms2_charge_resolved_extract(
+                _rt, _window, precursor_mz, ions_mass, mass_tol_ppm,
+                fragment_charges)
+            values[2] = values[2].copy()
+            values[2]["intensity"] = 0.0
+            values[2]["ppm_error"] = np.nan
+            return values, total
+
+    sample, settings = _sample()
+    sample = extract_signal_sample(
+        _psm(), ChargeTwoMissingDia(), settings, sample.metadata)
+    attempted = np.flatnonzero(sample.fragment_attempted)
+    statuses = {
+        int(sample.fragment_charge[index]): int(sample.fragment_status[index])
+        for index in attempted
+    }
+    assert statuses[1] == FRAGMENT_STATUS_TO_CODE["valid"]
+    assert statuses[2] == FRAGMENT_STATUS_TO_CODE[
+        "no_light_or_heavy_peak"]
+
+
+def test_source_metadata_keeps_frozen_inner_fold_assignments():
+    row = pd.Series({
+        "sample_id": "s", "dataset": "2da", "label": 1,
+        "sequence": "AK", "charge": 2, "precursor_mz": 500.0,
+        "rt": 10.0, "raw_title1": "raw-a", "label_type": "positive",
+        "inner_valid_for_fold_0": True,
+        "inner_valid_for_fold_1": False,
+    })
+    metadata = _source_row_metadata(row, _psm())
+    assert metadata["inner_valid_for_fold_0"] is True
+    assert metadata["inner_valid_for_fold_1"] is False
 
 
 def test_reconstructed_features_compare_value_by_value():
