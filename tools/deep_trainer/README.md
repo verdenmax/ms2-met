@@ -151,5 +151,13 @@ raw 仍可访问才会重建，不能在 cache-only 模式下被静默复用。�
   检查通过才原子发布。`COMPLETE` 保存 checksum 清单本身的 SHA256，读取器默认
   校验全部文件，覆盖发布中断后会恢复唯一的旧版本备份。
 
+输出 schema 为 `phase2_raw_xic_v2`，并把当前同位素模型写入顶层 contract。
+若冻结 E20 snapshot 的 `isotope_model` 不是当前的
+`ideal_full_label_exact_mass_v2`（或未声明），`isotope_correlation` 仍逐值写入
+parity 审计，但标为
+`legacy_isotope_model_audit_only`，不作为发布阻断项；这是算法迁移差异，不是
+shard 完整性错误。其余前体/碎片 parity 始终强制。用当前代码重新提取特征并
+重建冻结协议后，该同位素字段自动恢复为强制 parity。
+
 这一步还不是正式深度模型训练。全量约 27 万条数据要等 pilot parity 通过后，
 再加入面板式批量 m/z 提取，避免每个碎片重复扫描同一张谱图。

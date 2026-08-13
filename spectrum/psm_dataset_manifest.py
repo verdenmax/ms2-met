@@ -2,8 +2,10 @@
 
 The PSM JSON itself deliberately remains a top-level list for backward
 compatibility.  Chemistry and integrity metadata live in a sibling manifest
-so consumers can reject a C13/N15 dataset produced under another labeling
-assumption before any expensive raw-data work starts.
+so consumers can reject a C13/N15 dataset produced under incompatible
+labeling assumptions before any expensive raw-data work starts. Known legacy
+observation models remain reusable as audited PSM-row inputs because current
+consumers recompute isotope evidence explicitly.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import logging
 import os
 
 from spectrum.labeling import (
+    COMPATIBLE_LEGACY_ISOTOPE_MODELS,
     IDEAL_FULL_LABEL_ISOTOPE_MODEL,
     HeavyType,
     canonical_labeling_name,
@@ -133,10 +136,22 @@ def validate_manifest(
     if manifest.get("schema") != MANIFEST_SCHEMA:
         raise ValueError(
             f"不支持的 PSM manifest schema: {manifest.get('schema')!r}")
-    if manifest.get("isotope_model") != IDEAL_FULL_LABEL_ISOTOPE_MODEL:
+    observed_isotope_model = manifest.get("isotope_model")
+    if observed_isotope_model in COMPATIBLE_LEGACY_ISOTOPE_MODELS:
+        logging.warning(
+            "PSM manifest 使用旧同位素观测模型 %r；PSM 行与标记类型仍可作为"
+            "输入复用，当前特征提取将使用 %r，并在输出 provenance 中保留此迁移",
+            observed_isotope_model, IDEAL_FULL_LABEL_ISOTOPE_MODEL)
+        manifest["validation"] = {
+            "status": "compatible_legacy_input",
+            "declared_isotope_model": observed_isotope_model,
+            "consumer_isotope_model": IDEAL_FULL_LABEL_ISOTOPE_MODEL,
+            "psm_rows_reusable": True,
+        }
+    elif observed_isotope_model != IDEAL_FULL_LABEL_ISOTOPE_MODEL:
         raise ValueError(
             "PSM manifest 的同位素模型已过期: "
-            f"manifest={manifest.get('isotope_model')!r}, "
+            f"manifest={observed_isotope_model!r}, "
             f"required={IDEAL_FULL_LABEL_ISOTOPE_MODEL!r}; 请用当前 "
             "tools/extract_common.py 重新生成 PSM JSON 与 sidecar")
 

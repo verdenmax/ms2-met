@@ -1,4 +1,5 @@
 import json
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -157,6 +158,55 @@ def test_reconstructed_features_compare_value_by_value():
     assert reconstructed["fragment_same_mass_count"] == 1
 
 
+def test_legacy_isotope_parity_is_audited_but_not_publish_blocking():
+    sample, settings = _sample()
+    reconstructed = reconstruct_legacy_features(sample, settings)
+    legacy = dict(reconstructed)
+    legacy["isotope_model"] = "ideal_full_label_v1"
+    legacy["isotope_correlation"] += 0.2
+
+    rows = compare_to_feature_row(sample, pd.Series(legacy), settings)
+    by_feature = {row["feature"]: row for row in rows}
+
+    isotope = by_feature["isotope_correlation"]
+    assert isotope["passed"] is False
+    assert isotope["required_for_publish"] is False
+    assert isotope["parity_policy"] == "legacy_isotope_model_audit_only"
+    assert by_feature["precursor_pearson"]["required_for_publish"] is True
+
+
+def test_current_isotope_model_parity_remains_publish_blocking():
+    sample, settings = _sample()
+    reconstructed = reconstruct_legacy_features(sample, settings)
+    current = dict(reconstructed)
+    current["isotope_model"] = "ideal_full_label_exact_mass_v2"
+    current["isotope_correlation"] += 0.2
+
+    rows = compare_to_feature_row(sample, pd.Series(current), settings)
+    isotope = next(
+        row for row in rows if row["feature"] == "isotope_correlation")
+
+    assert isotope["passed"] is False
+    assert isotope["required_for_publish"] is True
+    assert isotope["parity_policy"] == "required"
+
+
+def test_unknown_isotope_model_cannot_bypass_publish_parity():
+    sample, settings = _sample()
+    reconstructed = reconstruct_legacy_features(sample, settings)
+    unknown = dict(reconstructed)
+    unknown["isotope_model"] = "mistyped_or_future_model"
+    unknown["isotope_correlation"] += 0.2
+
+    rows = compare_to_feature_row(sample, pd.Series(unknown), settings)
+    isotope = next(
+        row for row in rows if row["feature"] == "isotope_correlation")
+
+    assert isotope["passed"] is False
+    assert isotope["required_for_publish"] is True
+    assert isotope["parity_policy"] == "required"
+
+
 def test_sharded_store_roundtrip_and_checksum_validation(tmp_path):
     first, settings = _sample("sample-a")
     second, _ = _sample("sample-b")
@@ -181,6 +231,8 @@ def test_sharded_store_roundtrip_and_checksum_validation(tmp_path):
         restored["fragment_status"], second.fragment_status)
     schema = json.loads((output / "schema.json").read_text())
     assert schema["positive_class"] == "incorrect_identification"
+    assert schema["schema"] == "phase2_raw_xic_v2"
+    assert schema["isotope_model"] == "ideal_full_label_exact_mass_v2"
 
 
 def test_staged_validator_reads_serialized_samples_and_is_checksummed(tmp_path):
@@ -243,6 +295,47 @@ def test_interrupted_overwrite_restores_unique_backup(tmp_path):
     assert not backup.exists()
     assert open_signal_dataset(output).sample(0).metadata["sample_id"] \
         == "sample-a"
+
+
+def test_overwrite_removes_stale_backups_after_verifying_current_output(
+        tmp_path):
+    first, settings = _sample("first")
+    output = tmp_path / "signals"
+    write_signal_dataset(
+        [first], output, settings, build_metadata={"mode": "test"})
+    for suffix in ("old-a", "old-b"):
+        shutil.copytree(
+            output, output.with_name(f".{output.name}.backup.{suffix}"))
+
+    replacement, _ = _sample("replacement")
+    write_signal_dataset(
+        [replacement], output, settings, build_metadata={"mode": "test"},
+        overwrite=True)
+
+    assert not list(tmp_path.glob(".signals.backup.*"))
+    assert open_signal_dataset(output).sample(0).metadata["sample_id"] \
+        == "replacement"
+
+
+def test_overwrite_preserves_backups_when_current_output_is_corrupt(tmp_path):
+    first, settings = _sample("first")
+    output = tmp_path / "signals"
+    write_signal_dataset(
+        [first], output, settings, build_metadata={"mode": "test"})
+    backup = output.with_name(f".{output.name}.backup.old")
+    shutil.copytree(output, backup)
+    shard = next((output / "shards").rglob("precursor_intensity.npy"))
+    with shard.open("ab") as handle:
+        handle.write(b"tampered")
+    replacement, _ = _sample("replacement")
+
+    with pytest.raises(ValueError, match="artifact changed"):
+        write_signal_dataset(
+            [replacement], output, settings,
+            build_metadata={"mode": "test"}, overwrite=True)
+
+    assert backup.is_dir()
+    assert output.is_dir()
 
 
 def test_store_refuses_duplicate_ids_without_publishing(tmp_path):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import tempfile
+from zipfile import BadZipFile
 
 from artifact_identity import file_fingerprint
 from manager.data_manager import DataManager
@@ -86,7 +87,7 @@ def resolve_dia_cache(
         try:
             embedded = _validate_cache(
                 cache_path, raw_path, manager, raw_identity)
-        except (OSError, ValueError):
+        except (OSError, ValueError, EOFError, BadZipFile):
             if raw_identity is None:
                 # Never delete the only available cache on a failed strict
                 # identity check. The user may still inspect/recover it.

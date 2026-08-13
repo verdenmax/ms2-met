@@ -112,13 +112,26 @@ def _write_shard(root: Path, shard_index: int,
     return rows
 
 
-def recover_interrupted_publish(output_root: str | Path) -> None:
+def recover_interrupted_publish(
+    output_root: str | Path,
+    *,
+    cleanup_stale_backups: bool = False,
+) -> None:
     """Restore the only backup left by an interrupted atomic overwrite."""
     output_root = Path(output_root).resolve()
     backups = sorted(output_root.parent.glob(
         f".{output_root.name}.backup.*"))
     if output_root.exists():
-        if backups:
+        if backups and cleanup_stale_backups:
+            # Do not destroy the only recoverable copies unless the canonical
+            # output is demonstrably complete and immutable.
+            SignalDataset(output_root)
+            for backup in backups:
+                shutil.rmtree(backup)
+            logging.warning(
+                "removed %d stale Phase 2 backup(s) after verifying current "
+                "output: %s", len(backups), output_root)
+        elif backups:
             logging.warning(
                 "completed Phase 2 output coexists with %d stale backup(s): %s",
                 len(backups), ", ".join(str(path) for path in backups))
@@ -192,7 +205,8 @@ def write_signal_dataset(
         raise ValueError("shard_size must be positive")
     output_root = Path(output_root).resolve()
     output_root.parent.mkdir(parents=True, exist_ok=True)
-    recover_interrupted_publish(output_root)
+    recover_interrupted_publish(
+        output_root, cleanup_stale_backups=overwrite)
     if output_root.exists() and not overwrite:
         raise FileExistsError(f"output path already exists: {output_root}")
     staging = Path(tempfile.mkdtemp(

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 
 from spectrum.dia_data import XIC_DTYPE
@@ -173,8 +174,11 @@ def test_builder_validates_saved_shards_and_preserves_frozen_folds(
     assert sorted(parity_calls) == ["sample-0", "sample-1"]
     assert report["staged_validation"] == {
         "serialized_shards_validated": True,
-        "feature_parity_all_passed": True,
+        "required_feature_parity_all_passed": True,
         "feature_parity_comparisons": 2,
+        "required_feature_parity_comparisons": 2,
+        "legacy_isotope_audit_comparisons": 0,
+        "legacy_isotope_audit_mismatches": 0,
     }
     dataset = open_signal_dataset(output)
     restored = {
@@ -186,3 +190,25 @@ def test_builder_validates_saved_shards_and_preserves_frozen_folds(
     assert (output / "audit" / "feature_parity.csv").is_file()
     assert dataset.schema["build"]["frozen_protocol_contract"][
         "manifest_sha256"]["membership"] == "test-digest"
+
+
+def test_feature_snapshot_isotope_model_preflight_rejects_unknown():
+    frame = pd.DataFrame({
+        "isotope_model": [
+            "ideal_full_label_exact_mass_v2", "mistyped_model",
+        ],
+    })
+
+    with pytest.raises(ValueError, match="unknown isotope_model"):
+        builder._feature_snapshot_isotope_models(frame)
+
+
+def test_feature_snapshot_isotope_model_preflight_allows_known_migration():
+    assert builder._feature_snapshot_isotope_models(pd.DataFrame({
+        "isotope_model": [
+            "ideal_full_label_exact_mass_v2", "ideal_full_label_v1", None,
+        ],
+    })) == [
+        "ideal_full_label_exact_mass_v2", "ideal_full_label_v1",
+        "undeclared_legacy",
+    ]

@@ -7,6 +7,9 @@ import json
 import numpy as np
 
 from spectrum.dia_data import XIC_DTYPE
+from spectrum.labeling import (
+    COMPATIBLE_LEGACY_ISOTOPE_MODELS, IDEAL_FULL_LABEL_ISOTOPE_MODEL,
+)
 from spectrum.psm_info import get_theoretical_isotope_ratios
 from workflows.single_work import (
     _is_empty_xic_pair, calc_xic_score, extract_ion_pearson_features,
@@ -26,6 +29,10 @@ PARITY_FEATURES = (
     "valid_fragment_ions_num", "fragment_xic_empty_count",
     "fragment_heavy_absent_count", "fragment_same_mass_count",
 )
+_ISOTOPE_MODEL_DEPENDENT_FEATURES = frozenset({"isotope_correlation"})
+_AUDIT_ONLY_LEGACY_ISOTOPE_MODELS = frozenset({
+    "", *COMPATIBLE_LEGACY_ISOTOPE_MODELS,
+})
 
 
 def _decode_xic(intensity, ppm_error, rt_delta, scan_mask, peak_mask,
@@ -192,6 +199,10 @@ def compare_to_feature_row(sample: SignalSample, feature_row,
     """Return value-level parity rows for all available pinned features."""
     reconstructed = reconstruct_legacy_features(sample, settings)
     rows = []
+    snapshot_isotope_model = str(
+        feature_row.get("isotope_model", "")).strip()
+    if snapshot_isotope_model.lower() in {"", "nan", "none", "<na>"}:
+        snapshot_isotope_model = ""
     for feature in PARITY_FEATURES:
         if feature not in feature_row:
             continue
@@ -200,6 +211,10 @@ def compare_to_feature_row(sample: SignalSample, feature_row,
         both_nan = np.isnan(expected) and np.isnan(observed)
         passed = bool(both_nan or np.isclose(
             expected, observed, atol=atol, rtol=rtol, equal_nan=True))
+        model_migration = (
+            feature in _ISOTOPE_MODEL_DEPENDENT_FEATURES
+            and snapshot_isotope_model in _AUDIT_ONLY_LEGACY_ISOTOPE_MODELS
+        )
         rows.append({
             "sample_id": str(sample.metadata["sample_id"]),
             "feature": feature,
@@ -210,5 +225,14 @@ def compare_to_feature_row(sample: SignalSample, feature_row,
                 if np.isfinite(expected) and np.isfinite(observed)
                 else float("nan")),
             "passed": passed,
+            "required_for_publish": not model_migration,
+            "parity_policy": (
+                "legacy_isotope_model_audit_only" if model_migration
+                else "required"
+            ),
+            "snapshot_isotope_model": (
+                snapshot_isotope_model or "undeclared_legacy"
+            ),
+            "reconstructed_isotope_model": IDEAL_FULL_LABEL_ISOTOPE_MODEL,
         })
     return rows

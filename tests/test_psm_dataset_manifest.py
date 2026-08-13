@@ -73,6 +73,26 @@ def test_manifest_rejects_stale_isotope_model(tmp_path):
         validate_manifest(str(output), "c13", require=True)
 
 
+def test_manifest_accepts_known_legacy_model_as_audited_psm_input(
+        tmp_path, caplog):
+    output = tmp_path / "psms.json"
+    write_psms_to_json([_psm()], str(output), labeling="c13")
+    sidecar = tmp_path / "psms.json.manifest.json"
+    manifest = json.loads(sidecar.read_text())
+    manifest["isotope_model"] = "ideal_full_label_v1"
+    sidecar.write_text(json.dumps(manifest), encoding="utf-8")
+
+    observed = validate_manifest(str(output), "c13", require=True)
+
+    assert observed["validation"] == {
+        "status": "compatible_legacy_input",
+        "declared_isotope_model": "ideal_full_label_v1",
+        "consumer_isotope_model": "ideal_full_label_exact_mass_v2",
+        "psm_rows_reusable": True,
+    }
+    assert "旧同位素观测模型" in caplog.text
+
+
 def test_missing_manifest_is_only_allowed_for_legacy_silac(tmp_path, caplog):
     output = tmp_path / "legacy.json"
     output.write_text("[]\n", encoding="utf-8")

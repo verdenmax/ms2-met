@@ -173,3 +173,18 @@ def test_phase2_cache_rebuilds_when_content_changes_at_same_size(tmp_path):
     assert rebuilt == cache
     assert before["embedded_raw_source"]["sha256"] \
         != after["embedded_raw_source"]["sha256"]
+
+
+def test_phase2_cache_rebuilds_truncated_zip_when_raw_exists(tmp_path):
+    source = tmp_path / "raw.mzML"
+    source.write_bytes(b"source")
+    cache = tmp_path / "cache" / "2da" / "raw.dia.npz"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"PK\x03\x04" + b"\x00" * 40)
+
+    resolved, provenance = resolve_dia_cache(
+        _FakeMgr(), source, tmp_path / "cache", dataset="2da")
+
+    assert resolved == cache
+    assert provenance["embedded_raw_source"]["sha256"]
+    DIAData.load_from_file(str(resolved), use_mmap=False)

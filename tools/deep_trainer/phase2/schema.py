@@ -7,8 +7,9 @@ from typing import Any
 
 import numpy as np
 
+from spectrum.labeling import IDEAL_FULL_LABEL_ISOTOPE_MODEL
 
-SCHEMA_VERSION = "phase2_raw_xic_v1"
+SCHEMA_VERSION = "phase2_raw_xic_v2"
 PRECURSOR_CHANNELS = ("light_m0", "heavy_m0", "heavy_m1", "heavy_m2")
 PAIR_CHANNELS = ("light", "heavy")
 ION_TYPE_TO_CODE = {"b": 0, "y": 1}
@@ -157,6 +158,11 @@ def schema_document(settings: ExtractionSettings) -> dict[str, Any]:
         "model_score": "trust_score=P(correct_identification)",
         "metric_semantics": "error_identification_positive_v1",
         "positive_class": "incorrect_identification",
+        "isotope_model": IDEAL_FULL_LABEL_ISOTOPE_MODEL,
+        "isotope_channel_contract": (
+            "nominal M0/M1/M2 channels union-match chemistry-aware exact-mass "
+            "isotopologue targets without double-counting centroids"
+        ),
         "precursor_channels": list(PRECURSOR_CHANNELS),
         "fragment_pair_channels": list(PAIR_CHANNELS),
         "ion_type_codes": ION_TYPE_TO_CODE,
