@@ -9,6 +9,9 @@ from spectrum.dia_data import XIC_DTYPE
 from spectrum.psm_info import PSMInfo
 from tools.deep_trainer.phase2.extraction import extract_signal_sample
 from tools.deep_trainer.phase2.builder import _source_row_metadata
+from tools.deep_trainer.phase2.data import (
+    ShardBatchSampler, XICDataset, collate_xic,
+)
 from tools.deep_trainer.phase2.matching import (
     match_psms_to_protocol, select_pilot_rows,
 )
@@ -233,6 +236,88 @@ def test_sharded_store_roundtrip_and_checksum_validation(tmp_path):
     assert schema["positive_class"] == "incorrect_identification"
     assert schema["schema"] == "phase2_raw_xic_v2"
     assert schema["isotope_model"] == "ideal_full_label_exact_mass_v2"
+
+
+def test_xic_torch_adapter_uses_bounded_signal_inputs_and_ragged_padding(
+        tmp_path):
+    first, settings = _sample("torch-a")
+    second, _ = _sample("torch-b")
+    # Exercise ragged padding and an all-ineligible fragment collection.
+    for name in (
+        "fragment_intensity", "fragment_ppm_error", "fragment_rt_delta",
+        "fragment_scan_mask", "fragment_peak_mask",
+    ):
+        setattr(second, name, getattr(second, name)[:2])
+    for name in (
+        "fragment_ion_type", "fragment_ordinal", "fragment_charge",
+        "fragment_light_mz", "fragment_heavy_mz",
+        "fragment_predicted_intensity", "fragment_prediction_present",
+        "fragment_separable", "fragment_attempted", "fragment_status",
+    ):
+        setattr(second, name, getattr(second, name)[:2])
+    second.fragment_scan_mask[:] = False
+    second.fragment_peak_mask[:] = False
+    output = tmp_path / "signals"
+    write_signal_dataset(
+        [first, second], output, settings,
+        build_metadata={"mode": "test"}, shard_size=2)
+
+    source = open_signal_dataset(output)
+    dataset = XICDataset(source)
+    batch = collate_xic([dataset[0], dataset[1]])
+
+    assert batch["precursor"].shape == (2, 20, settings.trace_length)
+    assert batch["fragment"].shape == (2, 4, 10, settings.trace_length)
+    assert batch["fragment_mask"][1].sum().item() == 0
+    assert batch["fragment_ion_type"][0, -1].item() in {1, 2}
+    assert batch["fragment_ion_type"][1, -1].item() == 0
+    assert batch["label"].tolist() == [1.0, 1.0]
+    assert batch["sample_id"] == ["torch-a", "torch-b"]
+    assert np.isfinite(batch["precursor"].numpy()).all()
+    assert batch["precursor"].abs().max().item() <= 1.0
+    assert "fragment_status" not in batch
+    assert "negative_tier" not in batch
+
+
+def test_xic_prediction_arm_is_explicit_and_preserves_missingness(tmp_path):
+    sample, settings = _sample("prediction-a")
+    sample.fragment_prediction_present[0] = True
+    sample.fragment_predicted_intensity[0] = 0.75
+    output = tmp_path / "signals"
+    write_signal_dataset(
+        [sample], output, settings, build_metadata={"mode": "test"})
+    source = open_signal_dataset(output)
+
+    assert "fragment_prediction" not in XICDataset(source)[0]
+    record = XICDataset(source, include_predicted_intensity=True)[0]
+    assert record["fragment_prediction"][0].tolist() == [0.75, 1.0]
+    assert record["fragment_prediction"][1].tolist() == [0.0, 0.0]
+
+
+def test_shard_batch_sampler_is_complete_deterministic_and_shard_local(
+        tmp_path):
+    samples = [_sample(f"shard-{index}")[0] for index in range(5)]
+    settings = _sample()[1]
+    output = tmp_path / "signals"
+    write_signal_dataset(
+        samples, output, settings, build_metadata={"mode": "test"},
+        shard_size=2)
+    dataset = XICDataset(open_signal_dataset(output))
+    sampler = ShardBatchSampler(dataset, 2, seed=17)
+
+    first = list(iter(sampler))
+    second = list(iter(sampler))
+    assert first == second
+    assert sorted(index for batch in first for index in batch) == list(range(5))
+    for batch in first:
+        shards = {
+            dataset.source.manifest.iloc[int(dataset.indices[index])]["shard"]
+            for index in batch
+        }
+        assert len(shards) == 1
+    sampler.set_epoch(1)
+    assert sorted(
+        index for batch in sampler for index in batch) == list(range(5))
 
 
 def test_staged_validator_reads_serialized_samples_and_is_checksummed(tmp_path):
