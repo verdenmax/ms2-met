@@ -37,6 +37,9 @@ FIXED_NEGPOOL_TEST_FRACTION ?= 0.20
 DEEP_OUTPUT_ROOT ?= runs/deep_trainer
 DEEP_CONFIG ?= tools/deep_trainer/config/tabular_mlp.yaml
 DEEP_PROTOCOL_ROOT ?= $(FIXED_NEGPOOL_OUTPUT_ROOT)/combined
+PHASE2_BUILD_CONFIG ?= tools/deep_trainer/phase2/config/raw_xic_pilot.yaml
+PHASE2_XIC_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic/pilot
+PHASE2_CACHE_ROOT ?= workspace
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -137,7 +140,7 @@ endef
 
 # --------------------------- 主 target ---------------------------
 
-.PHONY: help all run clean
+.PHONY: help all run clean build-deep-xic-pilot
 .PHONY: 2th 5th normal
 .PHONY: filter filter-dry
 .PHONY: extract-2th extract-5th extract-normal
@@ -222,6 +225,7 @@ help:
 	@echo "  make train-fixed-test-negpool-all FEATURE_ROOT=/path/to/results  三数据集固定测试实验"
 	@echo "  make train-fixed-test-negpool-combined FEATURE_ROOT=/path/to/results  三数据集合并后全局固定测试"
 	@echo "  make train-deep-mlp-combined FEATURE_ROOT=/path/to/results  同一 combined E20 协议训练表格 MLP"
+	@echo "  make build-deep-xic-pilot FEATURE_ROOT=/path/to/results  构建 1200 条 Phase 2 原始 XIC 完整性 pilot"
 	@echo ""
 	@echo "  Formal MS1/MS2 ablation（共同队列 + 注册表特征组）："
 	@echo "  make train-ablation-neg20-2da FEATURE_ROOT=/path/to/results  2da 预跑（8 组）"
@@ -1355,6 +1359,27 @@ train-deep-mlp-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
 	    --protocol-root "$(DEEP_PROTOCOL_ROOT)" \
 	    --dataset combined \
 	    --output-root "$(DEEP_OUTPUT_ROOT)/tabular-mlp/combined" \
+	    $(CV_OVERWRITE_FLAG)
+
+# Phase 2 P0/P1: build a balanced 1200-row raw-XIC integrity pilot. It reuses
+# the frozen combined membership/folds and refuses to publish unless every PSM
+# identity is unique and selected legacy features can be reconstructed from
+# the stored tensors within tolerance.
+build-deep-xic-pilot: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
+	$(DEEP_PROTOCOL_ROOT)/summary.json
+	@mkdir -p "$(DEEP_OUTPUT_ROOT)/configs"
+	$(PY) tools/spec_trainer/gen_cv_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(DEEP_OUTPUT_ROOT)/reference-cv" \
+	    --config-dir "$(DEEP_OUTPUT_ROOT)/configs" \
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
+	$(PY) -m tools.deep_trainer.phase2.builder \
+	    --config "$(PHASE2_BUILD_CONFIG)" \
+	    --split-config "$(DEEP_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --protocol-root "$(DEEP_PROTOCOL_ROOT)" \
+	    --output-root "$(PHASE2_XIC_OUTPUT_ROOT)" \
+	    --cache-root "$(PHASE2_CACHE_ROOT)" \
 	    $(CV_OVERWRITE_FLAG)
 
 # A completed LightGBM bundle is the frozen owner of membership/folds and its

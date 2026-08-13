@@ -115,3 +115,36 @@ python -m tools.deep_trainer.experiment \
 
 当前机器没有可用 CUDA，但默认 `device: auto` 会在 CPU 上运行。第一轮可以
 先减少 `epochs` 或只训练 M20；正式 XIC 双塔训练建议使用 GPU。
+
+## Phase 2：原始 XIC 数据层
+
+Phase 2 不直接把模型扩大，而是先导出轻重前体、重标 M+1/M+2 同位素包络和
+按 `b/y × ordinal × fragment charge` 区分的 MS2 XIC。第一步只构建
+`3 × (200 correct + 200 incorrect) = 1200` 条完整性 pilot：
+
+```bash
+make build-deep-xic-pilot \
+  FEATURE_ROOT=/path/to/feature_result/ms2-met-runs-08-08 \
+  DEEP_PROTOCOL_ROOT=/path/to/fixed-negpool/combined
+```
+
+默认复用 `workspace/*.dia.npz`；可通过 `PHASE2_CACHE_ROOT=/path/to/cache`
+覆盖。三个 `baseline_*_neg20/config.ini` 必须位于 `FEATURE_ROOT`，其中的 PSM
+JSON、raw 路径、标记化学、ppm 和 XIC 窗口是本次提取的来源。
+
+构建器首先验证冻结协议的 SHA256 与 sample ID，然后在每个数据域、每个存储
+标签内进行确定性均衡抽样。序列、蛋白、label type、negative tier、数据域、
+绝对 RT、前体电荷和划分信息只写入 Parquet manifest 供审计，不是允许的模型
+输入。没有谱库时仍输出所有样本，并用 `fragment_prediction_present=0` 表示。
+
+成功输出包括：
+
+- `manifest.parquet`：sample ID、冻结 split/fold 及审计元数据；
+- `shards/*/*.npy`：可 mmap 的前体固定张量和 ragged 碎片张量；
+- `schema.json`：通道、mask、状态码和模型输入白名单；
+- `audit/identity_matching.csv`：PSM JSON 到冻结 sample ID 的唯一匹配；
+- `audit/feature_parity.csv`：从保存张量回算现有特征的逐值比较；
+- `checksums.json` 与 `COMPLETE`：只有全部身份和 parity 检查通过才发布。
+
+这一步还不是正式深度模型训练。全量约 27 万条数据要等 pilot parity 通过后，
+再加入面板式批量 m/z 提取，避免每个碎片重复扫描同一张谱图。

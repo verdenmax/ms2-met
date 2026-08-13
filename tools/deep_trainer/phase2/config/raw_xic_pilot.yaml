@@ -1,0 +1,32 @@
+schema: phase2_xic_pilot_config_v1
+
+# Paths are relative to FEATURE_ROOT so a copied feature snapshot remains the
+# authority for the extraction settings that produced its features.csv.
+datasets:
+  2da:
+    extraction_config: baseline_2da_neg20/config.ini
+  5da:
+    extraction_config: baseline_5da_neg20/config.ini
+  normal:
+    extraction_config: baseline_normal_neg20/config.ini
+
+pilot:
+  # 3 datasets x (200 correct + 200 incorrect) = 1200 integrity rows.
+  # Labels are used only to balance this extraction-integrity pilot, never as
+  # an input channel or to select a model architecture.
+  correct_per_dataset: 200
+  error_per_dataset: 200
+  seed: 20260813
+
+extraction:
+  xic_cycle_window: 6
+  mass_tol_ppm: 10.0
+  fragment_charges: [1, 2]
+
+prediction:
+  # The first parity pilot proves observed-signal extraction independently of
+  # spectral-library coverage. The schema still emits prediction_present=0.
+  include: false
+
+storage:
+  shard_size: 256
