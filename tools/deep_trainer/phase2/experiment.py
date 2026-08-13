@@ -156,8 +156,18 @@ def _recover_publish(output_root: Path, *, cleanup_stale: bool) -> None:
     backups = sorted(output_root.parent.glob(
         f".{output_root.name}.backup.*"))
     if output_root.exists():
-        _verify_complete_bundle(output_root)
-        if backups and cleanup_stale:
+        current_complete = True
+        try:
+            _verify_complete_bundle(output_root)
+        except (OSError, ValueError, json.JSONDecodeError):
+            current_complete = False
+            if not cleanup_stale:
+                raise
+            logging.warning(
+                "Phase 2 overwrite will replace a legacy/incomplete result "
+                "directory; it remains recoverable until publish succeeds: %s",
+                output_root)
+        if backups and cleanup_stale and current_complete:
             for backup in backups:
                 shutil.rmtree(backup)
             logging.warning(

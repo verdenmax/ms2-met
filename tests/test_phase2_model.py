@@ -462,6 +462,14 @@ def test_phase2_experiment_smoke_writes_canonical_frozen_test_bundle(
     assert published.is_dir() and not backup.exists()
     experiment_module._verify_complete_bundle(published)
 
+    legacy = tmp_path / "legacy-result"
+    legacy.mkdir()
+    (legacy / "old-summary.json").write_text("{}\n", encoding="utf-8")
+    experiment_module._recover_publish(legacy, cleanup_stale=True)
+    assert (legacy / "old-summary.json").is_file()
+    with pytest.raises(ValueError, match="incomplete Phase 2 result"):
+        experiment_module._recover_publish(legacy, cleanup_stale=False)
+
     with (staging / "fixed_test_summary.csv").open("a", encoding="utf-8") \
             as handle:
         handle.write("tampered\n")
