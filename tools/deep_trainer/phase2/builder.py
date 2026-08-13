@@ -12,6 +12,7 @@ import argparse
 import configparser
 from datetime import datetime, timezone
 import hashlib
+from importlib.metadata import PackageNotFoundError, version
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ import platform
 import subprocess
 import tempfile
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -66,6 +68,7 @@ _EXTRACTOR_IMPLEMENTATION_FILES = (
     "spectrum/labeling.py",
     "spectrum/psm_dataset_manifest.py",
     "spectrum/psm_info.py",
+    "spectrum/pfb_reader.py",
     "spectrum/spectrum_utils.py",
     "workflows/flow_utils.py",
     "workflows/modified_psm_policy.py",
@@ -73,6 +76,7 @@ _EXTRACTOR_IMPLEMENTATION_FILES = (
     "workflows/q1a_helpers.py",
     "manager/data_manager.py",
     "constant/keys.py",
+    "unimod.xml",
 )
 
 
@@ -90,9 +94,19 @@ def _extractor_implementation_contract() -> dict:
             raise FileNotFoundError(
                 f"missing Phase 2 implementation source: {path}")
         files[relative] = file_fingerprint(path)["sha256"]
+    runtime = {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "pandas": pd.__version__,
+    }
+    try:
+        runtime["pyteomics"] = version("pyteomics")
+    except PackageNotFoundError:
+        runtime["pyteomics"] = "not_installed"
     return {
         "schema": EXTRACTOR_IMPLEMENTATION_SCHEMA,
         "files_sha256": files,
+        "runtime_versions": runtime,
     }
 
 
@@ -508,7 +522,10 @@ def build_signal_dataset(
                 ]
                 if not pending_rows:
                     continue
-                dia = load_mmap_dia_cache(mmap_path)
+                # resolve_mmap_dia_cache just verified every array checksum;
+                # avoid hashing multi-GB arrays a second time in this process.
+                dia = load_mmap_dia_cache(
+                    mmap_path, verify_checksums=False)
                 for row, psm in pending_rows:
                     pred_frags = None
                     if predictions is not None:

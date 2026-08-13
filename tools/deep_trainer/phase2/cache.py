@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import uuid
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 
 import numpy as np
 
@@ -27,7 +27,7 @@ def _mmap_root(npz_path: Path) -> Path:
     return npz_path.with_name(f"{name}.mmap-v1")
 
 
-def _mmap_manifest(root: Path) -> dict:
+def _mmap_manifest(root: Path, *, verify_arrays: bool = True) -> dict:
     complete_path = root / "COMPLETE"
     manifest_path = root / "manifest.json"
     if not complete_path.is_file() or not manifest_path.is_file():
@@ -44,7 +44,7 @@ def _mmap_manifest(root: Path) -> dict:
         if not path.is_file() or path.stat().st_size != declaration["size_bytes"]:
             raise ValueError(
                 f"Phase 2 DIA mmap cache array changed: {path}")
-        if sha256_file(path) != declaration.get("sha256"):
+        if verify_arrays and sha256_file(path) != declaration.get("sha256"):
             raise ValueError(
                 f"Phase 2 DIA mmap cache checksum mismatch: {path}")
     return manifest
@@ -56,13 +56,26 @@ def _build_mmap_cache(npz_path: Path, output: Path,
     staging.mkdir(parents=True)
     try:
         arrays = {}
-        with np.load(npz_path, allow_pickle=False) as archive:
-            for name in archive.files:
-                path = staging / f"{name}.npy"
-                # np.save streams one decompressed member at a time. The final
-                # training extraction then maps these .npy files without
-                # materializing every DIA array in RAM together.
-                np.save(path, archive[name], allow_pickle=False)
+        with ZipFile(npz_path) as archive:
+            members = archive.infolist()
+            for member in members:
+                member_path = Path(member.filename)
+                if member_path.parent != Path(".") or \
+                        member_path.suffix != ".npy":
+                    raise ValueError(
+                        "DIA NPZ contains an unsafe/non-array member: "
+                        f"{member.filename!r}")
+                name = member_path.stem
+                if name in arrays:
+                    raise ValueError(
+                        f"DIA NPZ contains duplicate array member: {name}")
+                path = staging / member_path.name
+                # Stream the already-encoded .npy member directly from the
+                # ZIP. This bounds memory during one-time conversion even for
+                # the multi-GB peak arrays.
+                with archive.open(member, "r") as source, \
+                        path.open("wb") as target:
+                    shutil.copyfileobj(source, target, length=1024 * 1024)
                 value = np.load(path, mmap_mode="r", allow_pickle=False)
                 arrays[name] = {
                     "dtype": str(value.dtype),
@@ -118,6 +131,7 @@ def resolve_mmap_dia_cache(
         raise ValueError("DIA NPZ fingerprint is stale")
     output = _mmap_root(npz_path)
     rebuild = True
+    manifest = None
     if output.is_dir():
         try:
             manifest = _mmap_manifest(output)
@@ -126,7 +140,8 @@ def resolve_mmap_dia_cache(
             rebuild = True
     if rebuild:
         _build_mmap_cache(npz_path, output, current)
-    manifest = _mmap_manifest(output)
+        manifest = _mmap_manifest(output)
+    assert manifest is not None
     if manifest.get("source_npz") != current:
         raise ValueError("Phase 2 DIA mmap cache source identity mismatch")
     return output, {
@@ -138,10 +153,14 @@ def resolve_mmap_dia_cache(
     }
 
 
-def load_mmap_dia_cache(root: str | Path) -> DIAData:
+def load_mmap_dia_cache(
+    root: str | Path,
+    *,
+    verify_checksums: bool = True,
+) -> DIAData:
     """Open a Phase 2 DIA cache while leaving large arrays as memmaps."""
     root = Path(root).resolve()
-    manifest = _mmap_manifest(root)
+    manifest = _mmap_manifest(root, verify_arrays=verify_checksums)
     arrays = {
         name: np.load(
             root / f"{name}.npy", mmap_mode="r", allow_pickle=False)

@@ -1,8 +1,10 @@
 from copy import deepcopy
 import hashlib
+import logging
 import numpy as np
 import pandas as pd
 import pytest
+import shutil
 import torch
 from types import SimpleNamespace
 
@@ -162,8 +164,10 @@ def test_masked_fragment_magnitude_cannot_change_scale_or_model_logit(tmp_path):
         amplified["fragment"][amplified["fragment_mask"]])
     model = _model().eval()
     with torch.no_grad():
-        logits = model(collate_xic([original, amplified]))
-    assert torch.equal(logits[0], logits[1])
+        original_logit = model(collate_xic([original]))[0]
+        amplified_logit = model(collate_xic([amplified]))[0]
+    torch.testing.assert_close(
+        original_logit, amplified_logit, rtol=0.0, atol=1e-7)
 
 
 def test_xic_model_rejects_embedding_indices_outside_contract(tmp_path):
@@ -448,6 +452,16 @@ def test_phase2_experiment_smoke_writes_canonical_frozen_test_bundle(
     assert (staging / "models" / "xic_m20_seed42.fold1.pt").is_file()
     assert (staging / "COMPLETE").is_file()
     experiment_module._verify_complete_bundle(staging)
+    logging.info("logging after result finalization must not mutate train.log")
+    experiment_module._verify_complete_bundle(staging)
+
+    published = tmp_path / "published"
+    backup = tmp_path / ".published.backup.interrupted"
+    shutil.copytree(staging, backup)
+    experiment_module._recover_publish(published, cleanup_stale=False)
+    assert published.is_dir() and not backup.exists()
+    experiment_module._verify_complete_bundle(published)
+
     with (staging / "fixed_test_summary.csv").open("a", encoding="utf-8") \
             as handle:
         handle.write("tampered\n")

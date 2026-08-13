@@ -10,12 +10,14 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
 import math
+from pathlib import Path
 import random
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset, Sampler
 
+from artifact_identity import sha256_file
 from .store import SignalDataset
 
 
@@ -27,6 +29,7 @@ def input_adapter_contract(*, include_predicted_intensity: bool) -> dict:
     """Return the exact model-bound normalization and routing contract."""
     return {
         "schema": XIC_INPUT_ADAPTER_SCHEMA,
+        "implementation_sha256": sha256_file(Path(__file__).resolve()),
         "trace_features": [
             "log1p_intensity_div_log1p_sample_max",
             "ppm_error_div_mass_tol_ppm_peak_masked",

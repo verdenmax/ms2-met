@@ -85,6 +85,21 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _close_staging_log_handlers(staging: Path) -> None:
+    """Seal file logs before checksumming or deleting their staging tree."""
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if not isinstance(handler, logging.FileHandler):
+            continue
+        filename = Path(handler.baseFilename).resolve()
+        if filename != staging.resolve() and staging.resolve() not in \
+                filename.parents:
+            continue
+        handler.flush()
+        root.removeHandler(handler)
+        handler.close()
+
+
 def _finalize_bundle(staging: Path) -> None:
     """Checksum every result artifact and anchor it with COMPLETE."""
     artifacts = sorted(
@@ -137,20 +152,39 @@ def _verify_complete_bundle(root: Path) -> None:
             raise ValueError(f"Phase 2 result checksum mismatch: {relative}")
 
 
-def _recover_publish(output_root: Path) -> None:
+def _recover_publish(output_root: Path, *, cleanup_stale: bool) -> None:
     backups = sorted(output_root.parent.glob(
         f".{output_root.name}.backup.*"))
     if output_root.exists():
+        _verify_complete_bundle(output_root)
+        if backups and cleanup_stale:
+            for backup in backups:
+                shutil.rmtree(backup)
+            logging.warning(
+                "removed %d stale Phase 2 result backup(s) after verifying "
+                "the current bundle", len(backups))
+        elif backups:
+            logging.warning(
+                "complete Phase 2 result coexists with %d stale backup(s): %s",
+                len(backups), ", ".join(str(path) for path in backups))
         return
-    if len(backups) == 1:
-        os.replace(backups[0], output_root)
+    valid = []
+    for backup in backups:
+        try:
+            _verify_complete_bundle(backup)
+            valid.append(backup)
+        except (OSError, ValueError, json.JSONDecodeError):
+            logging.warning(
+                "ignored invalid Phase 2 result backup: %s", backup)
+    if len(valid) == 1:
+        os.replace(valid[0], output_root)
         logging.warning(
             "restored Phase 2 result after interrupted publish: %s",
             output_root)
-    elif len(backups) > 1:
+    elif len(valid) > 1:
         raise RuntimeError(
             "cannot recover Phase 2 result publish unambiguously: "
-            f"{[str(path) for path in backups]}")
+            f"{[str(path) for path in valid]}")
 
 
 def _validate_config(config: dict) -> None:
@@ -629,6 +663,7 @@ def _run_staging(config_path: Path, split_config_path: Path,
             "metric_semantics": METRIC_SEMANTICS_VERSION,
             "positive_class": "incorrect_identification",
         })
+        _close_staging_log_handlers(staging)
         _finalize_bundle(staging)
         return result
 
@@ -808,6 +843,7 @@ def _run_staging(config_path: Path, split_config_path: Path,
         "metric_semantics": METRIC_SEMANTICS_VERSION,
         "positive_class": "incorrect_identification",
     })
+    _close_staging_log_handlers(staging)
     _finalize_bundle(staging)
     return summary
 
@@ -825,7 +861,7 @@ def run_experiment(config_path: str, split_config_path: str,
         if not path.is_file():
             raise FileNotFoundError(path)
     output_root_obj.parent.mkdir(parents=True, exist_ok=True)
-    _recover_publish(output_root_obj)
+    _recover_publish(output_root_obj, cleanup_stale=overwrite)
     if output_root_obj.exists() and not overwrite:
         raise FileExistsError(
             f"refusing to overwrite Phase 2 results: {output_root_obj}")
@@ -840,6 +876,7 @@ def run_experiment(config_path: str, split_config_path: str,
         _publish(staging, output_root_obj, overwrite)
         return result
     except BaseException:
+        _close_staging_log_handlers(staging)
         shutil.rmtree(staging, ignore_errors=True)
         raise
 

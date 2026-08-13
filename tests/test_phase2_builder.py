@@ -250,8 +250,11 @@ def test_extractor_implementation_contract_content_binds_tensor_modules():
     assert set(builder._EXTRACTOR_IMPLEMENTATION_FILES) <= set(
         contract["files_sha256"])
     assert {
-        "spectrum/psm_info.py", "workflows/q1a_helpers.py",
+        "spectrum/psm_info.py", "spectrum/pfb_reader.py", "unimod.xml",
+        "workflows/q1a_helpers.py",
         "workflows/pred_store.py", "workflows/modified_psm_policy.py",
     } <= set(contract["files_sha256"])
+    assert {"python", "numpy", "pandas", "pyteomics"} == set(
+        contract["runtime_versions"])
     assert all(
         len(value) == 64 for value in contract["files_sha256"].values())
