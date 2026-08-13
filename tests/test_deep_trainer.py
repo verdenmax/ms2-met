@@ -15,6 +15,7 @@ from tools.deep_trainer.experiment import _validate_deep_config
 from tools.deep_trainer.experiment import run_experiment
 from tools.deep_trainer.model import TabularMLP, n_trainable_parameters
 from tools.deep_trainer.preprocessing import FoldPreprocessor
+from tools.deep_trainer.spec_adapter import _assert_columns_equal
 from tools.deep_trainer.training import fit_mlp, predict_trust
 
 
@@ -43,6 +44,36 @@ def test_fold_preprocessor_all_missing_and_constant_columns_are_finite():
     transformed = fitted.transform(np.array([[np.nan, 7.0]]))
     assert np.isfinite(transformed).all()
     assert transformed.tolist() == [[0.0, 0.0, 1.0, 0.0]]
+
+
+def test_frozen_identity_allows_lossless_float_text_roundtrip():
+    current = pd.DataFrame({
+        "sample_id": ["a", "b", "c"],
+        "rt": ["123.400000", "10.123456789012345", None],
+        "sequence": ["PEPTIDE", "OTHER", "THIRD"],
+    })
+    frozen = pd.DataFrame({
+        "sample_id": ["c", "a", "b"],
+        "rt": [np.nan, 123.4, 10.123456789012344],
+        "sequence": ["THIRD", "PEPTIDE", "OTHER"],
+    })
+    _assert_columns_equal(
+        current, frozen, ["rt", "sequence"], "membership")
+
+
+@pytest.mark.parametrize("column,value", [
+    ("rt", 123.5),
+    ("sequence", "DIFFERENT"),
+])
+def test_frozen_identity_still_rejects_real_value_changes(column, value):
+    current = pd.DataFrame({
+        "sample_id": ["a"], "rt": [123.4], "sequence": ["PEPTIDE"],
+    })
+    frozen = current.copy()
+    frozen.loc[0, column] = value
+    with pytest.raises(ValueError, match=rf"column '{column}'"):
+        _assert_columns_equal(
+            current, frozen, ["rt", "sequence"], "membership")
 
 
 def test_tabular_mlp_outputs_one_correct_identification_logit_per_row():

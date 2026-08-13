@@ -40,6 +40,13 @@ from cv_core import METRIC_SEMANTICS_VERSION  # noqa: E402
 from cv_train import _operating_targets, _validate_frame  # noqa: E402
 
 
+_NUMERIC_IDENTITY_COLUMNS = frozenset({
+    "charge", "precursor_mz", "rt", "q_value",
+})
+_IDENTITY_FLOAT_RTOL = 1e-12
+_IDENTITY_FLOAT_ATOL = 1e-12
+
+
 def _sha256(path):
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -262,12 +269,35 @@ def _assert_columns_equal(current, frozen, columns, label):
     for column in columns:
         if column not in left or column not in right:
             continue
-        a = left[column].sort_index().astype("string").fillna("<NA>")
-        b = right[column].sort_index().astype("string").fillna("<NA>")
-        if not a.equals(b):
+        a = left[column].sort_index()
+        b = right[column].sort_index()
+        if column in _NUMERIC_IDENTITY_COLUMNS:
+            missing_a = a.isna().to_numpy()
+            missing_b = b.isna().to_numpy()
+            mismatch = missing_a != missing_b
+            present = ~(missing_a | missing_b)
+            numeric_a = pd.to_numeric(a[present], errors="coerce")
+            numeric_b = pd.to_numeric(b[present], errors="coerce")
+            if numeric_a.isna().any() or numeric_b.isna().any():
+                raise ValueError(
+                    f"frozen {label} column {column!r} contains a "
+                    "non-numeric identity value")
+            mismatch[present] = ~np.isclose(
+                numeric_a.to_numpy(dtype="f8"),
+                numeric_b.to_numpy(dtype="f8"),
+                rtol=_IDENTITY_FLOAT_RTOL,
+                atol=_IDENTITY_FLOAT_ATOL,
+            )
+        else:
+            text_a = a.astype("string").fillna("<NA>")
+            text_b = b.astype("string").fillna("<NA>")
+            mismatch = text_a.ne(text_b).to_numpy()
+        if mismatch.any():
+            examples = a.index[np.flatnonzero(mismatch)[:3]].tolist()
             raise ValueError(
                 f"current feature snapshot differs from frozen {label} "
-                f"column {column!r}")
+                f"column {column!r}; mismatched_rows={int(mismatch.sum())}, "
+                f"sample_ids={examples}")
 
 
 def _apply_frozen_assignments(prepared, required, config, summary):
