@@ -18,7 +18,8 @@ from tools.deep_trainer.phase2.schema import (
     FRAGMENT_STATUS_TO_CODE, ExtractionSettings,
 )
 from tools.deep_trainer.phase2.store import (
-    open_signal_dataset, write_signal_dataset,
+    StagedValidation, open_signal_dataset, recover_interrupted_publish,
+    write_signal_dataset,
 )
 
 
@@ -180,6 +181,68 @@ def test_sharded_store_roundtrip_and_checksum_validation(tmp_path):
         restored["fragment_status"], second.fragment_status)
     schema = json.loads((output / "schema.json").read_text())
     assert schema["positive_class"] == "incorrect_identification"
+
+
+def test_staged_validator_reads_serialized_samples_and_is_checksummed(tmp_path):
+    sample, settings = _sample("serialized-a")
+    output = tmp_path / "signals"
+
+    def validate(dataset):
+        restored = dataset.sample(0)
+        assert restored.metadata["sample_id"] == "serialized-a"
+        assert np.array_equal(
+            restored.precursor_intensity, sample.precursor_intensity)
+        return StagedValidation(
+            audit_tables={
+                "serialized_parity.csv": pd.DataFrame([{"passed": True}]),
+            },
+            summary={"serialized_shards_validated": True},
+        )
+
+    report = write_signal_dataset(
+        [sample], output, settings, build_metadata={"mode": "test"},
+        staged_validator=validate)
+    assert report["staged_validation"]["serialized_shards_validated"] is True
+    checksums = json.loads((output / "checksums.json").read_text())
+    assert "audit/serialized_parity.csv" in checksums
+    open_signal_dataset(output)
+
+
+def test_default_open_rejects_tampered_artifact(tmp_path):
+    sample, settings = _sample()
+    output = tmp_path / "signals"
+    write_signal_dataset(
+        [sample], output, settings, build_metadata={"mode": "test"})
+    shard = next((output / "shards").rglob("precursor_intensity.npy"))
+    with shard.open("ab") as handle:
+        handle.write(b"tampered")
+    with pytest.raises(ValueError, match="artifact changed"):
+        open_signal_dataset(output)
+
+
+def test_complete_marker_anchors_checksum_manifest(tmp_path):
+    sample, settings = _sample()
+    output = tmp_path / "signals"
+    write_signal_dataset(
+        [sample], output, settings, build_metadata={"mode": "test"})
+    with (output / "checksums.json").open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+    with pytest.raises(ValueError, match="differs from COMPLETE"):
+        open_signal_dataset(output)
+
+
+def test_interrupted_overwrite_restores_unique_backup(tmp_path):
+    sample, settings = _sample()
+    output = tmp_path / "signals"
+    write_signal_dataset(
+        [sample], output, settings, build_metadata={"mode": "test"})
+    backup = output.with_name(f".{output.name}.backup.interrupted")
+    output.rename(backup)
+    recover_interrupted_publish(output)
+    assert output.is_dir()
+    assert not backup.exists()
+    assert open_signal_dataset(output).sample(0).metadata["sample_id"] \
+        == "sample-a"
 
 
 def test_store_refuses_duplicate_ids_without_publishing(tmp_path):

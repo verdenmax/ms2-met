@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Callable
 import uuid
 
 import numpy as np
 import pandas as pd
 
+from artifact_identity import sha256_file
 from .schema import (
     SCHEMA_VERSION, ExtractionSettings, SignalSample, schema_document,
 )
@@ -38,12 +41,13 @@ _ALL_ARRAYS = _PRECURSOR_ARRAYS + _FRAGMENT_TRACE_ARRAYS + \
     _FRAGMENT_VECTOR_ARRAYS + ("fragment_offsets",)
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+@dataclass
+class StagedValidation:
+    """Artifacts produced by validation of the serialized dataset."""
+
+    audit_tables: dict[str, pd.DataFrame] = field(default_factory=dict)
+    audit_documents: dict[str, dict] = field(default_factory=dict)
+    summary: dict = field(default_factory=dict)
 
 
 def _json_safe_value(value):
@@ -108,6 +112,29 @@ def _write_shard(root: Path, shard_index: int,
     return rows
 
 
+def recover_interrupted_publish(output_root: str | Path) -> None:
+    """Restore the only backup left by an interrupted atomic overwrite."""
+    output_root = Path(output_root).resolve()
+    backups = sorted(output_root.parent.glob(
+        f".{output_root.name}.backup.*"))
+    if output_root.exists():
+        if backups:
+            logging.warning(
+                "completed Phase 2 output coexists with %d stale backup(s): %s",
+                len(backups), ", ".join(str(path) for path in backups))
+        return
+    if not backups:
+        return
+    if len(backups) != 1:
+        raise RuntimeError(
+            "cannot recover interrupted Phase 2 publish unambiguously; "
+            f"found backups: {[str(path) for path in backups]}")
+    os.replace(backups[0], output_root)
+    logging.warning(
+        "restored Phase 2 dataset after interrupted overwrite: %s",
+        output_root)
+
+
 def _publish(staging: Path, output_root: Path, overwrite: bool) -> None:
     backup = None
     if output_root.exists():
@@ -123,7 +150,29 @@ def _publish(staging: Path, output_root: Path, overwrite: bool) -> None:
             os.replace(backup, output_root)
         raise
     if backup is not None and backup.exists():
-        shutil.rmtree(backup)
+        try:
+            shutil.rmtree(backup)
+        except OSError:
+            logging.warning(
+                "published Phase 2 dataset but could not remove backup: %s",
+                backup, exc_info=True)
+
+
+def _write_audit_tables(root: Path,
+                        tables: dict[str, pd.DataFrame]) -> None:
+    for relative, table in tables.items():
+        path = root / "audit" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        table.to_csv(path, index=False)
+
+
+def _write_audit_documents(root: Path, documents: dict[str, dict]) -> None:
+    for relative, document in documents.items():
+        path = root / "audit" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(document, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8")
 
 
 def write_signal_dataset(
@@ -136,12 +185,14 @@ def write_signal_dataset(
     overwrite: bool = False,
     audit_tables: dict[str, pd.DataFrame] | None = None,
     audit_documents: dict[str, dict] | None = None,
+    staged_validator: Callable[["SignalDataset"], StagedValidation] | None = None,
 ) -> dict:
     """Validate, shard, checksum and atomically publish a signal dataset."""
     if shard_size <= 0:
         raise ValueError("shard_size must be positive")
     output_root = Path(output_root).resolve()
     output_root.parent.mkdir(parents=True, exist_ok=True)
+    recover_interrupted_publish(output_root)
     if output_root.exists() and not overwrite:
         raise FileExistsError(f"output path already exists: {output_root}")
     staging = Path(tempfile.mkdtemp(
@@ -189,16 +240,17 @@ def write_signal_dataset(
             json.dumps(schema, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8")
 
-        for relative, table in (audit_tables or {}).items():
-            path = staging / "audit" / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            table.to_csv(path, index=False)
-        for relative, document in (audit_documents or {}).items():
-            path = staging / "audit" / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(document, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8")
+        _write_audit_tables(staging, audit_tables or {})
+        _write_audit_documents(staging, audit_documents or {})
+
+        validation = StagedValidation()
+        if staged_validator is not None:
+            validation = staged_validator(SignalDataset._open_staging(staging))
+            if not isinstance(validation, StagedValidation):
+                raise TypeError(
+                    "staged_validator must return StagedValidation")
+            _write_audit_tables(staging, validation.audit_tables)
+            _write_audit_documents(staging, validation.audit_documents)
 
         report = {
             "schema": "phase2_raw_xic_build_report_v1",
@@ -212,6 +264,7 @@ def write_signal_dataset(
             "sample_ids_unique": True,
             "metric_semantics": "error_identification_positive_v1",
             "positive_class": "incorrect_identification",
+            "staged_validation": _json_safe_value(validation.summary),
         }
         (staging / "build_report.json").write_text(
             json.dumps(report, indent=2, ensure_ascii=False) + "\n",
@@ -221,16 +274,22 @@ def write_signal_dataset(
         ])
         checksums = {
             str(path.relative_to(staging)): {
-                "sha256": _sha256(path), "size_bytes": path.stat().st_size,
+                "sha256": sha256_file(path),
+                "size_bytes": path.stat().st_size,
             }
             for path in checksum_paths
         }
-        (staging / "checksums.json").write_text(
+        checksums_path = staging / "checksums.json"
+        checksums_path.write_text(
             json.dumps(checksums, indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
         (staging / "COMPLETE").write_text(
-            json.dumps({"schema": SCHEMA_VERSION, "status": "complete"})
-            + "\n", encoding="utf-8")
+            json.dumps({
+                "schema": SCHEMA_VERSION,
+                "status": "complete",
+                "checksums_sha256": sha256_file(checksums_path),
+                "n_artifacts": len(checksums),
+            }, sort_keys=True) + "\n", encoding="utf-8")
         _publish(staging, output_root, overwrite)
         return report
     except BaseException:
@@ -241,7 +300,7 @@ def write_signal_dataset(
 class SignalDataset:
     """Read-only mmap view over an immutable Phase 2 signal dataset."""
 
-    def __init__(self, root: str | Path, *, verify_checksums: bool = False):
+    def __init__(self, root: str | Path, *, verify_checksums: bool = True):
         self.root = Path(root).resolve()
         required = [
             self.root / "COMPLETE", self.root / "schema.json",
@@ -252,6 +311,35 @@ class SignalDataset:
         if missing:
             raise FileNotFoundError(
                 "signal dataset is incomplete:\n  " + "\n  ".join(missing))
+        complete = json.loads(
+            (self.root / "COMPLETE").read_text(encoding="utf-8"))
+        if complete.get("schema") != SCHEMA_VERSION or \
+                complete.get("status") != "complete":
+            raise ValueError("invalid Phase 2 COMPLETE marker")
+        if not complete.get("checksums_sha256"):
+            raise ValueError(
+                "Phase 2 COMPLETE marker does not anchor checksums.json")
+        self.complete = complete
+        self._load_core()
+        if verify_checksums:
+            self.verify_checksums()
+
+    @classmethod
+    def _open_staging(cls, root: str | Path) -> "SignalDataset":
+        """Open unpublished shards for mandatory post-serialization checks."""
+        dataset = cls.__new__(cls)
+        dataset.root = Path(root).resolve()
+        dataset.complete = None
+        dataset._load_core()
+        return dataset
+
+    def _load_core(self) -> None:
+        required = [self.root / "schema.json", self.root / "manifest.parquet"]
+        missing = [str(path) for path in required if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "signal dataset lacks serialized core artifacts:\n  "
+                + "\n  ".join(missing))
         self.schema = json.loads(
             (self.root / "schema.json").read_text(encoding="utf-8"))
         if self.schema.get("schema") != SCHEMA_VERSION:
@@ -262,20 +350,35 @@ class SignalDataset:
             raise ValueError("signal manifest contains duplicate sample IDs")
         self._cache_name: str | None = None
         self._cache: dict[str, np.ndarray] = {}
-        if verify_checksums:
-            self.verify_checksums()
 
     def __len__(self) -> int:
         return len(self.manifest)
 
     def verify_checksums(self) -> None:
-        checksums = json.loads(
-            (self.root / "checksums.json").read_text(encoding="utf-8"))
+        checksums_path = self.root / "checksums.json"
+        observed_checksums_hash = sha256_file(checksums_path)
+        if observed_checksums_hash != self.complete["checksums_sha256"]:
+            raise ValueError("Phase 2 checksums.json differs from COMPLETE")
+        checksums = json.loads(checksums_path.read_text(encoding="utf-8"))
+        actual = {
+            str(path.relative_to(self.root))
+            for path in self.root.rglob("*") if path.is_file()
+            and path.name not in {"COMPLETE", "checksums.json"}
+        }
+        expected = set(checksums)
+        if actual != expected:
+            missing = sorted(expected - actual)
+            unexpected = sorted(actual - expected)
+            raise ValueError(
+                "Phase 2 checksum coverage differs from artifacts: "
+                f"missing={missing}, unexpected={unexpected}")
+        if int(self.complete.get("n_artifacts", -1)) != len(checksums):
+            raise ValueError("Phase 2 COMPLETE artifact count is inconsistent")
         for relative, expected in checksums.items():
             path = self.root / relative
             if not path.is_file() or path.stat().st_size != expected["size_bytes"]:
                 raise ValueError(f"signal dataset artifact changed: {relative}")
-            if _sha256(path) != expected["sha256"]:
+            if sha256_file(path) != expected["sha256"]:
                 raise ValueError(f"signal dataset checksum mismatch: {relative}")
 
     def _load_shard(self, name: str) -> dict[str, np.ndarray]:
@@ -310,8 +413,14 @@ class SignalDataset:
         result["metadata"] = row.to_dict()
         return result
 
+    def sample(self, index: int) -> SignalSample:
+        """Return one on-disk record through the canonical tensor contract."""
+        record = self[index]
+        metadata = record.pop("metadata")
+        return SignalSample(metadata=metadata, **record)
+
 
 def open_signal_dataset(root: str | Path, *,
-                        verify_checksums: bool = False) -> SignalDataset:
+                        verify_checksums: bool = True) -> SignalDataset:
     """Open the only supported Phase 2 storage adapter."""
     return SignalDataset(root, verify_checksums=verify_checksums)

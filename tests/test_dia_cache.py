@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pytest
 from spectrum.dia_data import DIAData
+from tools.deep_trainer.phase2.cache import resolve_dia_cache
 from workflows.flow_utils import data_to_npz
 
 
@@ -114,3 +115,61 @@ def test_cache_source_missing_warns(tmp_path, caplog):
         _validate(npz, str(src))                  # 不抛
     assert any("不存在" in r.message for r in caplog.records), \
         f"expected a source-missing WARNING, got {[r.message for r in caplog.records]}"
+
+
+def test_phase2_cache_is_namespaced_and_content_bound(tmp_path):
+    first = tmp_path / "domain-a" / "same.mzML"
+    second = tmp_path / "domain-b" / "same.mzML"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_bytes(b"first source")
+    second.write_bytes(b"second source")
+    cache_root = tmp_path / "cache"
+
+    first_cache, first_provenance = resolve_dia_cache(
+        _FakeMgr(), first, cache_root, dataset="2da")
+    second_cache, second_provenance = resolve_dia_cache(
+        _FakeMgr(), second, cache_root, dataset="normal")
+
+    assert first_cache.parent.name == "2da"
+    assert second_cache.parent.name == "normal"
+    assert first_cache != second_cache
+    assert first_provenance["embedded_raw_source"]["sha256"] \
+        != second_provenance["embedded_raw_source"]["sha256"]
+
+
+def test_phase2_cache_only_requires_exact_configured_source_path(tmp_path):
+    source = tmp_path / "original" / "raw.mzML"
+    source.parent.mkdir()
+    source.write_bytes(b"source")
+    cache_root = tmp_path / "cache"
+    cache, _ = resolve_dia_cache(
+        _FakeMgr(), source, cache_root, dataset="2da")
+    source.unlink()
+
+    reused, provenance = resolve_dia_cache(
+        _FakeMgr(), source, cache_root, dataset="2da")
+    assert reused == cache
+    assert provenance["raw_source_available"] is False
+
+    wrong = tmp_path / "different" / "raw.mzML"
+    with pytest.raises(ValueError, match="源路径不匹配"):
+        resolve_dia_cache(
+            _FakeMgr(), wrong, cache_root, dataset="2da")
+
+
+def test_phase2_cache_rebuilds_when_content_changes_at_same_size(tmp_path):
+    source = tmp_path / "raw.mzML"
+    source.write_bytes(b"abcdef")
+    cache_root = tmp_path / "cache"
+    cache, before = resolve_dia_cache(
+        _FakeMgr(), source, cache_root, dataset="2da")
+    old_mtime_ns = source.stat().st_mtime_ns
+    source.write_bytes(b"ghijkl")
+    os.utime(source, ns=(old_mtime_ns, old_mtime_ns))
+
+    rebuilt, after = resolve_dia_cache(
+        _FakeMgr(), source, cache_root, dataset="2da")
+    assert rebuilt == cache
+    assert before["embedded_raw_source"]["sha256"] \
+        != after["embedded_raw_source"]["sha256"]

@@ -128,9 +128,12 @@ make build-deep-xic-pilot \
   DEEP_PROTOCOL_ROOT=/path/to/fixed-negpool/combined
 ```
 
-默认复用 `workspace/*.dia.npz`；可通过 `PHASE2_CACHE_ROOT=/path/to/cache`
-覆盖。三个 `baseline_*_neg20/config.ini` 必须位于 `FEATURE_ROOT`，其中的 PSM
-JSON、raw 路径、标记化学、ppm 和 XIC 窗口是本次提取的来源。
+默认使用 `workspace/<dataset>/*.dia.npz`；可通过
+`PHASE2_CACHE_ROOT=/path/to/cache` 覆盖。Phase 2 缓存同时绑定数据域、配置中的
+raw 绝对路径、文件大小、mtime_ns 和内容 SHA256；旧缓存缺少这些字段时，只有
+raw 仍可访问才会重建，不能在 cache-only 模式下被静默复用。三个
+`baseline_*_neg20/config.ini` 必须位于 `FEATURE_ROOT`，其中的 PSM JSON、raw
+路径、标记化学、ppm 和 XIC 窗口是本次提取的来源。
 
 构建器首先验证冻结协议的 SHA256 与 sample ID，然后在每个数据域、每个存储
 标签内进行确定性均衡抽样。序列、蛋白、label type、negative tier、数据域、
@@ -144,7 +147,9 @@ JSON、raw 路径、标记化学、ppm 和 XIC 窗口是本次提取的来源。
 - `schema.json`：通道、mask、状态码和模型输入白名单；
 - `audit/identity_matching.csv`：PSM JSON 到冻结 sample ID 的唯一匹配；
 - `audit/feature_parity.csv`：从保存张量回算现有特征的逐值比较；
-- `checksums.json` 与 `COMPLETE`：只有全部身份和 parity 检查通过才发布。
+- `checksums.json` 与 `COMPLETE`：parity 从已落盘的 mmap shard 回算；只有全部
+  检查通过才原子发布。`COMPLETE` 保存 checksum 清单本身的 SHA256，读取器默认
+  校验全部文件，覆盖发布中断后会恢复唯一的旧版本备份。
 
 这一步还不是正式深度模型训练。全量约 27 万条数据要等 pilot parity 通过后，
 再加入面板式批量 m/z 提取，避免每个碎片重复扫描同一张谱图。

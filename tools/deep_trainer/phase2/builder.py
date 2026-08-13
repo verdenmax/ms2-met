@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import configparser
 from datetime import datetime, timezone
-import hashlib
 import json
 import logging
 import os
@@ -24,6 +23,7 @@ import pandas as pd
 import yaml
 
 from constant.keys import ConfigKeys
+from artifact_identity import file_fingerprint
 from manager.data_manager import DataManager
 from spectrum.dia_data import DIAData
 from spectrum.labeling import (
@@ -31,41 +31,22 @@ from spectrum.labeling import (
 )
 from spectrum.psm_dataset_manifest import validate_manifest
 from spectrum.psm_info import PSMInfo
-from workflows.flow_utils import data_to_npz, get_filename_stem
+from workflows.flow_utils import get_filename_stem
 from workflows.modified_psm_policy import apply_modified_psm_policy
 from workflows.pred_store import build_pred_store, normalize_key
 
 from tools.deep_trainer.spec_adapter import prepare_protocol
 
 from .extraction import extract_signal_sample
+from .cache import resolve_dia_cache
 from .matching import match_psms_to_protocol, select_pilot_rows
 from .parity import compare_to_feature_row
 from .schema import ExtractionSettings
-from .store import write_signal_dataset
+from .store import StagedValidation, write_signal_dataset
 
 
 BUILD_CONFIG_SCHEMA = "phase2_xic_pilot_config_v1"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _fingerprint(path: Path, *, hash_content: bool = True) -> dict:
-    path = path.resolve()
-    stat = path.stat()
-    result = {
-        "path": str(path), "size_bytes": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
-    }
-    if hash_content:
-        result["sha256"] = _sha256(path)
-    return result
 
 
 def _resolve(value: str, *, base: Path) -> Path:
@@ -271,7 +252,6 @@ def build_signal_dataset(
     audit_documents: dict[str, dict] = {}
     matching_tables = []
     samples = []
-    parity_rows = []
     sources = []
     chemistry = {}
 
@@ -322,14 +302,10 @@ def build_signal_dataset(
         manager = DataManager(ini)
         for raw_title in sorted(rows_by_raw):
             raw_path = raw_paths[raw_title]
-            cache_path = cache_root_path / f"{raw_title}.dia.npz"
-            if not raw_path.is_file() and not cache_path.is_file():
-                raise FileNotFoundError(
-                    f"raw source and DIA cache are both missing for "
-                    f"{raw_title}: source={raw_path}, cache={cache_path}")
-            _, shared_path = data_to_npz(
-                manager, str(raw_path), str(cache_root_path))
-            dia = DIAData.load_from_file(shared_path, use_mmap=True)
+            shared_path, cache_provenance = resolve_dia_cache(
+                manager, raw_path, cache_root_path, dataset=dataset)
+            sources.append(cache_provenance)
+            dia = DIAData.load_from_file(str(shared_path), use_mmap=True)
             for row, psm in rows_by_raw[raw_title]:
                 pred_frags = None
                 if predictions is not None:
@@ -340,32 +316,60 @@ def build_signal_dataset(
                     psm, dia, settings, _source_row_metadata(row, psm),
                     labeling=labeling, pred_frags=pred_frags)
                 samples.append(sample)
-                parity_rows.extend(compare_to_feature_row(
-                    sample, row, settings))
 
         sources.extend([
             {"dataset": dataset, "kind": "extraction_config",
-             **_fingerprint(ini_path)},
+             **file_fingerprint(ini_path)},
             {"dataset": dataset, "kind": "psm_json",
-             **_fingerprint(psm_path)},
+             **file_fingerprint(psm_path)},
         ])
 
     matching_audit = pd.concat(matching_tables, ignore_index=True)
-    parity_audit = pd.DataFrame(parity_rows)
     if len(samples) != expected_count:
         raise ValueError(
             f"extracted {len(samples)} pilot samples; expected {expected_count}")
-    if not len(parity_audit):
-        raise ValueError("no parity features were available for verification")
-    failed = parity_audit[~parity_audit["passed"]]
-    if len(failed):
-        failure = Path(output_root).resolve().with_suffix(
-            ".parity_failure.csv")
-        failure.parent.mkdir(parents=True, exist_ok=True)
-        parity_audit.to_csv(failure, index=False)
-        raise ValueError(
-            f"Phase 2 parity failed for {len(failed)}/{len(parity_audit)} "
-            f"sample-feature values; audit={failure}")
+
+    selected_by_id = selected.copy()
+    selected_by_id["sample_id"] = selected_by_id["sample_id"].astype(str)
+    selected_by_id = selected_by_id.set_index("sample_id", verify_integrity=True)
+
+    def _validate_serialized_dataset(dataset) -> StagedValidation:
+        """Compare reconstructed features from the actual saved shards."""
+        parity_rows = []
+        for index in range(len(dataset)):
+            sample = dataset.sample(index)
+            sample_id = str(sample.metadata["sample_id"])
+            if sample_id not in selected_by_id.index:
+                raise ValueError(
+                    f"serialized sample is absent from frozen pilot: {sample_id}")
+            sample.validate(settings)
+            parity_rows.extend(compare_to_feature_row(
+                sample, selected_by_id.loc[sample_id], settings))
+        parity_audit = pd.DataFrame(parity_rows)
+        if not len(parity_audit):
+            raise ValueError(
+                "no parity features were available for serialized verification")
+        failed = parity_audit[~parity_audit["passed"]]
+        if len(failed):
+            failure = Path(output_root).resolve().with_suffix(
+                ".parity_failure.csv")
+            failure.parent.mkdir(parents=True, exist_ok=True)
+            parity_audit.to_csv(failure, index=False)
+            raise ValueError(
+                f"Phase 2 serialized parity failed for "
+                f"{len(failed)}/{len(parity_audit)} sample-feature values; "
+                f"audit={failure}")
+        return StagedValidation(
+            audit_tables={"feature_parity.csv": parity_audit},
+            summary={
+                "serialized_shards_validated": True,
+                "feature_parity_all_passed": True,
+                "feature_parity_comparisons": len(parity_audit),
+            },
+        )
+
+    protocol_root_path = Path(protocol_root).resolve()
+    protocol_summary = protocol_root_path / "summary.json"
 
     build_metadata = {
         "mode": "balanced_integrity_pilot",
@@ -375,13 +379,15 @@ def build_signal_dataset(
         "pilot_seed": pilot_seed,
         "prediction_included": prediction_enabled,
         "chemistry_by_dataset": chemistry,
-        "frozen_protocol_root": str(Path(protocol_root).resolve()),
+        "frozen_protocol_root": str(protocol_root_path),
+        "frozen_protocol_contract": protocol.validation.get(
+            "frozen_protocol", {}),
+        "frozen_protocol_summary": file_fingerprint(protocol_summary),
         "frozen_sample_ids_exact_match": True,
-        "parity_all_passed": True,
-        "parity_comparisons": len(parity_audit),
+        "parity_validation": "required_on_serialized_staging_shards",
         "source_fingerprints": sources,
-        "build_config": _fingerprint(config_path_obj),
-        "split_config": _fingerprint(Path(split_config_path).resolve()),
+        "build_config": file_fingerprint(config_path_obj),
+        "split_config": file_fingerprint(Path(split_config_path).resolve()),
         "git_commit": _git_commit(),
         "runtime": {
             "python": platform.python_version(),
@@ -400,9 +406,9 @@ def build_signal_dataset(
                 if column in selected
             ]],
             "identity_matching.csv": matching_audit,
-            "feature_parity.csv": parity_audit,
         },
         audit_documents=audit_documents,
+        staged_validator=_validate_serialized_dataset,
     )
 
 

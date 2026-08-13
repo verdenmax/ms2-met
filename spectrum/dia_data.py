@@ -6,6 +6,7 @@ import tempfile
 import numpy as np
 import pandas as pd
 
+from artifact_identity import file_fingerprint, sha256_file
 from pyteomics import mzml
 from spectrum.spectrum_utils import (
     centroid_spectrum, match_peak_panel_ppm, match_peak_ppm,
@@ -195,7 +196,8 @@ class DIAData:
         self._n_centroid_empty: int = 0
 
     # 在 DIAData 类中添加
-    def save_to_file(self, filepath: str, source_path: str | None = None):
+    def save_to_file(self, filepath: str, source_path: str | None = None,
+                     source_fingerprint: dict | None = None):
         """将所有 NumPy 数组和标量保存到 .npz 文件（原子写）。
 
         source_path: 源 mzML 路径；提供则把其 mtime/size 写入缓存，供
@@ -240,9 +242,23 @@ class DIAData:
 
         # 源文件身份（用于缓存失效检测；源 mzML 被替换/重新生成时重建）
         if source_path is not None and os.path.exists(source_path):
-            st = os.stat(source_path)
+            resolved_source = os.path.realpath(os.path.abspath(
+                os.path.expanduser(source_path)))
+            identity = source_fingerprint or file_fingerprint(resolved_source)
+            if os.path.realpath(str(identity.get("path", ""))) != resolved_source:
+                raise ValueError(
+                    "source_fingerprint path differs from source_path")
+            st = os.stat(resolved_source)
+            if (int(identity.get("size_bytes", -1)) != st.st_size
+                    or int(identity.get("mtime_ns", -1)) != st.st_mtime_ns
+                    or not identity.get("sha256")):
+                raise ValueError(
+                    "source_fingerprint is incomplete or stale")
             data['_source_mtime'] = np.float64(st.st_mtime)
+            data['_source_mtime_ns'] = np.int64(st.st_mtime_ns)
             data['_source_size'] = np.int64(st.st_size)
+            data['_source_path'] = np.str_(resolved_source)
+            data['_source_sha256'] = np.str_(identity["sha256"])
 
         # 过滤掉 None 值（np.savez 不支持 None）
         data = {k: v for k, v in data.items() if v is not None}
@@ -299,7 +315,8 @@ class DIAData:
     def validate_cache_params(filepath: str,
                               expected_centroid_enabled: bool,
                               expected_centroid_rel_threshold: float,
-                              expected_source_path: str | None = None) -> None:
+                              expected_source_path: str | None = None,
+                              require_source_identity: bool = False) -> None:
         """Lightweight cache validation: open npz with mmap, read ONLY the
         scalars needed for version + centroid (+ optional source-identity)
         checks, then close.
@@ -320,13 +337,34 @@ class DIAData:
                 expected_centroid_enabled=expected_centroid_enabled,
                 expected_centroid_rel_threshold=expected_centroid_rel_threshold,
                 expected_source_path=expected_source_path,
+                require_source_identity=require_source_identity,
             )
+
+    @staticmethod
+    def read_cache_source_identity(filepath: str) -> dict:
+        """Return the immutable raw-source identity embedded in a DIA cache."""
+        with np.load(filepath, mmap_mode="r") as data:
+            fields = {
+                "path": "_source_path", "sha256": "_source_sha256",
+                "size_bytes": "_source_size", "mtime_ns": "_source_mtime_ns",
+            }
+            missing = [stored for stored in fields.values()
+                       if stored not in data]
+            if missing:
+                raise ValueError(
+                    f"DIA cache lacks strict source identity fields: {missing}")
+            return {
+                key: (str(data[stored]) if key in {"path", "sha256"}
+                      else int(data[stored]))
+                for key, stored in fields.items()
+            }
 
     @staticmethod
     def _check_format_version(filepath: str, data,
                               expected_centroid_enabled: bool | None = None,
                               expected_centroid_rel_threshold: float | None = None,
-                              expected_source_path: str | None = None) -> None:
+                              expected_source_path: str | None = None,
+                              require_source_identity: bool = False) -> None:
         """Reject npz files without `_format_version=3` or mismatched centroid params.
 
         Bumped from 2 -> 3 in P0-3 (Silent-C3) to embed centroid params
@@ -367,12 +405,27 @@ class DIAData:
         # 会让人误以为缓存与当前输入一致——例如切换 mzML→pfb、源路径写错、或
         # 复用 2026-06-08 之前生成的无身份字段旧缓存）。
         if expected_source_path is not None:
+            strict_fields = {
+                "_source_path", "_source_sha256", "_source_size",
+                "_source_mtime_ns",
+            }
+            if require_source_identity and not strict_fields.issubset(data.files):
+                raise ValueError(
+                    "npz 缓存缺少严格源文件身份字段；需要从当前 raw 重建")
             if '_source_size' not in data:
                 logging.warning(
                     "npz 缓存 %s 无源文件身份字段（旧缓存，2026-06-08 之前生成），"
                     "跳过源文件新鲜度校验——可能复用与当前输入不一致的缓存；"
                     "建议删除该缓存重建。", filepath)
             elif not os.path.exists(expected_source_path):
+                if require_source_identity:
+                    expected_resolved = os.path.realpath(os.path.abspath(
+                        os.path.expanduser(expected_source_path)))
+                    stored_path = os.path.realpath(str(data['_source_path']))
+                    if stored_path != expected_resolved:
+                        raise ValueError(
+                            "cache-only 源路径不匹配: "
+                            f"stored={stored_path}, expected={expected_resolved}")
                 logging.warning(
                     "npz 缓存 %s 的源文件 %s 不存在，跳过源文件新鲜度校验——"
                     "可能复用与当前输入不一致的缓存；请确认 raw_path 配置正确。",
@@ -380,14 +433,27 @@ class DIAData:
             else:
                 st = os.stat(expected_source_path)
                 stored_size = int(data['_source_size'])
+                stored_mtime_ns = (
+                    int(data['_source_mtime_ns'])
+                    if '_source_mtime_ns' in data else None)
                 stored_mtime = (float(data['_source_mtime'])
                                 if '_source_mtime' in data else None)
                 if stored_size != st.st_size or (
-                        stored_mtime is not None
+                        stored_mtime_ns is not None
+                        and stored_mtime_ns != st.st_mtime_ns) or (
+                        stored_mtime_ns is None and stored_mtime is not None
                         and abs(stored_mtime - st.st_mtime) > 1e-6):
                     raise ValueError(
                         f"npz 缓存 {filepath} 的源文件 {expected_source_path} 已变化"
                         f"（size/mtime 不符），需重建。")
+                if require_source_identity:
+                    expected_resolved = os.path.realpath(os.path.abspath(
+                        os.path.expanduser(expected_source_path)))
+                    if os.path.realpath(str(data['_source_path'])) != expected_resolved:
+                        raise ValueError("DIA cache embedded source path differs")
+                    if str(data['_source_sha256']) != sha256_file(
+                            expected_source_path):
+                        raise ValueError("DIA cache embedded source SHA256 differs")
 
     def _get_retention_time(self, spectrum) -> float:
         """Return retention time in MINUTES (canonical pipeline unit).
