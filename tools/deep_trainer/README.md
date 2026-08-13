@@ -64,6 +64,19 @@ make train-deep-mlp-combined \
   DEEP_OUTPUT_ROOT=runs/deep_trainer/no-missing-indicators
 ```
 
+两臂必须使用相同的 Python/PyTorch/NumPy/Pandas 版本。完成有、无缺失指示的
+两次运行后，用下面的命令进行逐样本、按 sequence 成簇的配对 bootstrap；比较器
+会拒绝测试样本或上述运行环境不一致的结果：
+
+```bash
+python -m tools.deep_trainer.missingness_sensitivity \
+  --without-indicators-root \
+    runs/deep_trainer/no-missing-indicators/tabular-mlp/combined \
+  --with-indicators-root \
+    runs/deep_trainer/with-indicators/tabular-mlp/combined \
+  --output-dir runs/deep_trainer/missingness-sensitivity-comparison
+```
+
 直接运行时，需要先生成与 LightGBM 相同的 split config：
 
 ```bash

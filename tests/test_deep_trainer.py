@@ -14,6 +14,7 @@ from tools.deep_trainer.checkpoint import (
 from tools.deep_trainer.experiment import _validate_deep_config
 from tools.deep_trainer.experiment import run_experiment
 from tools.deep_trainer.model import TabularMLP, n_trainable_parameters
+from tools.deep_trainer.missingness_sensitivity import _assert_matched
 from tools.deep_trainer.preprocessing import FoldPreprocessor
 from tools.deep_trainer.spec_adapter import _assert_columns_equal
 from tools.deep_trainer.training import fit_mlp, predict_trust
@@ -74,6 +75,37 @@ def test_frozen_identity_still_rejects_real_value_changes(column, value):
     with pytest.raises(ValueError, match=rf"column '{column}'"):
         _assert_columns_equal(
             current, frozen, ["rt", "sequence"], "membership")
+
+
+def test_missingness_sensitivity_requires_matched_runtime_and_rows():
+    columns = {
+        "sample_id": ["b", "a"],
+        "dataset": ["2da", "2da"],
+        "sequence": ["B", "A"],
+        "charge": [2, 2],
+        "precursor_mz": [500.0, 400.0],
+        "rt": [20.0, 10.0],
+        "raw_title1": ["r2", "r1"],
+        "label_type": ["heavy", "heavy"],
+        "label": [0, 1],
+        "negative_tier": ["E20", "correct"],
+        "__source_row": [1, 0],
+    }
+    left = pd.DataFrame(columns)
+    right = left.iloc[::-1].reset_index(drop=True)
+    provenance = {
+        "python": "3.13", "torch": "2.13", "numpy": "2.3",
+        "pandas": "2.3", "git_commit": "abc",
+    }
+    identity = _assert_matched(
+        left, right, {"provenance": provenance},
+        {"provenance": provenance})
+    assert identity["sample_id"].tolist() == ["a", "b"]
+
+    changed = {"provenance": {**provenance, "torch": "2.10"}}
+    with pytest.raises(ValueError, match="provenance torch"):
+        _assert_matched(
+            left, right, {"provenance": provenance}, changed)
 
 
 def test_tabular_mlp_outputs_one_correct_identification_logit_per_row():
