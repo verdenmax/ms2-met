@@ -17,6 +17,7 @@ from tools.deep_trainer.phase2.protocol import FrozenXICProtocol
 from tools.deep_trainer.phase2.checkpoint import (
     load_checkpoint, predict_indices, save_checkpoint,
 )
+from tools.deep_trainer.phase2 import checkpoint as checkpoint_module
 from tools.deep_trainer.phase2.schema import ExtractionSettings
 from tools.deep_trainer.phase2.store import (
     open_signal_dataset, write_signal_dataset,
@@ -116,7 +117,8 @@ def test_xic_fusion_forward_is_finite_and_returns_trust_logits(tmp_path):
     assert torch.isfinite(logits).all()
     assert torch.isfinite(attention).all()
     assert torch.allclose(attention.sum(dim=1), torch.ones(2))
-    assert model.architecture()["type"] == "xic_fusion_attention_v1"
+    assert attention[:, :2].sum().item() == 0.0
+    assert model.architecture()["type"] == "xic_fusion_attention_v2"
 
 
 def test_xic_attention_handles_samples_with_no_eligible_fragments(tmp_path):
@@ -146,7 +148,7 @@ def test_xic_training_and_dataset_bound_checkpoint_roundtrip(tmp_path):
     source = _write_training_signals(tmp_path)
     config = {
         "model": {
-            "type": "xic_fusion_attention_v1",
+            "type": "xic_fusion_attention_v2",
             "trace_hidden_dim": 4,
             "embedding_dim": 3,
             "fragment_hidden_dim": 7,
@@ -193,6 +195,15 @@ def test_xic_training_and_dataset_bound_checkpoint_roundtrip(tmp_path):
         tmp_path, n_samples=6, name="other-signals")
     with pytest.raises(ValueError, match="different Phase 2 XIC dataset"):
         load_checkpoint(checkpoint, source=other)
+
+    monkeypatch = pytest.MonkeyPatch()
+    original = checkpoint_module.input_adapter_contract
+    monkeypatch.setattr(
+        checkpoint_module, "input_adapter_contract",
+        lambda **kwargs: {**original(**kwargs), "schema": "future_adapter"})
+    with pytest.raises(ValueError, match="different Phase 2 input adapter"):
+        load_checkpoint(checkpoint, source=source)
+    monkeypatch.undo()
 
 
 def test_xic_protocol_requires_exact_full_frozen_assignments(
@@ -355,7 +366,7 @@ def test_phase2_experiment_smoke_writes_canonical_frozen_test_bundle(
         "schema": "phase2_xic_training_config_v1",
         "experiment": {"negative_pool_models": ["M20"]},
         "model": {
-            "type": "xic_fusion_attention_v1",
+            "type": "xic_fusion_attention_v2",
             "trace_hidden_dim": 4, "embedding_dim": 3,
             "fragment_hidden_dim": 7, "attention_dim": 5,
             "fusion_hidden_dims": [9], "dropout": 0.0,
@@ -403,3 +414,10 @@ def test_phase2_experiment_smoke_writes_canonical_frozen_test_bundle(
             "error_recall_at_fpr10"} <= set(table.columns)
     assert (staging / "models" / "xic_m20_seed42.fold0.pt").is_file()
     assert (staging / "models" / "xic_m20_seed42.fold1.pt").is_file()
+    assert (staging / "COMPLETE").is_file()
+    experiment_module._verify_complete_bundle(staging)
+    with (staging / "fixed_test_summary.csv").open("a", encoding="utf-8") \
+            as handle:
+        handle.write("tampered\n")
+    with pytest.raises(ValueError, match="artifact changed"):
+        experiment_module._verify_complete_bundle(staging)

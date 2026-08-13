@@ -269,6 +269,7 @@ def test_xic_torch_adapter_uses_bounded_signal_inputs_and_ragged_padding(
     assert batch["precursor"].shape == (2, 20, settings.trace_length)
     assert batch["fragment"].shape == (2, 4, 10, settings.trace_length)
     assert batch["fragment_mask"][1].sum().item() == 0
+    assert batch["fragment_mask"][0].tolist() == [False, False, True, True]
     assert batch["fragment_ion_type"][0, -1].item() in {1, 2}
     assert batch["fragment_ion_type"][1, -1].item() == 0
     assert batch["label"].tolist() == [1.0, 1.0]
@@ -276,6 +277,7 @@ def test_xic_torch_adapter_uses_bounded_signal_inputs_and_ragged_padding(
     assert np.isfinite(batch["precursor"].numpy()).all()
     assert batch["precursor"].abs().max().item() <= 1.0
     assert "fragment_status" not in batch
+    assert "fragment_ordinal" not in batch
     assert "negative_tier" not in batch
 
 

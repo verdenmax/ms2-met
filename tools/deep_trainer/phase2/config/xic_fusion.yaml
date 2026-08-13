@@ -6,7 +6,7 @@ experiment:
   negative_pool_models: [M20]
 
 model:
-  type: xic_fusion_attention_v1
+  type: xic_fusion_attention_v2
   precursor_channels: 20
   fragment_channels: 10
   trace_hidden_dim: 32
@@ -14,7 +14,6 @@ model:
   fragment_hidden_dim: 64
   attention_dim: 32
   fusion_hidden_dims: [128, 64]
-  max_fragment_ordinal: 256
   max_fragment_charge: 8
   dropout: 0.15
   # This is a predeclared model arm. It can be true only when the immutable

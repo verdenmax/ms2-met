@@ -25,7 +25,7 @@ from ..comparison import (
     load_frozen_lightgbm_predictions, paired_cluster_bootstrap,
 )
 from .checkpoint import save_checkpoint
-from .data import XICDataset
+from .data import XICDataset, input_adapter_contract
 from .model import n_trainable_parameters
 from .protocol import prepare_xic_protocol
 from .training import fit_xic_model, predict_trust
@@ -85,6 +85,65 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _finalize_bundle(staging: Path) -> None:
+    """Checksum every result artifact and anchor it with COMPLETE."""
+    artifacts = sorted(
+        path for path in staging.rglob("*")
+        if path.is_file() and path.name not in {"checksums.json", "COMPLETE"})
+    checksums = {
+        str(path.relative_to(staging)): {
+            "sha256": _sha256(path), "size_bytes": path.stat().st_size,
+        }
+        for path in artifacts
+    }
+    checksums_path = staging / "checksums.json"
+    _atomic_json(checksums_path, checksums)
+    _atomic_json(staging / "COMPLETE", {
+        "schema": "phase2_xic_result_bundle_v1",
+        "status": json.loads(
+            (staging / "bundle_status.json").read_text(
+                encoding="utf-8"))["status"],
+        "checksums_sha256": _sha256(checksums_path),
+        "n_artifacts": len(checksums),
+    })
+
+
+def _verify_complete_bundle(root: Path) -> None:
+    complete_path = root / "COMPLETE"
+    checksums_path = root / "checksums.json"
+    if not complete_path.is_file() or not checksums_path.is_file():
+        raise ValueError(f"incomplete Phase 2 result bundle: {root}")
+    complete = json.loads(complete_path.read_text(encoding="utf-8"))
+    if complete.get("schema") != "phase2_xic_result_bundle_v1" or \
+            complete.get("checksums_sha256") != _sha256(checksums_path):
+        raise ValueError(f"invalid Phase 2 result COMPLETE marker: {root}")
+    checksums = json.loads(checksums_path.read_text(encoding="utf-8"))
+    if complete.get("n_artifacts") != len(checksums):
+        raise ValueError("Phase 2 result artifact count is inconsistent")
+    for relative, expected in checksums.items():
+        path = root / relative
+        if not path.is_file() or path.stat().st_size != expected["size_bytes"]:
+            raise ValueError(f"Phase 2 result artifact changed: {relative}")
+        if _sha256(path) != expected["sha256"]:
+            raise ValueError(f"Phase 2 result checksum mismatch: {relative}")
+
+
+def _recover_publish(output_root: Path) -> None:
+    backups = sorted(output_root.parent.glob(
+        f".{output_root.name}.backup.*"))
+    if output_root.exists():
+        return
+    if len(backups) == 1:
+        os.replace(backups[0], output_root)
+        logging.warning(
+            "restored Phase 2 result after interrupted publish: %s",
+            output_root)
+    elif len(backups) > 1:
+        raise RuntimeError(
+            "cannot recover Phase 2 result publish unambiguously: "
+            f"{[str(path) for path in backups]}")
+
+
 def _validate_config(config: dict) -> None:
     if not isinstance(config, dict) or config.get("schema") != CONFIG_SCHEMA:
         raise ValueError(f"Phase 2 config requires schema={CONFIG_SCHEMA}")
@@ -92,9 +151,9 @@ def _validate_config(config: dict) -> None:
         raise ValueError(
             "evaluation_semantics must exactly preserve the canonical "
             "incorrect-identification-positive convention")
-    if config.get("model", {}).get("type") != "xic_fusion_attention_v1":
+    if config.get("model", {}).get("type") != "xic_fusion_attention_v2":
         raise ValueError(
-            "Phase 2 config requires model.type=xic_fusion_attention_v1")
+            "Phase 2 config requires model.type=xic_fusion_attention_v2")
     if config.get("training", {}).get("early_stopping_metric") != "roc_auc":
         raise ValueError("Phase 2 early_stopping_metric must be roc_auc")
     if str(config.get("training", {}).get(
@@ -244,6 +303,13 @@ def _fit_one_pool(protocol, model_name: str, test: pd.DataFrame,
                 "training_sample_ids_sha256": hashlib.sha256("\n".join(
                     sorted(train.loc[inner_train,
                                      protocol.prepared.sample_id_col].astype(str))
+                ).encode("utf-8")).hexdigest(),
+                "validation_sample_ids_sha256": hashlib.sha256("\n".join(
+                    sorted(train.loc[inner_valid,
+                                     protocol.prepared.sample_id_col].astype(str))
+                ).encode("utf-8")).hexdigest(),
+                "training_config_sha256": hashlib.sha256(json.dumps(
+                    config, sort_keys=True, separators=(",", ":")
                 ).encode("utf-8")).hexdigest(),
             })
         fold_metrics = evaluate_oof(labels[outer_test], oof_scores)
@@ -472,6 +538,7 @@ def _provenance(config_path: Path, split_config_path: Path,
 
 
 def _publish(staging: Path, output_root: Path, overwrite: bool) -> None:
+    _verify_complete_bundle(staging)
     status = json.loads(
         (staging / "bundle_status.json").read_text(encoding="utf-8"))
     if status.get("status") not in {"complete", "prepare_only"}:
@@ -490,7 +557,12 @@ def _publish(staging: Path, output_root: Path, overwrite: bool) -> None:
             os.replace(backup, output_root)
         raise
     if backup is not None and backup.exists():
-        shutil.rmtree(backup)
+        try:
+            shutil.rmtree(backup)
+        except OSError:
+            logging.warning(
+                "published Phase 2 result but could not remove backup: %s",
+                backup, exc_info=True)
 
 
 def _run_staging(config_path: Path, split_config_path: Path,
@@ -548,6 +620,7 @@ def _run_staging(config_path: Path, split_config_path: Path,
             "metric_semantics": METRIC_SEMANTICS_VERSION,
             "positive_class": "incorrect_identification",
         })
+        _finalize_bundle(staging)
         return result
 
     test = protocol.test_frame()
@@ -687,6 +760,13 @@ def _run_staging(config_path: Path, split_config_path: Path,
         "model_input_contract": {
             "source": "raw_light_heavy_precursor_and_fragment_XIC",
             "metadata_as_model_input": False,
+            "theoretical_fragment_context": "ion_type_and_charge_only",
+            "fragment_ordinal_as_model_input": False,
+            "fragment_count_as_model_input": False,
+            "fragment_eligibility_gate": (
+                "real_scan_and_separable_and_attempted"),
+            "input_adapter": input_adapter_contract(
+                include_predicted_intensity=include_prediction),
             "predicted_intensity_enabled": include_prediction,
             "trust_score": "P(correct_identification)",
         },
@@ -719,6 +799,7 @@ def _run_staging(config_path: Path, split_config_path: Path,
         "metric_semantics": METRIC_SEMANTICS_VERSION,
         "positive_class": "incorrect_identification",
     })
+    _finalize_bundle(staging)
     return summary
 
 
@@ -734,10 +815,11 @@ def run_experiment(config_path: str, split_config_path: str,
     for path in (config_path_obj, split_config_obj):
         if not path.is_file():
             raise FileNotFoundError(path)
+    output_root_obj.parent.mkdir(parents=True, exist_ok=True)
+    _recover_publish(output_root_obj)
     if output_root_obj.exists() and not overwrite:
         raise FileExistsError(
             f"refusing to overwrite Phase 2 results: {output_root_obj}")
-    output_root_obj.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(
         prefix=f".{output_root_obj.name}.staging.",
         dir=output_root_obj.parent))

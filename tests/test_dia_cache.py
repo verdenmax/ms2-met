@@ -3,7 +3,9 @@ import os
 import numpy as np
 import pytest
 from spectrum.dia_data import DIAData
-from tools.deep_trainer.phase2.cache import resolve_dia_cache
+from tools.deep_trainer.phase2.cache import (
+    load_mmap_dia_cache, resolve_dia_cache, resolve_mmap_dia_cache,
+)
 from workflows.flow_utils import data_to_npz
 
 
@@ -188,3 +190,29 @@ def test_phase2_cache_rebuilds_truncated_zip_when_raw_exists(tmp_path):
     assert resolved == cache
     assert provenance["embedded_raw_source"]["sha256"]
     DIAData.load_from_file(str(resolved), use_mmap=False)
+
+
+def test_phase2_mmap_cache_uses_real_memmaps_and_tracks_npz_identity(tmp_path):
+    source = tmp_path / "raw.mzML"
+    source.write_bytes(b"source")
+    npz = tmp_path / "raw.dia.npz"
+    _minimal_dia().save_to_file(str(npz), source_path=str(source))
+
+    root, provenance = resolve_mmap_dia_cache(npz)
+    restored = load_mmap_dia_cache(root)
+
+    assert provenance["schema"] == "phase2_dia_npy_mmap_cache_v1"
+    assert isinstance(restored._mz_values, np.memmap)
+    assert isinstance(restored._intensity_values, np.memmap)
+    assert np.array_equal(restored._mz_values, _minimal_dia()._mz_values)
+
+    before = provenance["source_npz"]["sha256"]
+    changed = _minimal_dia()
+    changed._intensity_values = changed._intensity_values + 1
+    changed.save_to_file(str(npz), source_path=str(source))
+    rebuilt_root, rebuilt = resolve_mmap_dia_cache(npz)
+    assert rebuilt_root == root
+    assert rebuilt["source_npz"]["sha256"] != before
+    assert np.array_equal(
+        load_mmap_dia_cache(root)._intensity_values,
+        changed._intensity_values)

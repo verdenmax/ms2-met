@@ -7,12 +7,12 @@ from pathlib import Path
 
 import torch
 
-from .data import XICDataset
+from .data import XICDataset, input_adapter_contract
 from .model import model_from_architecture
 from .training import predict_trust
 
 
-CHECKPOINT_SCHEMA = "metabolic_label_xic_fusion_checkpoint_v1"
+CHECKPOINT_SCHEMA = "metabolic_label_xic_fusion_checkpoint_v2"
 
 
 def save_checkpoint(path, fitted, *, dataset_identity: dict, metadata: dict):
@@ -21,6 +21,12 @@ def save_checkpoint(path, fitted, *, dataset_identity: dict, metadata: dict):
         "architecture": fitted.model.architecture(),
         "model_state_dict": fitted.model.state_dict(),
         "dataset_identity": dict(dataset_identity),
+        "input_adapter": input_adapter_contract(
+            include_predicted_intensity=(
+                fitted.model.include_predicted_intensity)),
+        "training_history": list(fitted.history),
+        "best_epoch": int(fitted.best_epoch),
+        "best_validation_score": float(fitted.best_validation_score),
         "metadata": dict(metadata),
     }
     path = Path(path)
@@ -36,6 +42,13 @@ def load_checkpoint(path, *, source=None, device="cpu"):
         raise ValueError(
             f"unsupported Phase 2 checkpoint: {payload.get('schema')!r}")
     model = model_from_architecture(payload["architecture"])
+    expected_adapter = input_adapter_contract(
+        include_predicted_intensity=bool(
+            payload["architecture"].get(
+                "include_predicted_intensity", False)))
+    if payload.get("input_adapter") != expected_adapter:
+        raise ValueError(
+            "checkpoint uses a different Phase 2 input adapter contract")
     model.load_state_dict(payload["model_state_dict"])
     model.to(device)
     model.eval()

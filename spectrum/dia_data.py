@@ -281,11 +281,16 @@ class DIAData:
     def load_from_file(cls, filepath: str, use_mmap: bool = True,
                        expected_centroid_enabled: bool | None = None,
                        expected_centroid_rel_threshold: float | None = None):
-        """从 .npz 文件加载 DIAData，支持内存映射（只读）
+        """从 .npz 文件加载 DIAData。
+
+        NumPy cannot memory-map members of a compressed ``.npz`` archive;
+        ``use_mmap`` is retained for API compatibility but the arrays are
+        materialized. Phase 2 full extraction first converts the archive to
+        an atomic directory of independent ``.npy`` files and maps those.
 
         Args:
             filepath: npz cache path.
-            use_mmap: zero-copy mmap mode.
+            use_mmap: compatibility hint; compressed members still allocate.
             expected_centroid_enabled: if provided, reject cache if mismatched
                 (P0-3, Silent-C3 in 2026-06-03 deep audit).
             expected_centroid_rel_threshold: if provided, reject cache if

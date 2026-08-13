@@ -150,7 +150,13 @@ def test_builder_validates_saved_shards_and_preserves_frozen_folds(
             "cache": {"path": str(fake_cache), "sha256": "test"},
         }))
     monkeypatch.setattr(
-        builder.DIAData, "load_from_file", lambda *_args, **_kwargs: _FakeDia())
+        builder, "resolve_mmap_dia_cache",
+        lambda *_args, **_kwargs: (tmp_path / "mmap", {
+            "kind": "dia_mmap_cache", "path": str(tmp_path / "mmap"),
+            "manifest_sha256": "test-mmap",
+        }))
+    monkeypatch.setattr(
+        builder, "load_mmap_dia_cache", lambda *_args, **_kwargs: _FakeDia())
 
     parity_calls = []
 
@@ -235,3 +241,13 @@ def test_full_selection_keeps_every_frozen_row_in_stable_order():
         "mode": "full_frozen_protocol",
         "sample_ids_exactly_equal_frozen_protocol": True,
     }
+
+
+def test_extractor_implementation_contract_content_binds_tensor_modules():
+    contract = builder._extractor_implementation_contract()
+
+    assert contract["schema"] == "phase2_extractor_implementation_v1"
+    assert set(contract["files_sha256"]) == set(
+        builder._EXTRACTOR_IMPLEMENTATION_FILES)
+    assert all(
+        len(value) == 64 for value in contract["files_sha256"].values())

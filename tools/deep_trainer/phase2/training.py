@@ -28,9 +28,9 @@ class FittedXICModel:
 def _model_from_config(config: dict) -> XICFusionNetwork:
     values = dict(config["model"])
     model_type = values.pop("type", None)
-    if model_type != "xic_fusion_attention_v1":
+    if model_type != "xic_fusion_attention_v2":
         raise ValueError(
-            "Phase 2 requires model.type=xic_fusion_attention_v1")
+            "Phase 2 requires model.type=xic_fusion_attention_v2")
     return XICFusionNetwork(**values)
 
 

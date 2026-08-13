@@ -172,7 +172,14 @@ make build-deep-xic-full \
 全量构建严格覆盖冻结协议的全部 train/test sample ID。它按 raw 逐个加载、按
 m/z panel 一次扫描一张 MS1/MS2 谱图、流式写入 shard；中断后再次执行同一命令
 会读取 `.building/RESUME_STATE.json`，只复用已经原子提交且来源指纹完全一致的
-shard。配置、划分、raw、PSM、DIA cache 或冻结协议有变化时拒绝 resume。
+shard。配置、划分、raw、PSM、DIA cache、冻结协议，或任一张量生成模块的源码
+内容有变化时拒绝 resume，避免不同算法的 shard 混入同一数据集。启用谱库预测
+时，pepdata、RT、MS2 prediction、FASTA 和 modification 文件也全部记录 SHA256。
+
+原始 DIA cache 仍采用兼容旧流程的压缩 `.npz`；全量 Phase 2 会为每个 raw 一次性
+原子生成同级 `.mmap-v1/` 目录，将成员拆成独立 `.npy`。正式提取从该目录以真正
+的只读 `np.memmap` 打开大数组，不会再把压缩 NPZ 的全部数组误称为 mmap。代价是
+需要额外缓存磁盘空间；源 NPZ 指纹变化时 mmap 目录自动重建。
 
 ## Phase 2：XIC 深度模型训练
 
@@ -194,13 +201,17 @@ OOF 阈值后多数投票；不会把单成员阈值直接应用到平均 ensemb
 模型输入只有：
 
 - 轻/重前体及重标 M+1/M+2 的 intensity、ppm error、相对 RT、scan/peak mask；
-- 成对轻/重碎片 XIC，以及 ion type、ordinal、fragment charge；
+- 成对轻/重碎片 XIC，以及 ion type、fragment charge；
 - 从同一条 XIC 推导的强度/时间尺度。
 
 `label_type`、q-value、negative tier、dataset、绝对 RT、sequence、split/fold 和
 蛋白信息只参与划分或审计，不进入网络。谱库预测强度默认关闭；只有单独构建了
 `prediction.include=true` 的 XIC 数据集并把模型配置显式改为 true 才能启用，
 因此无谱库数据仍能完整训练。
+
+不可分离的同 m/z 轻重碎片、heavy 超出采集范围以及未实际尝试配对的碎片，只
+保留在审计张量中，attention 权重强制为 0。`fragment_ordinal` 和显式 fragment
+count 也不进入网络，避免肽长或理论碎片数量成为构造负例的捷径。
 
 网络由一个前体 1D-CNN、所有 fragment 共享的 1D-CNN、离子属性 embedding、
 masked attention set pooling 和融合 MLP 组成，输出仍是
@@ -223,4 +234,6 @@ python -m tools.deep_trainer.phase2.experiment \
 训练结果包括 fold checkpoint、严格 OOF 分数、固定测试逐样本分数、15 成员多数
 投票工作点、分数据域指标，以及相同测试行/相同 leakage group 上相对冻结
 LightGBM M20 的 paired cluster bootstrap。Checkpoint 绑定 XIC 数据集的 checksum
-identity；换了 shard 内容后不会静默推理。
+identity 和精确输入归一化/mask adapter contract；换了 shard 内容或输入适配规则
+后不会静默推理。结果 bundle 也带 `checksums.json` 与 `COMPLETE`，覆盖发布中断时
+会恢复旧 bundle。

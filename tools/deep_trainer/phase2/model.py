@@ -66,7 +66,6 @@ class XICFusionNetwork(nn.Module):
         fragment_hidden_dim: int = 64,
         attention_dim: int = 32,
         fusion_hidden_dims=(128, 64),
-        max_fragment_ordinal: int = 128,
         max_fragment_charge: int = 8,
         dropout: float = 0.15,
         include_predicted_intensity: bool = False,
@@ -75,7 +74,7 @@ class XICFusionNetwork(nn.Module):
         if min(
                 precursor_channels, fragment_channels, trace_hidden_dim,
                 embedding_dim, fragment_hidden_dim, attention_dim,
-                max_fragment_ordinal, max_fragment_charge) < 1:
+                max_fragment_charge) < 1:
             raise ValueError("XIC architecture dimensions must be positive")
         if not 0 <= float(dropout) < 1:
             raise ValueError("dropout must be in [0, 1)")
@@ -88,13 +87,11 @@ class XICFusionNetwork(nn.Module):
         self.fragment_encoder = TraceEncoder(
             fragment_channels, trace_hidden_dim, float(dropout))
         self.ion_embedding = nn.Embedding(3, embedding_dim, padding_idx=0)
-        self.ordinal_embedding = nn.Embedding(
-            max_fragment_ordinal + 1, embedding_dim, padding_idx=0)
         self.charge_embedding = nn.Embedding(
             max_fragment_charge + 1, embedding_dim, padding_idx=0)
         prediction_dim = 2 if include_predicted_intensity else 0
         fragment_input = (
-            self.fragment_encoder.output_dim + 3 * embedding_dim
+            self.fragment_encoder.output_dim + 2 * embedding_dim
             + prediction_dim)
         self.fragment_projection = nn.Sequential(
             nn.Linear(fragment_input, fragment_hidden_dim),
@@ -106,7 +103,7 @@ class XICFusionNetwork(nn.Module):
             fragment_hidden_dim, attention_dim)
 
         fusion_input = (
-            self.precursor_encoder.output_dim + fragment_hidden_dim + 3)
+            self.precursor_encoder.output_dim + fragment_hidden_dim + 2)
         layers = []
         previous = fusion_input
         for width in fusion_dims:
@@ -126,7 +123,6 @@ class XICFusionNetwork(nn.Module):
         self.fragment_hidden_dim = int(fragment_hidden_dim)
         self.attention_dim = int(attention_dim)
         self.fusion_hidden_dims = tuple(fusion_dims)
-        self.max_fragment_ordinal = int(max_fragment_ordinal)
         self.max_fragment_charge = int(max_fragment_charge)
         self.dropout = float(dropout)
         self.include_predicted_intensity = bool(include_predicted_intensity)
@@ -134,8 +130,6 @@ class XICFusionNetwork(nn.Module):
     def _validate_indices(self, batch: dict) -> None:
         if torch.any(batch["fragment_ion_type"] > 2):
             raise ValueError("fragment ion type is outside the embedding schema")
-        if torch.any(batch["fragment_ordinal"] > self.max_fragment_ordinal):
-            raise ValueError("fragment ordinal exceeds configured maximum")
         if torch.any(batch["fragment_charge"] > self.max_fragment_charge):
             raise ValueError("fragment charge exceeds configured maximum")
 
@@ -150,7 +144,6 @@ class XICFusionNetwork(nn.Module):
         parts = [
             encoded,
             self.ion_embedding(batch["fragment_ion_type"]),
-            self.ordinal_embedding(batch["fragment_ordinal"]),
             self.charge_embedding(batch["fragment_charge"]),
         ]
         if self.include_predicted_intensity:
@@ -170,7 +163,7 @@ class XICFusionNetwork(nn.Module):
 
     def architecture(self) -> dict:
         return {
-            "type": "xic_fusion_attention_v1",
+            "type": "xic_fusion_attention_v2",
             "precursor_channels": self.precursor_channels,
             "fragment_channels": self.fragment_channels,
             "trace_hidden_dim": self.trace_hidden_dim,
@@ -178,7 +171,6 @@ class XICFusionNetwork(nn.Module):
             "fragment_hidden_dim": self.fragment_hidden_dim,
             "attention_dim": self.attention_dim,
             "fusion_hidden_dims": list(self.fusion_hidden_dims),
-            "max_fragment_ordinal": self.max_fragment_ordinal,
             "max_fragment_charge": self.max_fragment_charge,
             "dropout": self.dropout,
             "include_predicted_intensity": self.include_predicted_intensity,
@@ -186,7 +178,7 @@ class XICFusionNetwork(nn.Module):
 
 
 def model_from_architecture(architecture: dict) -> XICFusionNetwork:
-    if architecture.get("type") != "xic_fusion_attention_v1":
+    if architecture.get("type") != "xic_fusion_attention_v2":
         raise ValueError(
             f"unsupported XIC architecture: {architecture.get('type')!r}")
     kwargs = dict(architecture)

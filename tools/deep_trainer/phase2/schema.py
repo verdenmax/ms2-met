@@ -174,16 +174,22 @@ def schema_document(settings: ExtractionSettings) -> dict[str, Any]:
             "zero_intensity_with_scan_mask_1": "real scan with no matched peak",
         },
         "model_input_policy": {
+            "signal_derived_global_features": [
+                "log1p_sample_max_intensity",
+                "log1p_sample_abs_max_rt_delta",
+            ],
             "allowed": [
                 "intensity", "ppm_error", "rt_delta", "scan_mask",
-                "peak_mask", "fragment ion_type/charge",
+                "peak_mask", "fragment ion_type/charge as theoretical-ion "
+                "context", "attempted/separable only as a hard attention "
+                "eligibility gate",
                 "optional predicted_intensity only in declared prediction arm",
             ],
             "audit_only": [
                 "sequence", "protein_names", "label_type", "negative_tier",
                 "q_value", "raw_title", "dataset", "fixed_split",
                 "outer_fold", "inner_valid_for_fold_*", "absolute_rt",
-                "precursor_charge",
+                "precursor_charge", "fragment_ordinal", "fragment_count",
             ],
         },
     }

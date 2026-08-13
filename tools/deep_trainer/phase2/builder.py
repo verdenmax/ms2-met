@@ -26,7 +26,6 @@ import yaml
 from constant.keys import ConfigKeys
 from artifact_identity import file_fingerprint
 from manager.data_manager import DataManager
-from spectrum.dia_data import DIAData
 from spectrum.labeling import (
     COMPATIBLE_LEGACY_ISOTOPE_MODELS, IDEAL_FULL_LABEL_ISOTOPE_MODEL,
     HeavyType, canonical_labeling_name, parse_heavy_type,
@@ -40,7 +39,9 @@ from workflows.pred_store import build_pred_store, normalize_key
 from tools.deep_trainer.spec_adapter import prepare_protocol
 
 from .extraction import extract_signal_sample
-from .cache import resolve_dia_cache
+from .cache import (
+    load_mmap_dia_cache, resolve_dia_cache, resolve_mmap_dia_cache,
+)
 from .matching import match_psms_to_protocol, select_pilot_rows
 from .parity import compare_to_feature_row
 from .schema import ExtractionSettings
@@ -49,7 +50,37 @@ from .store import StagedValidation, write_signal_dataset
 
 PILOT_CONFIG_SCHEMA = "phase2_xic_pilot_config_v1"
 DATASET_CONFIG_SCHEMA = "phase2_xic_dataset_config_v2"
+EXTRACTOR_IMPLEMENTATION_SCHEMA = "phase2_extractor_implementation_v1"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+_EXTRACTOR_IMPLEMENTATION_FILES = (
+    "tools/deep_trainer/phase2/builder.py",
+    "tools/deep_trainer/phase2/cache.py",
+    "tools/deep_trainer/phase2/extraction.py",
+    "tools/deep_trainer/phase2/matching.py",
+    "tools/deep_trainer/phase2/parity.py",
+    "tools/deep_trainer/phase2/schema.py",
+    "tools/deep_trainer/phase2/store.py",
+    "spectrum/dia_data.py",
+    "spectrum/labeling.py",
+    "spectrum/spectrum_utils.py",
+)
+
+
+def _extractor_implementation_contract() -> dict:
+    """Content-bind resumable shards to every tensor-producing module."""
+    files = {}
+    for relative in _EXTRACTOR_IMPLEMENTATION_FILES:
+        path = PROJECT_ROOT / relative
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"missing Phase 2 implementation source: {path}")
+        files[relative] = file_fingerprint(path)["sha256"]
+    return {
+        "schema": EXTRACTOR_IMPLEMENTATION_SCHEMA,
+        "files_sha256": files,
+    }
 
 
 def _resolve(value: str, *, base: Path) -> Path:
@@ -126,7 +157,7 @@ def _raw_paths(config: configparser.ConfigParser) -> dict[str, Path]:
 def _load_predictions(config: configparser.ConfigParser,
                       psms: list[PSMInfo], enabled: bool):
     if not enabled:
-        return None
+        return None, []
     required = (
         ConfigKeys.SPECLIB_DIR, ConfigKeys.SPECLIB_FASTA,
         ConfigKeys.SPECLIB_MOD,
@@ -142,6 +173,28 @@ def _load_predictions(config: configparser.ConfigParser,
         key: _resolve(config[ConfigKeys.SPECLIB][key], base=PROJECT_ROOT)
         for key in required
     }
+    library_files = {
+        "pepdata": paths[ConfigKeys.SPECLIB_DIR] / "pepdata.pdb",
+        "retention_time": (
+            paths[ConfigKeys.SPECLIB_DIR] / "pepdata.rt.predb"),
+        "fragment_prediction": (
+            paths[ConfigKeys.SPECLIB_DIR] / "pepdata.ms2.predb"),
+        "fasta": paths[ConfigKeys.SPECLIB_FASTA],
+        "modifications": paths[ConfigKeys.SPECLIB_MOD],
+    }
+    missing_files = [
+        str(path) for path in library_files.values() if not path.is_file()
+    ]
+    if missing_files:
+        raise FileNotFoundError(
+            "prediction library is incomplete:\n  "
+            + "\n  ".join(missing_files))
+    fingerprints = [
+        {"kind": f"spectral_library_{name}", **file_fingerprint(path)}
+        for name, path in library_files.items()
+    ]
+    if not psms:
+        return None, fingerprints
     library = SpecLib.open_dir(
         str(paths[ConfigKeys.SPECLIB_DIR]),
         fasta_path=str(paths[ConfigKeys.SPECLIB_FASTA]),
@@ -151,7 +204,7 @@ def _load_predictions(config: configparser.ConfigParser,
         normalize_key(psm._sequence, psm._modify, psm._charge)
         for psm in psms
     }
-    return build_pred_store(library, wanted)
+    return build_pred_store(library, wanted), fingerprints
 
 
 def _source_row_metadata(row, psm: PSMInfo) -> dict:
@@ -411,8 +464,10 @@ def build_signal_dataset(
                 matched[str(sample_id)] for sample_id in domain_rows["sample_id"]
                 if str(sample_id) not in completed_ids
             ]
-            predictions = _load_predictions(
+            predictions, prediction_sources = _load_predictions(
                 ini, selected_psms, prediction_enabled)
+            for item in prediction_sources:
+                _record_source({"dataset": dataset, **item})
             raw_paths = _raw_paths(ini)
             rows_by_raw = {}
             for _, row in domain_rows.iterrows():
@@ -431,13 +486,16 @@ def build_signal_dataset(
                 shared_path, cache_provenance = resolve_dia_cache(
                     manager, raw_path, cache_root_path, dataset=dataset)
                 _record_source(cache_provenance)
+                mmap_path, mmap_provenance = resolve_mmap_dia_cache(
+                    shared_path, npz_identity=cache_provenance["cache"])
+                _record_source({"dataset": dataset, **mmap_provenance})
                 pending_rows = [
                     (row, psm) for row, psm in rows_by_raw[raw_title]
                     if str(row["sample_id"]) not in completed_ids
                 ]
                 if not pending_rows:
                     continue
-                dia = DIAData.load_from_file(str(shared_path), use_mmap=True)
+                dia = load_mmap_dia_cache(mmap_path)
                 for row, psm in pending_rows:
                     pred_frags = None
                     if predictions is not None:
@@ -520,6 +578,7 @@ def build_signal_dataset(
 
     protocol_root_path = Path(protocol_root).resolve()
     protocol_summary = protocol_root_path / "summary.json"
+    implementation_contract = _extractor_implementation_contract()
 
     build_metadata = {
         **selection_contract,
@@ -544,6 +603,7 @@ def build_signal_dataset(
         "build_config": file_fingerprint(config_path_obj),
         "split_config": file_fingerprint(Path(split_config_path).resolve()),
         "git_commit": _git_commit(),
+        "extractor_implementation": implementation_contract,
         "runtime": {
             "python": platform.python_version(),
             "pandas": pd.__version__,
@@ -569,6 +629,7 @@ def build_signal_dataset(
         },
         "selection_sample_ids_sha256": selection_digest,
         "n_expected_samples": expected_count,
+        "extractor_implementation": implementation_contract,
     }
     return write_signal_dataset(
         _sample_stream, output_root, settings, build_metadata=build_metadata,

@@ -20,6 +20,29 @@ from .store import SignalDataset
 
 
 _N_SIGNAL_FEATURES = 5
+XIC_INPUT_ADAPTER_SCHEMA = "phase2_xic_input_adapter_v2"
+
+
+def input_adapter_contract(*, include_predicted_intensity: bool) -> dict:
+    """Return the exact model-bound normalization and routing contract."""
+    return {
+        "schema": XIC_INPUT_ADAPTER_SCHEMA,
+        "trace_features": [
+            "log1p_intensity_div_log1p_sample_max",
+            "ppm_error_div_mass_tol_ppm_peak_masked",
+            "rt_delta_div_sample_abs_max_scan_masked",
+            "scan_mask", "peak_mask",
+        ],
+        "signal_scale_features": [
+            "log1p_sample_max_intensity", "log1p_sample_abs_max_rt_delta",
+        ],
+        "fragment_context": ["ion_type", "fragment_charge"],
+        "fragment_attention_eligibility": (
+            "any_real_scan_and_fragment_attempted_and_fragment_separable"),
+        "fragment_ordinal_included": False,
+        "fragment_count_included": False,
+        "predicted_intensity_included": bool(include_predicted_intensity),
+    }
 
 
 def _masked_max(values: np.ndarray, mask: np.ndarray) -> float:
@@ -72,10 +95,15 @@ def _normalize_record(record: dict, *, mass_tol_ppm: float,
         fragment.shape[1] * _N_SIGNAL_FEATURES,
         fragment.shape[-1],
     )
-    # A stored fragment is eligible for attention only when at least one real
-    # scan was extracted. This derives eligibility from an allowed signal mask
-    # instead of exposing audit-only status/attempted/separable fields.
-    fragment_mask = fragment_scan.any(axis=(-1, -2))
+    # ``attempted`` and ``separable`` are used only as a hard eligibility
+    # gate. They are never exposed as numeric inputs. In particular, a
+    # co-isolated same-m/z pair stores a copied heavy trace for audit/parity;
+    # allowing it into attention would turn that copy into false evidence.
+    fragment_mask = (
+        fragment_scan.any(axis=(-1, -2))
+        & np.asarray(record["fragment_attempted"], dtype=bool)
+        & np.asarray(record["fragment_separable"], dtype=bool)
+    )
 
     result = {
         "precursor": precursor,
@@ -84,13 +112,10 @@ def _normalize_record(record: dict, *, mass_tol_ppm: float,
         # Reserve embedding index 0 for padding.
         "fragment_ion_type": np.asarray(
             record["fragment_ion_type"], dtype="i8") + 1,
-        "fragment_ordinal": np.asarray(
-            record["fragment_ordinal"], dtype="i8"),
         "fragment_charge": np.asarray(
             record["fragment_charge"], dtype="i8"),
         "signal_scale": np.asarray([
             math.log1p(intensity_scale), math.log1p(rt_scale),
-            math.log1p(int(fragment_mask.sum())),
         ], dtype="f4"),
         "label": int(record["metadata"]["label"]),
         "sample_id": str(record["metadata"]["sample_id"]),
@@ -152,7 +177,6 @@ def collate_xic(records: Sequence[dict]) -> dict:
         dtype="f4")
     fragment_mask = np.zeros((batch_size, max_fragments), dtype=bool)
     ion_type = np.zeros((batch_size, max_fragments), dtype="i8")
-    ordinal = np.zeros((batch_size, max_fragments), dtype="i8")
     charge = np.zeros((batch_size, max_fragments), dtype="i8")
     include_prediction = "fragment_prediction" in records[0]
     prediction = np.zeros((batch_size, max_fragments, 2), dtype="f4") \
@@ -166,7 +190,6 @@ def collate_xic(records: Sequence[dict]) -> dict:
             fragment[row, :count] = record["fragment"]
             fragment_mask[row, :count] = record["fragment_mask"]
             ion_type[row, :count] = record["fragment_ion_type"]
-            ordinal[row, :count] = record["fragment_ordinal"]
             charge[row, :count] = record["fragment_charge"]
             if prediction is not None:
                 prediction[row, :count] = record["fragment_prediction"]
@@ -177,7 +200,6 @@ def collate_xic(records: Sequence[dict]) -> dict:
         "fragment": torch.from_numpy(fragment),
         "fragment_mask": torch.from_numpy(fragment_mask),
         "fragment_ion_type": torch.from_numpy(ion_type),
-        "fragment_ordinal": torch.from_numpy(ordinal),
         "fragment_charge": torch.from_numpy(charge),
         "signal_scale": torch.from_numpy(np.stack([
             record["signal_scale"] for record in records])),
