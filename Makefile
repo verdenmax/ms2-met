@@ -39,6 +39,8 @@ DEEP_CONFIG ?= tools/deep_trainer/config/tabular_mlp.yaml
 DEEP_PROTOCOL_ROOT ?= $(FIXED_NEGPOOL_OUTPUT_ROOT)/combined
 PHASE2_BUILD_CONFIG ?= tools/deep_trainer/phase2/config/raw_xic_pilot.yaml
 PHASE2_XIC_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic/pilot
+PHASE2_FULL_BUILD_CONFIG ?= tools/deep_trainer/phase2/config/raw_xic_full.yaml
+PHASE2_FULL_XIC_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic/full
 PHASE2_CACHE_ROOT ?= workspace
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
@@ -1380,6 +1382,26 @@ build-deep-xic-pilot: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
 	    --protocol-root "$(DEEP_PROTOCOL_ROOT)" \
 	    --output-root "$(PHASE2_XIC_OUTPUT_ROOT)" \
 	    --cache-root "$(PHASE2_CACHE_ROOT)" \
+	    $(CV_OVERWRITE_FLAG)
+
+# Stream the complete frozen cohort. Fragment panels load each selected MS2
+# scan once, and committed shards resume after interruption.
+build-deep-xic-full: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
+	$(DEEP_PROTOCOL_ROOT)/summary.json
+	@mkdir -p "$(DEEP_OUTPUT_ROOT)/configs"
+	$(PY) tools/spec_trainer/gen_cv_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(DEEP_OUTPUT_ROOT)/reference-cv" \
+	    --config-dir "$(DEEP_OUTPUT_ROOT)/configs" \
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
+	$(PY) -m tools.deep_trainer.phase2.builder \
+	    --config "$(PHASE2_FULL_BUILD_CONFIG)" \
+	    --split-config "$(DEEP_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --protocol-root "$(DEEP_PROTOCOL_ROOT)" \
+	    --output-root "$(PHASE2_FULL_XIC_OUTPUT_ROOT)" \
+	    --cache-root "$(PHASE2_CACHE_ROOT)" \
+	    --resume \
 	    $(CV_OVERWRITE_FLAG)
 
 # A completed LightGBM bundle is the frozen owner of membership/folds and its

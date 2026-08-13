@@ -78,6 +78,57 @@ def match_peak_panel_ppm(
     return np.float32(ppm_error), np.float32(total_intensity)
 
 
+def match_peak_targets_ppm(
+    mz_arr: np.ndarray,
+    intensity_arr: np.ndarray,
+    target_mz: np.ndarray,
+    mass_tol_ppm: np.float32,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Match many independent targets in one sorted centroid spectrum.
+
+    Unlike :func:`match_peak_panel_ppm`, targets remain independent: an
+    observed centroid may contribute to two overlapping fragment windows.
+    Searchsorted bounds avoid allocating a ``targets x peaks`` matrix and let
+    a caller load each spectrum only once for a complete fragment panel.
+    """
+    targets = np.asarray(target_mz, dtype="f8")
+    mz_values = np.asarray(mz_arr, dtype="f8")
+    intensities = np.asarray(intensity_arr)
+    if targets.ndim != 1:
+        raise ValueError("target_mz must be one-dimensional")
+    if not np.isfinite(targets).all() or (targets <= 0).any():
+        raise ValueError("target_mz must contain positive finite values")
+    if len(mz_values) != len(intensities):
+        raise ValueError("mz_arr and intensity_arr must have equal lengths")
+    errors = np.full(len(targets), np.nan, dtype="f4")
+    matched = np.zeros(len(targets), dtype="f4")
+    if not len(targets) or not len(mz_values):
+        return errors, matched
+    if len(mz_values) > 1 and np.any(mz_values[1:] < mz_values[:-1]):
+        order = np.argsort(mz_values, kind="stable")
+        mz_values = mz_values[order]
+        intensities = intensities[order]
+
+    tolerance = float(mass_tol_ppm) * 1e-6
+    lower = targets * (1.0 - tolerance)
+    upper = targets * (1.0 + tolerance)
+    starts = np.searchsorted(mz_values, lower, side="left")
+    stops = np.searchsorted(mz_values, upper, side="right")
+    for index, (start, stop) in enumerate(zip(starts, stops)):
+        if start == stop:
+            continue
+        values = intensities[start:stop]
+        ppm = (mz_values[start:stop] - targets[index]) \
+            / targets[index] * 1e6
+        total = float(np.sum(values))
+        matched[index] = total
+        errors[index] = (
+            np.average(ppm, weights=values)
+            if total > 0 else np.mean(ppm)
+        )
+    return errors, matched
+
+
 def centroid_spectrum(
     mz: np.ndarray,
     intensity: np.ndarray,

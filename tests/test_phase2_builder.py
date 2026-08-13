@@ -123,7 +123,8 @@ def test_builder_validates_saved_shards_and_preserves_frozen_folds(
         })
     frame = pd.DataFrame(rows)
     protocol = SimpleNamespace(
-        frame=frame, dataset_col="dataset",
+        frame=frame, dataset_col="dataset", sample_id_col="sample_id",
+        group_col="sequence", target_fprs=[0.01, 0.05, 0.10],
         identity_cols=[
             "sequence", "charge", "precursor_mz", "rt", "raw_title1",
             "label_type",
@@ -174,6 +175,7 @@ def test_builder_validates_saved_shards_and_preserves_frozen_folds(
     assert sorted(parity_calls) == ["sample-0", "sample-1"]
     assert report["staged_validation"] == {
         "serialized_shards_validated": True,
+        "frozen_membership_exact_match": True,
         "required_feature_parity_all_passed": True,
         "feature_parity_comparisons": 2,
         "required_feature_parity_comparisons": 2,
@@ -212,3 +214,24 @@ def test_feature_snapshot_isotope_model_preflight_allows_known_migration():
         "ideal_full_label_exact_mass_v2", "ideal_full_label_v1",
         "undeclared_legacy",
     ]
+
+
+def test_full_selection_keeps_every_frozen_row_in_stable_order():
+    frame = pd.DataFrame({
+        "sample_id": ["z", "a", "m"],
+        "dataset": ["normal", "2da", "5da"],
+        "label": [1, 0, 1],
+    })
+    protocol = SimpleNamespace(
+        frame=frame, sample_id_col="sample_id", dataset_col="dataset")
+
+    selected, contract = builder._select_rows(protocol, {
+        "schema": "phase2_xic_dataset_config_v2",
+        "selection": {"mode": "full"},
+    })
+
+    assert selected["sample_id"].tolist() == ["a", "m", "z"]
+    assert contract == {
+        "mode": "full_frozen_protocol",
+        "sample_ids_exactly_equal_frozen_protocol": True,
+    }

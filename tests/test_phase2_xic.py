@@ -349,6 +349,77 @@ def test_store_refuses_duplicate_ids_without_publishing(tmp_path):
     assert not output.exists()
 
 
+def test_resumable_store_reuses_only_committed_shards(tmp_path):
+    first, settings = _sample("resume-a")
+    second, _ = _sample("resume-b")
+    third, _ = _sample("resume-c")
+    output = tmp_path / "signals"
+    build_metadata = {"mode": "test", "source_fingerprints": []}
+
+    def interrupted(completed, checkpoint):
+        assert completed == frozenset()
+        assert checkpoint == {}
+        build_metadata["source_fingerprints"].append({"sha256": "source-a"})
+        yield first
+        yield second
+        raise RuntimeError("simulated interruption")
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        write_signal_dataset(
+            interrupted, output, settings, build_metadata=build_metadata,
+            shard_size=2, resume=True,
+            resume_identity={"snapshot": "fixed"})
+    building = tmp_path / ".signals.building"
+    assert building.is_dir()
+    assert (building / "shards" / "shard_00000").is_dir()
+
+    resumed_metadata = {"mode": "test", "source_fingerprints": []}
+
+    def resumed(completed, checkpoint):
+        assert completed == frozenset({"resume-a", "resume-b"})
+        assert checkpoint["source_fingerprints"] == [{
+            "sha256": "source-a",
+        }]
+        resumed_metadata["source_fingerprints"].extend(
+            checkpoint["source_fingerprints"])
+        yield third
+
+    report = write_signal_dataset(
+        resumed, output, settings, build_metadata=resumed_metadata,
+        shard_size=2, resume=True,
+        resume_identity={"snapshot": "fixed"})
+
+    assert report["n_samples"] == 3
+    assert report["resumable_build"] is True
+    assert not building.exists()
+    dataset = open_signal_dataset(output)
+    assert set(dataset.manifest["sample_id"]) == {
+        "resume-a", "resume-b", "resume-c",
+    }
+    assert (output / "RESUME_STATE.json").is_file()
+
+
+def test_resumable_store_rejects_different_input_identity(tmp_path):
+    first, settings = _sample("resume-a")
+    output = tmp_path / "signals"
+
+    def interrupted(_completed, _checkpoint):
+        yield first
+        raise RuntimeError("stop")
+
+    with pytest.raises(RuntimeError, match="stop"):
+        write_signal_dataset(
+            interrupted, output, settings, build_metadata={"mode": "test"},
+            shard_size=1, resume=True,
+            resume_identity={"snapshot": "first"})
+
+    with pytest.raises(ValueError, match="different inputs"):
+        write_signal_dataset(
+            lambda *_: (), output, settings,
+            build_metadata={"mode": "test"}, shard_size=1, resume=True,
+            resume_identity={"snapshot": "second"})
+
+
 def test_pilot_selection_is_balanced_and_row_order_independent():
     rows = []
     for dataset in ("2da", "5da", "normal"):

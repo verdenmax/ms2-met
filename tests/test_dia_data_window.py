@@ -214,6 +214,53 @@ def test_charge_resolved_xic_rejects_invalid_charge_contract():
             mass_tol_ppm=np.float32(10), fragment_charges=(0, 1))
 
 
+def test_fragment_panel_loads_each_selected_ms2_scan_once():
+    d = DIAData.__new__(DIAData)
+    d.ms2_indexs = np.array([0, 1, 2], dtype=np.int32)
+    d.ms2_indexs_rt = np.array([9.0, 10.0, 11.0], dtype=np.float32)
+    d.rt_values = d.ms2_indexs_rt.copy()
+    d._precursor_lower_mz = np.array([499.0] * 3)
+    d._precursor_upper_mz = np.array([501.0] * 3)
+    d._ms2_cycle_idx = lambda index: index
+    calls = []
+
+    def spectrum(index):
+        calls.append(index)
+        return np.array([101.0, 201.0]), np.array([3.0, 5.0])
+
+    d.get_spectrum_by_index = spectrum
+    panel, _ = d.xic_ms2_fragment_panel_extract(
+        rt=np.float32(10.0), xic_cycle_window=1,
+        precursor_mz=np.float32(500.0),
+        ions_masses=np.array([100.0, 200.0]),
+        mass_tol_ppm=np.float32(200.0), fragment_charges=(1,))
+
+    assert calls == [0, 1, 2]
+    assert len(panel) == 2
+    assert all(len(item[1]) == 3 for item in panel)
+
+
+def test_ms1_panels_load_each_scan_once():
+    d = DIAData.__new__(DIAData)
+    d.ms1_indexs = np.array([0, 1, 2], dtype=np.int32)
+    d.ms1_indexs_rt = np.array([9.0, 10.0, 11.0], dtype=np.float32)
+    d.rt_values = d.ms1_indexs_rt.copy()
+    calls = []
+
+    def spectrum(index):
+        calls.append(index)
+        return np.array([500.0, 600.0]), np.array([3.0, 5.0])
+
+    d.get_spectrum_by_index = spectrum
+    panels = d.xic_peaks_panels_extract(
+        np.float32(10.0), 1, [[500.0], [600.0]], np.float32(10.0))
+
+    assert calls == [0, 1, 2]
+    assert len(panels) == 2
+    assert panels[0]["intensity"].tolist() == pytest.approx([3.0] * 3)
+    assert panels[1]["intensity"].tolist() == pytest.approx([5.0] * 3)
+
+
 def test_isotope_target_panel_counts_overlapping_centroid_once():
     targets = np.array([500.0000, 500.0040])
     mz = np.array([500.0020])

@@ -10,6 +10,7 @@ from artifact_identity import file_fingerprint, sha256_file
 from pyteomics import mzml
 from spectrum.spectrum_utils import (
     centroid_spectrum, match_peak_panel_ppm, match_peak_ppm,
+    match_peak_targets_ppm,
 )
 
 
@@ -1075,40 +1076,67 @@ class DIAData:
         two observations separately, while :meth:`xic_ms2_peaks_extract`
         reconstructs the historical pooled result from this method.
         """
+        panel, total_intensity = self.xic_ms2_fragment_panel_extract(
+            rt, xic_cycle_window, precursor_mz, [ions_mass], mass_tol_ppm,
+            fragment_charges)
+        return panel[0], total_intensity
+
+    def xic_ms2_fragment_panel_extract(
+        self,
+        rt: np.float32,
+        xic_cycle_window: int,
+        precursor_mz: np.float32,
+        ions_masses,
+        mass_tol_ppm: np.float32,
+        fragment_charges: tuple[int, ...] = OBSERVED_FRAGMENT_CHARGES,
+    ) -> tuple[list[dict[int, np.ndarray]], np.float32]:
+        """Extract every fragment/charge target while loading each scan once."""
         charges = tuple(int(charge) for charge in fragment_charges)
         if not charges or any(charge <= 0 for charge in charges):
             raise ValueError("fragment_charges must contain positive integers")
         if len(set(charges)) != len(charges):
             raise ValueError("fragment_charges must be unique")
+        masses = np.asarray(ions_masses, dtype="f8")
+        if masses.ndim != 1 or not np.isfinite(masses).all() \
+                or (masses <= 0).any():
+            raise ValueError("ions_masses must be positive finite values")
+        if not len(masses):
+            return [], 0.0
 
         selected_global_indices = self._select_ms2_xic_indices(
             rt, xic_cycle_window, precursor_mz)
         if not selected_global_indices:
-            return {
+            return [{
                 charge: np.empty(0, dtype=XIC_DTYPE) for charge in charges
-            }, 0.0
+            } for _ in masses], 0.0
 
-        rows = {charge: [] for charge in charges}
+        rows = [
+            {charge: [] for charge in charges} for _ in masses
+        ]
         total_intensity = 0.0
         protonmass = 1.00727646677
+        targets = np.asarray([
+            (ion_mass + charge * protonmass) / charge
+            for ion_mass in masses for charge in charges
+        ], dtype="f8")
 
         for global_idx in selected_global_indices:
             mz_arr, intensity_arr = self.get_spectrum_by_index(global_idx)
             total_intensity += np.sum(intensity_arr)
             cycle_idx = self._ms2_cycle_idx(int(global_idx))
-            for charge in charges:
-                theo_mz = (ions_mass + charge * protonmass) / charge
-                ppm_error, match_intensity = match_peak_ppm(
-                    mz_arr, intensity_arr, theo_mz, mass_tol_ppm
-                )
-                rows[charge].append((
+            errors, intensities = match_peak_targets_ppm(
+                mz_arr, intensity_arr, targets, mass_tol_ppm)
+            for target_index, (ppm_error, match_intensity) in enumerate(zip(
+                    errors, intensities)):
+                ion_index, charge_index = divmod(target_index, len(charges))
+                rows[ion_index][charges[charge_index]].append((
                     self.rt_values[global_idx], ppm_error,
                     match_intensity, cycle_idx,
                 ))
-        return {
+        return [{
             charge: np.asarray(values, dtype=XIC_DTYPE)
-            for charge, values in rows.items()
-        }, float(total_intensity)
+            for charge, values in ion_rows.items()
+        } for ion_rows in rows], float(total_intensity)
 
     def xic_ms2_peaks_extract(
         self,
@@ -1174,11 +1202,26 @@ class DIAData:
         mass_tol_ppm: np.float32,
     ) -> np.ndarray:
         """Extract one MS1 XIC from a union of exact-mass targets."""
-        targets = np.asarray(precursor_mz_targets, dtype="f8")
-        if targets.ndim != 1 or not len(targets):
-            raise ValueError("precursor_mz_targets must be a non-empty panel")
+        return self.xic_peaks_panels_extract(
+            rt, xic_cycle_window, [precursor_mz_targets],
+            mass_tol_ppm)[0]
 
-        ans = []
+    def xic_peaks_panels_extract(
+        self,
+        rt: np.float32,
+        xic_cycle_window: int,
+        precursor_mz_panels,
+        mass_tol_ppm: np.float32,
+    ) -> list[np.ndarray]:
+        """Extract multiple independent MS1 panels from one scan traversal."""
+        panels = [np.asarray(panel, dtype="f8")
+                  for panel in precursor_mz_panels]
+        if not panels or any(panel.ndim != 1 or not len(panel)
+                             for panel in panels):
+            raise ValueError(
+                "precursor_mz_panels must contain non-empty panels")
+
+        rows = [[] for _ in panels]
 
         # 先寻找的起始的 index
         mid_rt_index = self.find_near_ms1_idx(rt)
@@ -1195,19 +1238,13 @@ class DIAData:
             # 当是 ms1 谱图的时候，取出这个precursor_mz 对应的信息
             (mz_arr, intensity_arr) = self.get_spectrum_by_index(index)
 
-            (ppm_error, match_intensity) = match_peak_panel_ppm(
-                mz_arr, intensity_arr, targets, mass_tol_ppm)
-
-            ans.append(
-                {"rt": self.rt_values[index],
-                 "ppm_error": ppm_error,
-                 "intensity": match_intensity,
-                 "cycle_idx": cycle_idx})
-
-        # 把 list[dict] 转成结构化 ndarray
-        arr = np.array([tuple(d.values()) for d in ans], dtype=XIC_DTYPE)
-
-        return arr
+            for panel_index, targets in enumerate(panels):
+                ppm_error, match_intensity = match_peak_panel_ppm(
+                    mz_arr, intensity_arr, targets, mass_tol_ppm)
+                rows[panel_index].append((
+                    self.rt_values[index], ppm_error,
+                    match_intensity, cycle_idx))
+        return [np.asarray(values, dtype=XIC_DTYPE) for values in rows]
 
 
     def xic_peaks_extreact(

@@ -78,6 +78,33 @@ def _peak_status(light_xic: np.ndarray, heavy_xic: np.ndarray) -> str:
     return "no_light_peak" if not light_present else "no_heavy_peak"
 
 
+def _extract_ms1_panels(dia_data, rt, settings, panels):
+    method = getattr(dia_data, "xic_peaks_panels_extract", None)
+    if method is not None:
+        return method(
+            rt, settings.xic_cycle_window, panels, settings.mass_tol_ppm)
+    return [
+        dia_data.xic_peaks_panel_extract(
+            rt, settings.xic_cycle_window, panel, settings.mass_tol_ppm)
+        for panel in panels
+    ]
+
+
+def _extract_ms2_panel(dia_data, psm, settings, precursor_mz, masses):
+    method = getattr(dia_data, "xic_ms2_fragment_panel_extract", None)
+    if method is not None:
+        values, _ = method(
+            psm._rt, settings.xic_cycle_window, precursor_mz, masses,
+            settings.mass_tol_ppm, settings.fragment_charges)
+        return values
+    return [
+        dia_data.xic_ms2_charge_resolved_extract(
+            psm._rt, settings.xic_cycle_window, precursor_mz, mass_value,
+            settings.mass_tol_ppm, settings.fragment_charges)[0]
+        for mass_value in masses
+    ]
+
+
 def extract_signal_sample(
     psm: PSMInfo,
     dia_data: DIAData,
@@ -108,10 +135,8 @@ def extract_signal_sample(
         isotope_targets[1], isotope_targets[2],
     )
     precursor_arrays = [[], [], [], [], []]
-    for mz_panel in precursor_mz:
-        xic = dia_data.xic_peaks_panel_extract(
-            psm._rt, settings.xic_cycle_window, mz_panel,
-            settings.mass_tol_ppm)
+    for xic in _extract_ms1_panels(
+            dia_data, psm._rt, settings, precursor_mz):
         encoded = _encode_xic(
             xic, center_cycle=center_cycle, center_rt=center_rt,
             settings=settings)
@@ -129,18 +154,24 @@ def extract_signal_sample(
     same_window = bool(dia_data.check_in_same_ms2(
         psm._precursor_mz, heavy_precursor_mz))
 
-    for ion_type, ordinal, light_mass, heavy_mass in fragment_ions:
+    light_panels = _extract_ms2_panel(
+        dia_data, psm, settings, psm._precursor_mz,
+        [ion[2] for ion in fragment_ions])
+    heavy_panels = (
+        _extract_ms2_panel(
+            dia_data, psm, settings, heavy_precursor_mz,
+            [ion[3] for ion in fragment_ions])
+        if heavy_in_raw else None
+    )
+
+    for ion_index, (
+            ion_type, ordinal, light_mass, heavy_mass) in enumerate(
+                fragment_ions):
         coisolated = (
             abs(float(heavy_mass) - float(light_mass)) < SHIFT_EPSILON
             and same_window
         )
-        light_by_charge, _ = dia_data.xic_ms2_charge_resolved_extract(
-            psm._rt, settings.xic_cycle_window,
-            precursor_mz=psm._precursor_mz,
-            ions_mass=light_mass,
-            mass_tol_ppm=settings.mass_tol_ppm,
-            fragment_charges=settings.fragment_charges,
-        )
+        light_by_charge = light_panels[ion_index]
         if not heavy_in_raw:
             heavy_by_charge = {
                 charge: _empty_xic() for charge in settings.fragment_charges
@@ -156,13 +187,7 @@ def extract_signal_sample(
             separable = False
             attempted = False
         else:
-            heavy_by_charge, _ = dia_data.xic_ms2_charge_resolved_extract(
-                psm._rt, settings.xic_cycle_window,
-                precursor_mz=heavy_precursor_mz,
-                ions_mass=heavy_mass,
-                mass_tol_ppm=settings.mass_tol_ppm,
-                fragment_charges=settings.fragment_charges,
-            )
+            heavy_by_charge = heavy_panels[ion_index]
             separable = True
             attempted = True
 

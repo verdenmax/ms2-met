@@ -81,8 +81,11 @@ def _save_array(path: Path, value: np.ndarray) -> None:
 def _write_shard(root: Path, shard_index: int,
                  samples: list[SignalSample]) -> list[dict]:
     shard_name = f"shard_{shard_index:05d}"
-    shard_root = root / "shards" / shard_name
-    shard_root.mkdir(parents=True)
+    shards_root = root / "shards"
+    shards_root.mkdir(parents=True, exist_ok=True)
+    shard_root = shards_root / shard_name
+    temporary = shards_root / f".{shard_name}.staging.{uuid.uuid4().hex}"
+    temporary.mkdir()
 
     arrays: dict[str, np.ndarray] = {}
     for name in _PRECURSOR_ARRAYS:
@@ -97,7 +100,7 @@ def _write_shard(root: Path, shard_index: int,
         np.zeros(1, dtype="i8"), np.cumsum(lengths, dtype="i8")])
 
     for name, value in arrays.items():
-        _save_array(shard_root / f"{name}.npy", value)
+        _save_array(temporary / f"{name}.npy", value)
 
     rows = []
     for row_index, sample in enumerate(samples):
@@ -109,7 +112,99 @@ def _write_shard(root: Path, shard_index: int,
             "fragment_end": int(arrays["fragment_offsets"][row_index + 1]),
         })
         rows.append(row)
+    try:
+        os.replace(temporary, shard_root)
+    except BaseException:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
     return rows
+
+
+def _atomic_json(path: Path, value) -> None:
+    temporary = path.with_name(f".{path.name}.tmp.{uuid.uuid4().hex}")
+    temporary.write_text(
+        json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _atomic_parquet(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp.{uuid.uuid4().hex}")
+    frame.to_parquet(temporary, index=False)
+    os.replace(temporary, path)
+
+
+def _clean_uncommitted_build_artifacts(staging: Path,
+                                       committed_shards: set[str]) -> None:
+    shards = staging / "shards"
+    if shards.is_dir():
+        for path in shards.iterdir():
+            if path.name not in committed_shards:
+                shutil.rmtree(path, ignore_errors=True)
+    for relative in (
+        "manifest.parquet", "schema.json", "build_report.json",
+        "checksums.json", "COMPLETE",
+    ):
+        path = staging / relative
+        if path.exists():
+            path.unlink()
+    shutil.rmtree(staging / "audit", ignore_errors=True)
+
+
+def _open_build_staging(staging: Path, settings: ExtractionSettings,
+                        resume_identity: dict) -> tuple[list[dict], dict]:
+    """Open a durable build and return committed rows plus checkpoint state."""
+    state_path = staging / "RESUME_STATE.json"
+    safe_identity = _json_safe_value(resume_identity)
+    if state_path.is_file():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("schema") != "phase2_resumable_build_v1":
+            raise ValueError("unsupported Phase 2 resumable build state")
+        if state.get("extraction") != settings.to_dict() or \
+                state.get("resume_identity") != safe_identity:
+            raise ValueError(
+                "existing Phase 2 build state belongs to different inputs")
+    else:
+        state = {
+            "schema": "phase2_resumable_build_v1",
+            "status": "building",
+            "extraction": settings.to_dict(),
+            "resume_identity": safe_identity,
+            "build_metadata": {},
+            "n_committed_shards": 0,
+            "n_committed_samples": 0,
+        }
+        _atomic_json(state_path, state)
+
+    partial_root = staging / "resume_manifests"
+    manifests = sorted(partial_root.glob("shard_*.parquet")) \
+        if partial_root.is_dir() else []
+    frames = [pd.read_parquet(path) for path in manifests]
+    rows = (
+        pd.concat(frames, ignore_index=True).to_dict("records")
+        if frames else []
+    )
+    committed_shards = {str(row["shard"]) for row in rows}
+    if len(committed_shards) != len(manifests):
+        raise ValueError("resumable build has inconsistent shard manifests")
+    _clean_uncommitted_build_artifacts(staging, committed_shards)
+    return rows, state
+
+
+def _checkpoint_build(staging: Path, shard_index: int, rows: list[dict],
+                      state: dict, build_metadata: dict,
+                      n_samples: int) -> None:
+    _atomic_parquet(
+        staging / "resume_manifests" / f"shard_{shard_index:05d}.parquet",
+        pd.DataFrame(rows))
+    state.update({
+        "status": "building",
+        "build_metadata": _json_safe_value(build_metadata),
+        "n_committed_shards": shard_index + 1,
+        "n_committed_samples": n_samples,
+    })
+    _atomic_json(staging / "RESUME_STATE.json", state)
 
 
 def recover_interrupted_publish(
@@ -189,7 +284,8 @@ def _write_audit_documents(root: Path, documents: dict[str, dict]) -> None:
 
 
 def write_signal_dataset(
-    samples: Iterable[SignalSample],
+    samples: Iterable[SignalSample] | Callable[
+        [frozenset[str], dict], Iterable[SignalSample]],
     output_root: str | Path,
     settings: ExtractionSettings,
     *,
@@ -199,61 +295,93 @@ def write_signal_dataset(
     audit_tables: dict[str, pd.DataFrame] | None = None,
     audit_documents: dict[str, dict] | None = None,
     staged_validator: Callable[["SignalDataset"], StagedValidation] | None = None,
+    resume: bool = False,
+    resume_identity: dict | None = None,
 ) -> dict:
-    """Validate, shard, checksum and atomically publish a signal dataset."""
+    """Stream, validate, checksum and atomically publish a signal dataset.
+
+    With ``resume=True``, ``samples`` is a factory receiving committed sample
+    IDs and checkpointed build metadata. Complete shards remain in a durable
+    sibling build directory after interruption; incomplete shards are removed
+    before the factory is called again.
+    """
     if shard_size <= 0:
         raise ValueError("shard_size must be positive")
+    if resume and (not callable(samples) or not resume_identity):
+        raise ValueError(
+            "resume=True requires a sample factory and resume_identity")
     output_root = Path(output_root).resolve()
     output_root.parent.mkdir(parents=True, exist_ok=True)
     recover_interrupted_publish(
         output_root, cleanup_stale_backups=overwrite)
     if output_root.exists() and not overwrite:
         raise FileExistsError(f"output path already exists: {output_root}")
-    staging = Path(tempfile.mkdtemp(
-        prefix=f".{output_root.name}.staging.", dir=output_root.parent))
+    if resume:
+        staging = output_root.with_name(f".{output_root.name}.building")
+        staging.mkdir(exist_ok=True)
+        rows, build_state = _open_build_staging(
+            staging, settings, resume_identity or {})
+    else:
+        staging = Path(tempfile.mkdtemp(
+            prefix=f".{output_root.name}.staging.", dir=output_root.parent))
+        rows, build_state = [], {}
 
-    rows: list[dict] = []
     pending: list[SignalSample] = []
-    seen_ids: set[str] = set()
-    class_counts = {"correct_identification": 0,
-                    "incorrect_identification": 0}
-    n_fragments = 0
+    seen_ids = {str(row["sample_id"]) for row in rows}
+    if len(seen_ids) != len(rows):
+        raise ValueError("resumable build contains duplicate sample IDs")
     try:
-        for sample in samples:
+        source = (
+            samples(frozenset(seen_ids), dict(
+                build_state.get("build_metadata", {})))
+            if callable(samples) else samples
+        )
+        next_shard = len({str(row["shard"]) for row in rows})
+        for sample in source:
             sample.validate(settings)
             sample_id = str(sample.metadata["sample_id"])
             if sample_id in seen_ids:
                 raise ValueError(f"duplicate signal sample_id: {sample_id}")
             seen_ids.add(sample_id)
-            label = int(sample.metadata["label"])
-            class_counts[
-                "correct_identification" if label == 1
-                else "incorrect_identification"
-            ] += 1
-            n_fragments += len(sample.fragment_ion_type)
             pending.append(sample)
             if len(pending) == shard_size:
-                rows.extend(_write_shard(
-                    staging, len(rows) // shard_size, pending))
+                committed = _write_shard(staging, next_shard, pending)
+                rows.extend(committed)
+                if resume:
+                    _checkpoint_build(
+                        staging, next_shard, committed, build_state,
+                        build_metadata, len(rows))
+                next_shard += 1
                 pending = []
         if pending:
-            rows.extend(_write_shard(
-                staging, len(rows) // shard_size, pending))
+            committed = _write_shard(staging, next_shard, pending)
+            rows.extend(committed)
+            if resume:
+                _checkpoint_build(
+                    staging, next_shard, committed, build_state,
+                    build_metadata, len(rows))
         if not rows:
             raise ValueError("refusing to publish an empty signal dataset")
 
         manifest = pd.DataFrame(rows)
         if manifest["sample_id"].duplicated().any():
             raise ValueError("manifest contains duplicate sample_id values")
-        manifest_path = staging / "manifest.parquet"
-        manifest.to_parquet(manifest_path, index=False)
+        manifest.to_parquet(staging / "manifest.parquet", index=False)
+        labels = manifest["label"].astype(int)
+        class_counts = {
+            "correct_identification": int(labels.eq(1).sum()),
+            "incorrect_identification": int(labels.eq(0).sum()),
+        }
+        n_fragments = int((
+            manifest["fragment_end"].astype(int)
+            - manifest["fragment_start"].astype(int)
+        ).sum())
 
         schema = schema_document(settings)
         schema["build"] = _json_safe_value(build_metadata)
         (staging / "schema.json").write_text(
             json.dumps(schema, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8")
-
         _write_audit_tables(staging, audit_tables or {})
         _write_audit_documents(staging, audit_documents or {})
 
@@ -266,8 +394,16 @@ def write_signal_dataset(
             _write_audit_tables(staging, validation.audit_tables)
             _write_audit_documents(staging, validation.audit_documents)
 
+        if resume:
+            build_state.update({
+                "status": "complete",
+                "n_committed_shards": int(manifest["shard"].nunique()),
+                "n_committed_samples": len(manifest),
+                "build_metadata": _json_safe_value(build_metadata),
+            })
+            _atomic_json(staging / "RESUME_STATE.json", build_state)
         report = {
-            "schema": "phase2_raw_xic_build_report_v1",
+            "schema": "phase2_raw_xic_build_report_v2",
             "dataset_schema": SCHEMA_VERSION,
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "status": "complete",
@@ -276,6 +412,7 @@ def write_signal_dataset(
             "n_shards": int(manifest["shard"].nunique()),
             "class_counts": class_counts,
             "sample_ids_unique": True,
+            "resumable_build": bool(resume),
             "metric_semantics": "error_identification_positive_v1",
             "positive_class": "incorrect_identification",
             "staged_validation": _json_safe_value(validation.summary),
@@ -307,7 +444,12 @@ def write_signal_dataset(
         _publish(staging, output_root, overwrite)
         return report
     except BaseException:
-        shutil.rmtree(staging, ignore_errors=True)
+        if resume:
+            logging.exception(
+                "Phase 2 build interrupted; committed shards remain at %s",
+                staging)
+        else:
+            shutil.rmtree(staging, ignore_errors=True)
         raise
 
 

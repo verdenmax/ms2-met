@@ -1,0 +1,35 @@
+schema: phase2_xic_dataset_config_v2
+
+datasets:
+  2da:
+    extraction_config: baseline_2da_neg20/config.ini
+  5da:
+    extraction_config: baseline_5da_neg20/config.ini
+  normal:
+    extraction_config: baseline_normal_neg20/config.ini
+
+selection:
+  # Exact membership of the completed frozen combined protocol, including
+  # its fixed test rows and every frozen outer/inner assignment.
+  mode: full
+
+validation:
+  # Value-level parity is intentionally bounded while schema validation and
+  # exact sample-ID membership remain mandatory for every serialized row.
+  parity_correct_per_dataset: 200
+  parity_error_per_dataset: 200
+  parity_seed: 20260813
+
+extraction:
+  xic_cycle_window: 6
+  mass_tol_ppm: 10.0
+  fragment_charges: [1, 2]
+
+prediction:
+  include: false
+
+storage:
+  shard_size: 512
+  # Complete shards and their manifests survive interruption. Resume refuses
+  # changed configs, membership, chemistry, raw files, or DIA caches.
+  resume: true

@@ -1,4 +1,4 @@
-"""Build the audited Phase 2 raw-XIC integrity pilot.
+"""Build audited pilot or full Phase 2 raw-XIC datasets.
 
 The frozen LightGBM bundle remains the sole owner of sample membership and
 fold assignments.  This builder joins legacy PSM JSON rows to those IDs,
@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import configparser
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import os
@@ -46,7 +47,8 @@ from .schema import ExtractionSettings
 from .store import StagedValidation, write_signal_dataset
 
 
-BUILD_CONFIG_SCHEMA = "phase2_xic_pilot_config_v1"
+PILOT_CONFIG_SCHEMA = "phase2_xic_pilot_config_v1"
+DATASET_CONFIG_SCHEMA = "phase2_xic_dataset_config_v2"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -222,6 +224,65 @@ def _feature_snapshot_isotope_models(frame: pd.DataFrame) -> list[str]:
     return sorted(normalized)
 
 
+def _select_rows(protocol, build_config: dict) -> tuple[pd.DataFrame, dict]:
+    schema = build_config.get("schema")
+    if schema == PILOT_CONFIG_SCHEMA:
+        mode = "pilot"
+        declaration = build_config.get("pilot", {})
+    elif schema == DATASET_CONFIG_SCHEMA:
+        mode = str(build_config.get(
+            "selection", {}).get("mode", "full")).strip().lower()
+        declaration = (
+            build_config.get("pilot", {}) if mode == "pilot" else {})
+    else:
+        raise ValueError(f"unsupported Phase 2 build config: {schema!r}")
+    if mode not in {"pilot", "full"}:
+        raise ValueError("selection.mode must be pilot or full")
+    if mode == "pilot":
+        correct = int(declaration.get("correct_per_dataset", 200))
+        error = int(declaration.get("error_per_dataset", 200))
+        seed = int(declaration.get("seed", 20260813))
+        selected = select_pilot_rows(
+            protocol.frame, correct_per_dataset=correct,
+            error_per_dataset=error, seed=seed)
+        contract = {
+            "mode": "balanced_integrity_pilot",
+            "correct_per_dataset": correct,
+            "incorrect_per_dataset": error,
+            "seed": seed,
+        }
+    else:
+        selected = protocol.frame.copy()
+        selected[protocol.dataset_col] = selected[
+            protocol.dataset_col].astype(str)
+        selected[protocol.sample_id_col] = selected[
+            protocol.sample_id_col].astype(str)
+        selected = selected.sort_values(
+            [protocol.dataset_col, protocol.sample_id_col]
+        ).reset_index(drop=True)
+        contract = {
+            "mode": "full_frozen_protocol",
+            "sample_ids_exactly_equal_frozen_protocol": True,
+        }
+    if selected[protocol.sample_id_col].duplicated().any():
+        raise ValueError("selected Phase 2 rows contain duplicate sample IDs")
+    return selected, contract
+
+
+def _parity_rows(protocol, selected: pd.DataFrame,
+                 build_config: dict) -> pd.DataFrame:
+    validation = build_config.get("validation", {})
+    if build_config.get("schema") == PILOT_CONFIG_SCHEMA or \
+            build_config.get("selection", {}).get("mode", "full") == "pilot":
+        return selected.copy()
+    correct = int(validation.get("parity_correct_per_dataset", 200))
+    error = int(validation.get("parity_error_per_dataset", 200))
+    seed = int(validation.get("parity_seed", 20260813))
+    return select_pilot_rows(
+        selected, correct_per_dataset=correct,
+        error_per_dataset=error, seed=seed)
+
+
 def build_signal_dataset(
     config_path: str,
     split_config_path: str,
@@ -231,12 +292,14 @@ def build_signal_dataset(
     *,
     cache_root: str | None = None,
     overwrite: bool = False,
+    resume: bool = False,
 ) -> dict:
-    """Build and publish the balanced 1200-row Phase 2 integrity pilot."""
+    """Build and publish an immutable Phase 2 raw-XIC dataset."""
     config_path_obj = Path(config_path).resolve()
     with config_path_obj.open(encoding="utf-8") as handle:
         build_config = yaml.safe_load(handle)
-    if build_config.get("schema") != BUILD_CONFIG_SCHEMA:
+    if build_config.get("schema") not in {
+            PILOT_CONFIG_SCHEMA, DATASET_CONFIG_SCHEMA}:
         raise ValueError(
             f"unsupported Phase 2 build config: {build_config.get('schema')!r}")
 
@@ -246,19 +309,16 @@ def build_signal_dataset(
         mass_tol_ppm=float(extraction.get("mass_tol_ppm", 10.0)),
         fragment_charges=tuple(extraction.get("fragment_charges", [1, 2])),
     )
-    pilot = build_config.get("pilot", {})
-    correct_per_dataset = int(pilot.get("correct_per_dataset", 200))
-    error_per_dataset = int(pilot.get("error_per_dataset", 200))
-    pilot_seed = int(pilot.get("seed", 20260813))
-    shard_size = int(build_config.get("storage", {}).get("shard_size", 256))
+    storage = build_config.get("storage", {})
+    shard_size = int(storage.get("shard_size", 256))
+    resume_enabled = bool(resume or storage.get("resume", False))
     prediction_enabled = bool(
         build_config.get("prediction", {}).get("include", False))
 
     protocol = prepare_protocol(
         split_config_path, feature_root, "combined", protocol_root)
-    selected = select_pilot_rows(
-        protocol.frame, correct_per_dataset=correct_per_dataset,
-        error_per_dataset=error_per_dataset, seed=pilot_seed)
+    selected, selection_contract = _select_rows(protocol, build_config)
+    parity_selection = _parity_rows(protocol, selected, build_config)
     snapshot_isotope_models = _feature_snapshot_isotope_models(selected)
     expected_count = len(selected)
     datasets = build_config.get("datasets", {})
@@ -274,92 +334,143 @@ def build_signal_dataset(
     cache_root_path.mkdir(parents=True, exist_ok=True)
     audit_documents: dict[str, dict] = {}
     matching_tables = []
-    samples = []
     sources = []
     chemistry = {}
 
-    for dataset in sorted(datasets):
-        declaration = datasets[dataset]
-        relative_config = declaration.get("extraction_config")
-        if not relative_config:
+    def _record_source(provenance: dict) -> None:
+        key = (
+            str(provenance.get("dataset")), str(provenance.get("kind")),
+            str(provenance.get("configured_raw_path", "")),
+            str(provenance.get("path", "")),
+        )
+        existing = {
+            (
+                str(item.get("dataset")), str(item.get("kind")),
+                str(item.get("configured_raw_path", "")),
+                str(item.get("path", "")),
+            ): item
+            for item in sources
+        }.get(key)
+        if existing is not None and existing != provenance:
             raise ValueError(
-                f"dataset {dataset} lacks extraction_config")
-        ini_path = _resolve(relative_config, base=Path(feature_root).resolve())
-        ini = _load_ini(ini_path)
-        _assert_extraction_settings(ini, settings, dataset)
-        psms, psm_path, labeling = _load_psms(
-            ini, dataset=dataset, audit_documents=audit_documents)
-        chemistry[dataset] = canonical_labeling_name(labeling)
-        domain_rows = selected[
-            selected[protocol.dataset_col].astype(str).eq(dataset)
-        ].copy()
-        matched, match_audit = match_psms_to_protocol(
-            domain_rows, psms, protocol.identity_cols)
-        matching_tables.append(match_audit)
-        bad = match_audit[~match_audit["status"].eq("matched")]
-        if len(bad):
-            failure = Path(output_root).resolve().with_suffix(
-                ".identity_failure.csv")
-            failure.parent.mkdir(parents=True, exist_ok=True)
-            pd.concat(matching_tables, ignore_index=True).to_csv(
-                failure, index=False)
-            raise ValueError(
-                f"dataset {dataset}: {len(bad)} pilot PSM identities did not "
-                f"match uniquely; audit={failure}")
+                "Phase 2 resume source identity changed for "
+                f"dataset={key[0]}, kind={key[1]}, path={key[2] or key[3]}")
+        if existing is None:
+            sources.append(provenance)
 
-        selected_psms = [matched[str(sample_id)]
-                         for sample_id in domain_rows["sample_id"]]
-        predictions = _load_predictions(
-            ini, selected_psms, prediction_enabled)
-        raw_paths = _raw_paths(ini)
-        rows_by_raw = {}
-        for _, row in domain_rows.iterrows():
-            psm = matched[str(row["sample_id"])]
-            rows_by_raw.setdefault(psm._raw_title, []).append((row, psm))
-        unknown = sorted(set(rows_by_raw) - set(raw_paths))
-        if unknown:
-            raise ValueError(
-                f"dataset {dataset}: PSM raw titles absent from extraction "
-                f"config: {unknown[:10]}")
+    def _sample_stream(completed_ids=frozenset(), checkpoint_metadata=None):
+        checkpoint_metadata = checkpoint_metadata or {}
+        for item in checkpoint_metadata.get("source_fingerprints", []):
+            _record_source(item)
+        for dataset, labeling in checkpoint_metadata.get(
+                "chemistry_by_dataset", {}).items():
+            chemistry[str(dataset)] = str(labeling)
 
-        manager = DataManager(ini)
-        for raw_title in sorted(rows_by_raw):
-            raw_path = raw_paths[raw_title]
-            shared_path, cache_provenance = resolve_dia_cache(
-                manager, raw_path, cache_root_path, dataset=dataset)
-            sources.append(cache_provenance)
-            dia = DIAData.load_from_file(str(shared_path), use_mmap=True)
-            for row, psm in rows_by_raw[raw_title]:
-                pred_frags = None
-                if predictions is not None:
-                    record = predictions.get(normalize_key(
-                        psm._sequence, psm._modify, psm._charge))
-                    pred_frags = record["frags"] if record else None
-                sample = extract_signal_sample(
-                    psm, dia, settings, _source_row_metadata(row, psm),
-                    labeling=labeling, pred_frags=pred_frags)
-                samples.append(sample)
+        for dataset in sorted(datasets):
+            declaration = datasets[dataset]
+            relative_config = declaration.get("extraction_config")
+            if not relative_config:
+                raise ValueError(f"dataset {dataset} lacks extraction_config")
+            ini_path = _resolve(
+                relative_config, base=Path(feature_root).resolve())
+            ini = _load_ini(ini_path)
+            _assert_extraction_settings(ini, settings, dataset)
+            psms, psm_path, labeling = _load_psms(
+                ini, dataset=dataset, audit_documents=audit_documents)
+            observed_chemistry = canonical_labeling_name(labeling)
+            if dataset in chemistry and chemistry[dataset] != observed_chemistry:
+                raise ValueError(
+                    f"Phase 2 resume chemistry changed for {dataset}")
+            chemistry[dataset] = observed_chemistry
+            _record_source({
+                "dataset": dataset, "kind": "extraction_config",
+                **file_fingerprint(ini_path),
+            })
+            _record_source({
+                "dataset": dataset, "kind": "psm_json",
+                **file_fingerprint(psm_path),
+            })
+            domain_rows = selected[
+                selected[protocol.dataset_col].astype(str).eq(dataset)
+            ].copy()
+            matched, match_audit = match_psms_to_protocol(
+                domain_rows, psms, protocol.identity_cols)
+            matching_tables.append(match_audit)
+            bad = match_audit[~match_audit["status"].eq("matched")]
+            if len(bad):
+                failure = Path(output_root).resolve().with_suffix(
+                    ".identity_failure.csv")
+                failure.parent.mkdir(parents=True, exist_ok=True)
+                pd.concat(matching_tables, ignore_index=True).to_csv(
+                    failure, index=False)
+                raise ValueError(
+                    f"dataset {dataset}: {len(bad)} PSM identities did not "
+                    f"match uniquely; audit={failure}")
 
-        sources.extend([
-            {"dataset": dataset, "kind": "extraction_config",
-             **file_fingerprint(ini_path)},
-            {"dataset": dataset, "kind": "psm_json",
-             **file_fingerprint(psm_path)},
-        ])
+            selected_psms = [
+                matched[str(sample_id)] for sample_id in domain_rows["sample_id"]
+                if str(sample_id) not in completed_ids
+            ]
+            predictions = _load_predictions(
+                ini, selected_psms, prediction_enabled)
+            raw_paths = _raw_paths(ini)
+            rows_by_raw = {}
+            for _, row in domain_rows.iterrows():
+                psm = matched[str(row["sample_id"])]
+                rows_by_raw.setdefault(
+                    psm._raw_title, []).append((row, psm))
+            unknown = sorted(set(rows_by_raw) - set(raw_paths))
+            if unknown:
+                raise ValueError(
+                    f"dataset {dataset}: PSM raw titles absent from extraction "
+                    f"config: {unknown[:10]}")
 
-    matching_audit = pd.concat(matching_tables, ignore_index=True)
-    if len(samples) != expected_count:
-        raise ValueError(
-            f"extracted {len(samples)} pilot samples; expected {expected_count}")
+            manager = DataManager(ini)
+            for raw_title in sorted(rows_by_raw):
+                raw_path = raw_paths[raw_title]
+                shared_path, cache_provenance = resolve_dia_cache(
+                    manager, raw_path, cache_root_path, dataset=dataset)
+                _record_source(cache_provenance)
+                pending_rows = [
+                    (row, psm) for row, psm in rows_by_raw[raw_title]
+                    if str(row["sample_id"]) not in completed_ids
+                ]
+                if not pending_rows:
+                    continue
+                dia = DIAData.load_from_file(str(shared_path), use_mmap=True)
+                for row, psm in pending_rows:
+                    pred_frags = None
+                    if predictions is not None:
+                        record = predictions.get(normalize_key(
+                            psm._sequence, psm._modify, psm._charge))
+                        pred_frags = record["frags"] if record else None
+                    yield extract_signal_sample(
+                        psm, dia, settings, _source_row_metadata(row, psm),
+                        labeling=labeling, pred_frags=pred_frags)
+                del dia
 
     selected_by_id = selected.copy()
     selected_by_id["sample_id"] = selected_by_id["sample_id"].astype(str)
     selected_by_id = selected_by_id.set_index("sample_id", verify_integrity=True)
+    parity_ids = set(parity_selection["sample_id"].astype(str))
 
     def _validate_serialized_dataset(dataset) -> StagedValidation:
         """Compare reconstructed features from the actual saved shards."""
+        observed_ids = dataset.manifest["sample_id"].astype(str)
+        observed_set = set(observed_ids)
+        expected_set = set(selected_by_id.index)
+        if observed_set != expected_set or len(dataset) != expected_count:
+            raise ValueError(
+                "serialized sample membership differs from frozen selection: "
+                f"expected={expected_count}, observed={len(dataset)}, "
+                f"missing={len(expected_set - observed_set)}, "
+                f"unexpected={len(observed_set - expected_set)}")
         parity_rows = []
-        for index in range(len(dataset)):
+        parity_indices = [
+            index for index, sample_id in enumerate(observed_ids)
+            if sample_id in parity_ids
+        ]
+        for index in parity_indices:
             sample = dataset.sample(index)
             sample_id = str(sample.metadata["sample_id"])
             if sample_id not in selected_by_id.index:
@@ -390,9 +501,14 @@ def build_signal_dataset(
                 f"sample-feature values; "
                 f"audit={failure}")
         return StagedValidation(
-            audit_tables={"feature_parity.csv": parity_audit},
+            audit_tables={
+                "feature_parity.csv": parity_audit,
+                "identity_matching.csv": pd.concat(
+                    matching_tables, ignore_index=True),
+            },
             summary={
                 "serialized_shards_validated": True,
+                "frozen_membership_exact_match": True,
                 "required_feature_parity_all_passed": True,
                 "feature_parity_comparisons": len(parity_audit),
                 "required_feature_parity_comparisons": int(required.sum()),
@@ -406,11 +522,9 @@ def build_signal_dataset(
     protocol_summary = protocol_root_path / "summary.json"
 
     build_metadata = {
-        "mode": "balanced_integrity_pilot",
+        **selection_contract,
         "n_expected_samples": expected_count,
-        "correct_per_dataset": correct_per_dataset,
-        "incorrect_per_dataset": error_per_dataset,
-        "pilot_seed": pilot_seed,
+        "n_parity_samples": len(parity_selection),
         "prediction_included": prediction_enabled,
         "chemistry_by_dataset": chemistry,
         "feature_snapshot_isotope_models": snapshot_isotope_models,
@@ -421,6 +535,8 @@ def build_signal_dataset(
         "frozen_protocol_root": str(protocol_root_path),
         "frozen_protocol_contract": protocol.validation.get(
             "frozen_protocol", {}),
+        "target_fprs": list(protocol.target_fprs),
+        "split_group_col": protocol.group_col,
         "frozen_protocol_summary": file_fingerprint(protocol_summary),
         "frozen_sample_ids_exact_match": True,
         "parity_validation": "required_on_serialized_staging_shards",
@@ -434,20 +550,47 @@ def build_signal_dataset(
         },
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
     }
+    selection_digest = hashlib.sha256("\n".join(
+        sorted(selected_by_id.index)).encode("utf-8")).hexdigest()
+    resume_identity = {
+        "schema": "phase2_builder_resume_identity_v1",
+        "build_config": {
+            "path": str(config_path_obj),
+            "sha256": file_fingerprint(config_path_obj)["sha256"],
+        },
+        "split_config": {
+            "path": str(Path(split_config_path).resolve()),
+            "sha256": file_fingerprint(
+                Path(split_config_path).resolve())["sha256"],
+        },
+        "frozen_protocol_summary": {
+            "path": str(protocol_summary),
+            "sha256": file_fingerprint(protocol_summary)["sha256"],
+        },
+        "selection_sample_ids_sha256": selection_digest,
+        "n_expected_samples": expected_count,
+    }
     return write_signal_dataset(
-        samples, output_root, settings, build_metadata=build_metadata,
+        _sample_stream, output_root, settings, build_metadata=build_metadata,
         shard_size=shard_size, overwrite=overwrite,
         audit_tables={
-            "pilot_selection.csv": selected[[
+            "selection.csv": selected[[
                 column for column in (
                     "sample_id", "dataset", "label", "negative_tier",
                     "fixed_split", "outer_fold", "sequence")
                 if column in selected
             ]],
-            "identity_matching.csv": matching_audit,
+            "parity_selection.csv": parity_selection[[
+                column for column in (
+                    "sample_id", "dataset", "label", "negative_tier",
+                    "fixed_split", "outer_fold", "sequence")
+                if column in parity_selection
+            ]],
         },
         audit_documents=audit_documents,
         staged_validator=_validate_serialized_dataset,
+        resume=resume_enabled,
+        resume_identity=resume_identity if resume_enabled else None,
     )
 
 
@@ -461,6 +604,7 @@ def main() -> None:
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--cache-root")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
     logging.basicConfig(
@@ -469,8 +613,8 @@ def main() -> None:
     report = build_signal_dataset(
         args.config, args.split_config, args.feature_root,
         args.protocol_root, args.output_root, cache_root=args.cache_root,
-        overwrite=args.overwrite)
-    logging.info("Phase 2 pilot complete: %s", report)
+        overwrite=args.overwrite, resume=args.resume)
+    logging.info("Phase 2 XIC dataset complete: %s", report)
 
 
 if __name__ == "__main__":
