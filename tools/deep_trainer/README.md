@@ -1,8 +1,9 @@
 # Deep trainer
 
 本目录承载代谢标记 DIA 校验的深度学习实验。第一阶段是现有
-`evidence_all` 表格特征上的小型 PyTorch MLP；原始 XIC CNN、fragment
-attention 和 light/heavy 双塔将在同一实验接口下继续扩展。
+`evidence_all` 表格特征上的小型 PyTorch MLP；第二阶段直接读取轻/重前体与
+碎片离子的原始 XIC，以卷积编码器和 masked fragment attention 自动学习信号
+表示。两阶段共用同一个冻结 E20 测试集和指标协议。
 
 ## 为什么先做表格 MLP
 
@@ -113,8 +114,8 @@ python -m tools.deep_trainer.experiment \
 - `domain_summary.csv`：2da/5da/normal 分域结果；
 - `summary.json`：模型、指标语义、fold 指标和 provenance。
 
-当前机器没有可用 CUDA，但默认 `device: auto` 会在 CPU 上运行。第一轮可以
-先减少 `epochs` 或只训练 M20；正式 XIC 双塔训练建议使用 GPU。
+默认 `device: auto` 会优先使用 CUDA，没有可用 GPU 时退回 CPU。第一轮可以先
+减少 `epochs` 或只保留一个 seed；正式 XIC 模型训练建议使用 GPU。
 
 ## Phase 2：原始 XIC 数据层
 
@@ -159,5 +160,67 @@ parity 审计，但标为
 shard 完整性错误。其余前体/碎片 parity 始终强制。用当前代码重新提取特征并
 重建冻结协议后，该同位素字段自动恢复为强制 parity。
 
-这一步还不是正式深度模型训练。全量约 27 万条数据要等 pilot parity 通过后，
-再加入面板式批量 m/z 提取，避免每个碎片重复扫描同一张谱图。
+pilot 只用于完整性检查，不能进入正式训练。pilot parity 通过后，全量构建使用：
+
+```bash
+make build-deep-xic-full \
+  FEATURE_ROOT=/path/to/feature_result/ms2-met-runs-08-08 \
+  DEEP_PROTOCOL_ROOT=/path/to/fixed-negpool/combined \
+  PHASE2_CACHE_ROOT=/path/to/cache
+```
+
+全量构建严格覆盖冻结协议的全部 train/test sample ID。它按 raw 逐个加载、按
+m/z panel 一次扫描一张 MS1/MS2 谱图、流式写入 shard；中断后再次执行同一命令
+会读取 `.building/RESUME_STATE.json`，只复用已经原子提交且来源指纹完全一致的
+shard。配置、划分、raw、PSM、DIA cache 或冻结协议有变化时拒绝 resume。
+
+## Phase 2：XIC 深度模型训练
+
+全量 XIC 的 `COMPLETE` 存在后运行：
+
+```bash
+make train-deep-xic-combined \
+  FEATURE_ROOT=/path/to/feature_result/ms2-met-runs-08-08 \
+  DEEP_PROTOCOL_ROOT=/path/to/fixed-negpool/combined \
+  PHASE2_FULL_XIC_OUTPUT_ROOT=/path/to/phase2-xic/full
+```
+
+默认配置是 `phase2/config/xic_fusion.yaml`，训练 M20 的 3 个随机种子 × 5 个冻结
+outer folds，共 15 个成员。每个成员只在该折 inner-training rows 拟合，在冻结的
+inner-validation rows 上用 ROC-AUC early stop，并对自己的 outer-OOF rows 校准
+FPR 1%/5%/10% error-score 阈值。固定测试集的正式决策是 15 个成员分别应用各自
+OOF 阈值后多数投票；不会把单成员阈值直接应用到平均 ensemble score。
+
+模型输入只有：
+
+- 轻/重前体及重标 M+1/M+2 的 intensity、ppm error、相对 RT、scan/peak mask；
+- 成对轻/重碎片 XIC，以及 ion type、ordinal、fragment charge；
+- 从同一条 XIC 推导的强度/时间尺度。
+
+`label_type`、q-value、negative tier、dataset、绝对 RT、sequence、split/fold 和
+蛋白信息只参与划分或审计，不进入网络。谱库预测强度默认关闭；只有单独构建了
+`prediction.include=true` 的 XIC 数据集并把模型配置显式改为 true 才能启用，
+因此无谱库数据仍能完整训练。
+
+网络由一个前体 1D-CNN、所有 fragment 共享的 1D-CNN、离子属性 embedding、
+masked attention set pooling 和融合 MLP 组成，输出仍是
+`trust_score=P(correct identification)`。统计边界统一转换为错误鉴定阳性，所有
+ROC、PR、FNR 和固定 FPR 指标复用 `spec_trainer/src/cv_core.py`。
+
+正式运行前只做协议检查：
+
+```bash
+python -m tools.deep_trainer.phase2.experiment \
+  --config tools/deep_trainer/phase2/config/xic_fusion.yaml \
+  --split-config runs/deep_trainer/configs/cv_in_2da_neg20.yaml \
+  --feature-root "$FEATURE_ROOT" \
+  --protocol-root runs/spec_trainer/fixed-negpool/combined \
+  --signal-root runs/deep_trainer/phase2-xic/full \
+  --output-root runs/deep_trainer/phase2-xic-preflight \
+  --prepare-only
+```
+
+训练结果包括 fold checkpoint、严格 OOF 分数、固定测试逐样本分数、15 成员多数
+投票工作点、分数据域指标，以及相同测试行/相同 leakage group 上相对冻结
+LightGBM M20 的 paired cluster bootstrap。Checkpoint 绑定 XIC 数据集的 checksum
+identity；换了 shard 内容后不会静默推理。

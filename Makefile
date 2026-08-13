@@ -42,6 +42,8 @@ PHASE2_XIC_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic/pilot
 PHASE2_FULL_BUILD_CONFIG ?= tools/deep_trainer/phase2/config/raw_xic_full.yaml
 PHASE2_FULL_XIC_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic/full
 PHASE2_CACHE_ROOT ?= workspace
+PHASE2_TRAIN_CONFIG ?= tools/deep_trainer/phase2/config/xic_fusion.yaml
+PHASE2_TRAIN_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic-model/combined
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -142,7 +144,7 @@ endef
 
 # --------------------------- 主 target ---------------------------
 
-.PHONY: help all run clean build-deep-xic-pilot
+.PHONY: help all run clean build-deep-xic-pilot build-deep-xic-full train-deep-xic-combined
 .PHONY: 2th 5th normal
 .PHONY: filter filter-dry
 .PHONY: extract-2th extract-5th extract-normal
@@ -228,6 +230,8 @@ help:
 	@echo "  make train-fixed-test-negpool-combined FEATURE_ROOT=/path/to/results  三数据集合并后全局固定测试"
 	@echo "  make train-deep-mlp-combined FEATURE_ROOT=/path/to/results  同一 combined E20 协议训练表格 MLP"
 	@echo "  make build-deep-xic-pilot FEATURE_ROOT=/path/to/results  构建 1200 条 Phase 2 原始 XIC 完整性 pilot"
+	@echo "  make build-deep-xic-full FEATURE_ROOT=/path/to/results   可恢复地构建全量 Phase 2 XIC"
+	@echo "  make train-deep-xic-combined FEATURE_ROOT=/path/to/results  冻结 E20 上训练 15 成员 XIC 模型"
 	@echo ""
 	@echo "  Formal MS1/MS2 ablation（共同队列 + 注册表特征组）："
 	@echo "  make train-ablation-neg20-2da FEATURE_ROOT=/path/to/results  2da 预跑（8 组）"
@@ -1403,6 +1407,32 @@ build-deep-xic-full: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
 	    --cache-root "$(PHASE2_CACHE_ROOT)" \
 	    --resume \
 	    $(CV_OVERWRITE_FLAG)
+
+# Phase 2 signal-native model. The immutable XIC dataset must contain the
+# exact complete frozen cohort. Every assignment and protocol hash is checked
+# again before the 3-seed x 5-fold ensemble is trained.
+train-deep-xic-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
+	$(DEEP_PROTOCOL_ROOT)/summary.json \
+	$(PHASE2_FULL_XIC_OUTPUT_ROOT)/COMPLETE
+	@mkdir -p "$(DEEP_OUTPUT_ROOT)/configs"
+	$(PY) tools/spec_trainer/gen_cv_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(DEEP_OUTPUT_ROOT)/reference-cv" \
+	    --config-dir "$(DEEP_OUTPUT_ROOT)/configs" \
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
+	$(PY) -m tools.deep_trainer.phase2.experiment \
+	    --config "$(PHASE2_TRAIN_CONFIG)" \
+	    --split-config "$(DEEP_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --protocol-root "$(DEEP_PROTOCOL_ROOT)" \
+	    --signal-root "$(PHASE2_FULL_XIC_OUTPUT_ROOT)" \
+	    --output-root "$(PHASE2_TRAIN_OUTPUT_ROOT)" \
+	    $(CV_OVERWRITE_FLAG)
+
+$(PHASE2_FULL_XIC_OUTPUT_ROOT)/COMPLETE:
+	@echo "[error] missing complete full Phase 2 XIC dataset: $@" >&2
+	@echo "Run make build-deep-xic-full FEATURE_ROOT=... first." >&2
+	@false
 
 # A completed LightGBM bundle is the frozen owner of membership/folds and its
 # input SHA256 values. This rule deliberately does not regenerate/overwrite an

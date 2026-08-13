@@ -309,12 +309,21 @@ def test_shard_batch_sampler_is_complete_deterministic_and_shard_local(
     second = list(iter(sampler))
     assert first == second
     assert sorted(index for batch in first for index in batch) == list(range(5))
+    batch_shards = []
     for batch in first:
         shards = {
             dataset.source.manifest.iloc[int(dataset.indices[index])]["shard"]
             for index in batch
         }
         assert len(shards) == 1
+        batch_shards.append(next(iter(shards)))
+    # All batches for one mmap shard stay adjacent, so each array set is loaded
+    # only once per epoch despite randomized shard order.
+    shard_runs = [
+        value for index, value in enumerate(batch_shards)
+        if index == 0 or value != batch_shards[index - 1]
+    ]
+    assert len(shard_runs) == len(set(batch_shards))
     sampler.set_epoch(1)
     assert sorted(
         index for batch in sampler for index in batch) == list(range(5))

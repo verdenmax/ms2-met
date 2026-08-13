@@ -217,18 +217,17 @@ class ShardBatchSampler(Sampler[list[int]]):
 
     def __iter__(self) -> Iterator[list[int]]:
         rng = random.Random(self.seed + self.epoch)
-        batches = []
-        for indices in self._by_shard.values():
+        shards = list(self._by_shard.items())
+        if self.shuffle:
+            rng.shuffle(shards)
+        for _shard, indices in shards:
             values = list(indices)
             if self.shuffle:
                 rng.shuffle(values)
             for start in range(0, len(values), self.batch_size):
                 batch = values[start:start + self.batch_size]
                 if len(batch) == self.batch_size or not self.drop_last:
-                    batches.append(batch)
-        if self.shuffle:
-            rng.shuffle(batches)
-        yield from batches
+                    yield batch
 
     def __len__(self) -> int:
         if self.drop_last:
