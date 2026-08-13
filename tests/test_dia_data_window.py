@@ -184,6 +184,15 @@ def test_ms2_xic_pools_charge_states_and_weights_ppm_by_intensity():
     d.get_spectrum_by_index = lambda _: (mz, intensity)
     d._ms2_cycle_idx = lambda _: 7
 
+    resolved, _ = d.xic_ms2_charge_resolved_extract(
+        rt=np.float32(10.0), xic_cycle_window=0,
+        precursor_mz=np.float32(500.0), ions_mass=np.float32(ion_mass),
+        mass_tol_ppm=np.float32(20.0))
+    assert resolved[1]["intensity"][0] == pytest.approx(10.0)
+    assert resolved[2]["intensity"][0] == pytest.approx(30.0)
+    assert resolved[1]["ppm_error"][0] == pytest.approx(10.0, abs=0.05)
+    assert resolved[2]["ppm_error"][0] == pytest.approx(-10.0, abs=0.05)
+
     xic, _ = d.xic_ms2_peaks_extract(
         rt=np.float32(10.0), xic_cycle_window=0,
         precursor_mz=np.float32(500.0), ions_mass=np.float32(ion_mass),
@@ -191,6 +200,17 @@ def test_ms2_xic_pools_charge_states_and_weights_ppm_by_intensity():
 
     assert xic["intensity"][0] == pytest.approx(40.0)
     assert xic["ppm_error"][0] == pytest.approx(-5.0, abs=0.05)
+
+
+def test_charge_resolved_xic_rejects_invalid_charge_contract():
+    d = DIAData.__new__(DIAData)
+    d.ms2_indexs = np.array([], dtype=np.int32)
+    d.ms2_indexs_rt = np.array([], dtype=np.float32)
+    with pytest.raises(ValueError, match="positive integers"):
+        d.xic_ms2_charge_resolved_extract(
+            rt=np.float32(10), xic_cycle_window=1,
+            precursor_mz=np.float32(500), ions_mass=np.float32(200),
+            mass_tol_ppm=np.float32(10), fragment_charges=(0, 1))
 
 
 def test_ms2_xic_finds_window_beyond_5_scans():

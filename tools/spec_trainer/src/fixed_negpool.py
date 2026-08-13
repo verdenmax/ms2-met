@@ -41,6 +41,13 @@ from cv_train import (_SOURCE_FILE, _SOURCE_ROW, _atomic_csv, _atomic_json,
                       _operating_targets, _validate_frame, assemble_oof,
                       evaluate_cross_test)
 from feature_cols import resolve_configured_feature_cols
+from sample_identity import (
+    COMBINED_SAMPLE_ID_ALGORITHM,
+    LOCAL_SAMPLE_ID_ALGORITHM,
+    identity_candidates,
+    local_sample_ids,
+    namespace_sample_ids,
+)
 
 
 POOL_NAMES = ("neg05", "neg10", "neg20")
@@ -92,35 +99,6 @@ def feature_paths(feature_root, dataset):
         pool: root / f"baseline_{dataset}_{pool}" / "features.csv"
         for pool in POOL_NAMES
     }
-
-
-def _identity_candidates(common_columns):
-    common = set(common_columns)
-    candidates = []
-    for singleton in ("query_id", "parent_id"):
-        if singleton in common:
-            candidates.append([singleton])
-    base = [
-        column for column in (
-            "sequence", "charge", "precursor_mz", "rt", "raw_title1",
-            "raw_title2", "label_type")
-        if column in common
-    ]
-    if "sequence" in base and "charge" in base:
-        candidates.append(base)
-        extras = [c for c in ("protein_names", "q_value") if c in common]
-        for i in range(1, len(extras) + 1):
-            candidates.append(base + extras[:i])
-    return candidates
-
-
-def _identity_text(frame, columns):
-    """Unambiguous length-prefixed serialization of identity fields."""
-    encoded = pd.Series("", index=frame.index, dtype=object)
-    for column in columns:
-        values = frame[column].astype(str)
-        encoded = encoded + values.str.len().astype(str) + ":" + values + "|"
-    return encoded
 
 
 def _nonempty_relation_columns(frame):
@@ -308,7 +286,7 @@ def _load_identity_tables(paths, target_col):
     if target_col not in common:
         raise ValueError(f"target column {target_col!r} is not common to pools")
 
-    candidates = _identity_candidates(common)
+    candidates = identity_candidates(common)
     if not candidates:
         raise ValueError(
             "cannot construct a stable sample identity: query_id/parent_id "
@@ -344,9 +322,7 @@ def _load_identity_tables(paths, target_col):
             f"{diagnostics}")
 
     for pool, frame in tables.items():
-        serialized = _identity_text(frame, identity_cols)
-        frame[_SAMPLE_ID] = serialized.map(
-            lambda value: hashlib.sha256(value.encode("utf-8")).hexdigest())
+        frame[_SAMPLE_ID] = local_sample_ids(frame, identity_cols)
         frame[_SOURCE_ROW] = np.arange(len(frame), dtype=np.int64)
         if frame[_SAMPLE_ID].duplicated().any():
             raise ValueError(
@@ -742,20 +718,6 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
         validation=validation, split_group_col=split_group_col)
 
 
-def _namespace_sample_ids(frame, dataset):
-    """Make row IDs unique across acquisition datasets without changing groups."""
-    result = frame.copy()
-    source_ids = result[_SAMPLE_ID].astype(str)
-    result[_SOURCE_SAMPLE_ID] = source_ids
-    result[_SAMPLE_ID] = source_ids.map(
-        lambda value: hashlib.sha256(
-            f"{dataset}|{value}".encode("utf-8")).hexdigest())
-    result[_DATASET] = dataset
-    if result[_SAMPLE_ID].duplicated().any():
-        raise ValueError(f"namespaced sample IDs are not unique for {dataset}")
-    return result
-
-
 def _sum_class_counts(audits, side):
     keys = ("n_rows", "n_correct", "n_error")
     return {
@@ -810,9 +772,9 @@ def prepare_combined_fixed_negpool(feature_root, cfg, *,
             if column in {_SPLIT, _OUTER_FOLD}
             or column.startswith("inner_valid_for_fold_")
         ]
-        frame = _namespace_sample_ids(
+        frame = namespace_sample_ids(
             prepared.frame.drop(columns=generated), dataset)
-        membership = _namespace_sample_ids(
+        membership = namespace_sample_ids(
             prepared.membership.drop(columns=[_SPLIT]), dataset)
         frames.append(frame)
         memberships.append(membership)
@@ -901,8 +863,8 @@ def prepare_combined_fixed_negpool(feature_root, cfg, *,
         "mode": "combined_2da_5da_normal",
         "identity": {
             "columns": first.identity_cols,
-            "local_sample_id": "sha256_length_prefixed_identity_fields",
-            "combined_sample_id": "sha256(dataset|local_sample_id)",
+            "local_sample_id": LOCAL_SAMPLE_ID_ALGORITHM,
+            "combined_sample_id": COMBINED_SAMPLE_ID_ALGORITHM,
             "grouping": grouping_audit,
         },
         "datasets": dataset_validation,

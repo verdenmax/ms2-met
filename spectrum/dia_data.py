@@ -22,6 +22,10 @@ DEFAULT_CENTROID_REL_THRESHOLD: float = 1e-3
 # model.  Prediction-based features import this same constant so observed and
 # predicted intensities have identical charge semantics.
 OBSERVED_FRAGMENT_CHARGES: tuple[int, ...] = (1, 2)
+XIC_DTYPE = np.dtype([
+    ("rt", "f8"), ("ppm_error", "f8"),
+    ("intensity", "f8"), ("cycle_idx", "i4"),
+])
 
 
 def deduplicate_with_tolerance(arr, tolerance=0.1):
@@ -905,26 +909,15 @@ class DIAData:
         logging.info(f"idx: {idx}")
         return self.get_spectrum_by_index(idx)
 
-    def xic_ms2_peaks_extract(
+    def _select_ms2_xic_indices(
         self,
         rt: np.float32,
         xic_cycle_window: int,
         precursor_mz: np.float32,
-        ions_mass: np.float32,
-        mass_tol_ppm: np.float32,
-    ) -> tuple[np.ndarray, np.float32]:
-        """
-        提取 XIC：从最接近 rt 的、且 precursor_mz 在隔离窗口内的 MS2 谱图开始，
-        向左/右各扩展 xic_cycle_window 个「有效」MS2 谱图（即窗口包含 precursor_mz）。
-        """
+    ) -> list[int]:
+        """Select one isolation-window scan per neighboring DIA cycle."""
         if self.ms2_indexs is None or len(self.ms2_indexs) == 0:
-            dtype = [("rt", "f8"), ("ppm_error", "f8"),
-                     ("intensity", "f8"), ("cycle_idx", "i4")]
-            return np.array([], dtype=dtype), 0.0
-
-        protonmass = 1.00727646677
-        ans = []
-        total_intensity = 0.0
+            return []
 
         # Step 1: 找到 _ms2_rt_values 中最接近 rt 的位置
         pos = np.searchsorted(self.ms2_indexs_rt, rt)
@@ -963,14 +956,12 @@ class DIAData:
             i += 1
 
         if center_idx is None:
-            dtype = [("rt", "f8"), ("ppm_error", "f8"),
-                     ("intensity", "f8"), ("cycle_idx", "i4")]
             # P1-6 (Silent-I3, 2026-06-03 audit): debug + counter instead
             # of per-call warn.
             self._n_out_of_window_xic += 1
             logging.debug(
                 "no MS2 window match: precursor_mz=%s", precursor_mz)
-            return np.array([], dtype=dtype), 0.0
+            return []
 
         # Step 2: 向左收集 xic_cycle_window 个有效谱图
         left_list = []
@@ -998,54 +989,98 @@ class DIAData:
             i += 1
 
         # Step 4: 合并（左 + 中心 + 右）
-        selected_global_indices = left_list[::-1] + \
+        return left_list[::-1] + \
             [self.ms2_indexs[center_idx]] + right_list
 
-        # logging.info(selected_global_indices)
+    def xic_ms2_charge_resolved_extract(
+        self,
+        rt: np.float32,
+        xic_cycle_window: int,
+        precursor_mz: np.float32,
+        ions_mass: np.float32,
+        mass_tol_ppm: np.float32,
+        fragment_charges: tuple[int, ...] = OBSERVED_FRAGMENT_CHARGES,
+    ) -> tuple[dict[int, np.ndarray], np.float32]:
+        """Extract separate fragment-charge XICs from one selected scan set.
 
-        # Step 5: 处理每个谱图
+        The existing feature pipeline pools charge 1/2.  Phase 2 retains the
+        two observations separately, while :meth:`xic_ms2_peaks_extract`
+        reconstructs the historical pooled result from this method.
+        """
+        charges = tuple(int(charge) for charge in fragment_charges)
+        if not charges or any(charge <= 0 for charge in charges):
+            raise ValueError("fragment_charges must contain positive integers")
+        if len(set(charges)) != len(charges):
+            raise ValueError("fragment_charges must be unique")
+
+        selected_global_indices = self._select_ms2_xic_indices(
+            rt, xic_cycle_window, precursor_mz)
+        if not selected_global_indices:
+            return {
+                charge: np.empty(0, dtype=XIC_DTYPE) for charge in charges
+            }, 0.0
+
+        rows = {charge: [] for charge in charges}
+        total_intensity = 0.0
+        protonmass = 1.00727646677
+
         for global_idx in selected_global_indices:
             mz_arr, intensity_arr = self.get_spectrum_by_index(global_idx)
             total_intensity += np.sum(intensity_arr)
-
-            matched_ppm_errors = []
-            matched_charge_intensities = []
-            match_intensity = 0.0
-
-            for charge in OBSERVED_FRAGMENT_CHARGES:
+            cycle_idx = self._ms2_cycle_idx(int(global_idx))
+            for charge in charges:
                 theo_mz = (ions_mass + charge * protonmass) / charge
-                tot_ppm_error, tot_match_intensity = match_peak_ppm(
+                ppm_error, match_intensity = match_peak_ppm(
                     mz_arr, intensity_arr, theo_mz, mass_tol_ppm
                 )
-                if not np.isnan(tot_ppm_error):
-                    matched_ppm_errors.append(float(tot_ppm_error))
-                    matched_charge_intensities.append(
-                        float(tot_match_intensity))
-                match_intensity += tot_match_intensity
+                rows[charge].append((
+                    self.rt_values[global_idx], ppm_error,
+                    match_intensity, cycle_idx,
+                ))
+        return {
+            charge: np.asarray(values, dtype=XIC_DTYPE)
+            for charge, values in rows.items()
+        }, float(total_intensity)
 
-            if matched_ppm_errors:
-                charge_weights = np.asarray(
-                    matched_charge_intensities, dtype="f8")
-                if float(charge_weights.sum()) > 0:
-                    ppm_error = float(np.average(
-                        matched_ppm_errors, weights=charge_weights))
-                else:
-                    ppm_error = float(np.mean(matched_ppm_errors))
-            else:
-                ppm_error = float("nan")
+    def xic_ms2_peaks_extract(
+        self,
+        rt: np.float32,
+        xic_cycle_window: int,
+        precursor_mz: np.float32,
+        ions_mass: np.float32,
+        mass_tol_ppm: np.float32,
+    ) -> tuple[np.ndarray, np.float32]:
+        """Extract the historical charge-pooled fragment XIC."""
+        resolved, total_intensity = self.xic_ms2_charge_resolved_extract(
+            rt, xic_cycle_window, precursor_mz, ions_mass, mass_tol_ppm,
+            OBSERVED_FRAGMENT_CHARGES,
+        )
+        if not resolved or not len(next(iter(resolved.values()))):
+            return np.empty(0, dtype=XIC_DTYPE), total_intensity
 
-            ans.append({
-                "rt": self.rt_values[global_idx],
-                "ppm_error": ppm_error,
-                "intensity": match_intensity,
-                "cycle_idx": self._ms2_cycle_idx(int(global_idx)),
-            })
+        arrays = [resolved[charge] for charge in OBSERVED_FRAGMENT_CHARGES]
+        n_rows = len(arrays[0])
+        pooled = np.empty(n_rows, dtype=XIC_DTYPE)
+        pooled["rt"] = arrays[0]["rt"]
+        pooled["cycle_idx"] = arrays[0]["cycle_idx"]
+        intensities = np.stack(
+            [array["intensity"] for array in arrays], axis=0)
+        pooled["intensity"] = intensities.sum(axis=0)
+        for row_idx in range(n_rows):
+            errors = np.asarray([
+                array["ppm_error"][row_idx] for array in arrays
+            ], dtype="f8")
+            finite = np.isfinite(errors)
+            if not finite.any():
+                pooled["ppm_error"][row_idx] = float("nan")
+                continue
+            weights = intensities[:, row_idx][finite]
+            pooled["ppm_error"][row_idx] = (
+                np.average(errors[finite], weights=weights)
+                if float(weights.sum()) > 0 else np.mean(errors[finite])
+            )
 
-        dtype = [("rt", "f8"), ("ppm_error", "f8"),
-                 ("intensity", "f8"), ("cycle_idx", "i4")]
-        arr = np.array([tuple(d.values()) for d in ans], dtype=dtype)
-
-        return arr, total_intensity
+        return pooled, total_intensity
 
     def find_near_ms1_idx(self, rt: np.float32):
         """ 找到那个离这个 rt 更加接近 """
@@ -1098,10 +1133,7 @@ class DIAData:
                  "intensity": match_intensity,
                  "cycle_idx": cycle_idx})
 
-        dtype = [("rt", "f8"), ("ppm_error", "f8"),
-                 ("intensity", "f8"), ("cycle_idx", "i4")]
-
         # 把 list[dict] 转成结构化 ndarray
-        arr = np.array([tuple(d.values()) for d in ans], dtype=dtype)
+        arr = np.array([tuple(d.values()) for d in ans], dtype=XIC_DTYPE)
 
         return arr
