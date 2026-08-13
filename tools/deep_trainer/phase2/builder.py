@@ -64,14 +64,27 @@ _EXTRACTOR_IMPLEMENTATION_FILES = (
     "tools/deep_trainer/phase2/store.py",
     "spectrum/dia_data.py",
     "spectrum/labeling.py",
+    "spectrum/psm_dataset_manifest.py",
+    "spectrum/psm_info.py",
     "spectrum/spectrum_utils.py",
+    "workflows/flow_utils.py",
+    "workflows/modified_psm_policy.py",
+    "workflows/pred_store.py",
+    "workflows/q1a_helpers.py",
+    "manager/data_manager.py",
+    "constant/keys.py",
 )
 
 
 def _extractor_implementation_contract() -> dict:
     """Content-bind resumable shards to every tensor-producing module."""
     files = {}
-    for relative in _EXTRACTOR_IMPLEMENTATION_FILES:
+    relatives = set(_EXTRACTOR_IMPLEMENTATION_FILES)
+    relatives.update(
+        str(path.relative_to(PROJECT_ROOT))
+        for path in (PROJECT_ROOT / "spectrum" / "speclib").glob("*.py")
+    )
+    for relative in sorted(relatives):
         path = PROJECT_ROOT / relative
         if not path.is_file():
             raise FileNotFoundError(

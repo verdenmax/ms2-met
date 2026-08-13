@@ -120,6 +120,15 @@ def _verify_complete_bundle(root: Path) -> None:
     checksums = json.loads(checksums_path.read_text(encoding="utf-8"))
     if complete.get("n_artifacts") != len(checksums):
         raise ValueError("Phase 2 result artifact count is inconsistent")
+    actual = {
+        str(path.relative_to(root)) for path in root.rglob("*")
+        if path.is_file() and path.name not in {"checksums.json", "COMPLETE"}
+    }
+    if actual != set(checksums):
+        raise ValueError(
+            "Phase 2 result checksum coverage differs from artifacts: "
+            f"missing={sorted(set(checksums) - actual)}, "
+            f"unexpected={sorted(actual - set(checksums))}")
     for relative, expected in checksums.items():
         path = root / relative
         if not path.is_file() or path.stat().st_size != expected["size_bytes"]:

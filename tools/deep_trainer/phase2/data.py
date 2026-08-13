@@ -39,6 +39,8 @@ def input_adapter_contract(*, include_predicted_intensity: bool) -> dict:
         "fragment_context": ["ion_type", "fragment_charge"],
         "fragment_attention_eligibility": (
             "any_real_scan_and_fragment_attempted_and_fragment_separable"),
+        "sample_scale_fragment_scope": (
+            "fragment_attempted_and_fragment_separable_only"),
         "fragment_ordinal_included": False,
         "fragment_count_included": False,
         "predicted_intensity_included": bool(include_predicted_intensity),
@@ -57,17 +59,23 @@ def _normalize_record(record: dict, *, mass_tol_ppm: float,
     precursor_peak = np.asarray(record["precursor_peak_mask"], dtype=bool)
     fragment_scan = np.asarray(record["fragment_scan_mask"], dtype=bool)
     fragment_peak = np.asarray(record["fragment_peak_mask"], dtype=bool)
+    fragment_eligible = (
+        np.asarray(record["fragment_attempted"], dtype=bool)
+        & np.asarray(record["fragment_separable"], dtype=bool)
+    )
+    eligible_fragment_scan = (
+        fragment_scan & fragment_eligible[:, np.newaxis, np.newaxis])
 
     intensity_scale = max(
         _masked_max(record["precursor_intensity"], precursor_scan),
-        _masked_max(record["fragment_intensity"], fragment_scan),
+        _masked_max(record["fragment_intensity"], eligible_fragment_scan),
         1.0,
     )
     precursor_rt = np.asarray(record["precursor_rt_delta"], dtype="f4")
     fragment_rt = np.asarray(record["fragment_rt_delta"], dtype="f4")
     rt_scale = max(
         _masked_max(np.abs(precursor_rt), precursor_scan),
-        _masked_max(np.abs(fragment_rt), fragment_scan),
+        _masked_max(np.abs(fragment_rt), eligible_fragment_scan),
         1e-3,
     )
 
@@ -101,8 +109,7 @@ def _normalize_record(record: dict, *, mass_tol_ppm: float,
     # allowing it into attention would turn that copy into false evidence.
     fragment_mask = (
         fragment_scan.any(axis=(-1, -2))
-        & np.asarray(record["fragment_attempted"], dtype=bool)
-        & np.asarray(record["fragment_separable"], dtype=bool)
+        & fragment_eligible
     )
 
     result = {

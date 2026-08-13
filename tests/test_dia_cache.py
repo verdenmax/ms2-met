@@ -206,6 +206,18 @@ def test_phase2_mmap_cache_uses_real_memmaps_and_tracks_npz_identity(tmp_path):
     assert isinstance(restored._intensity_values, np.memmap)
     assert np.array_equal(restored._mz_values, _minimal_dia()._mz_values)
 
+    intensity_path = root / "_intensity_values.npy"
+    with intensity_path.open("r+b") as handle:
+        handle.seek(-1, os.SEEK_END)
+        original = handle.read(1)
+        handle.seek(-1, os.SEEK_END)
+        handle.write(bytes([original[0] ^ 0x01]))
+    repaired_root, _ = resolve_mmap_dia_cache(npz)
+    assert repaired_root == root
+    assert np.array_equal(
+        load_mmap_dia_cache(root)._intensity_values,
+        _minimal_dia()._intensity_values)
+
     before = provenance["source_npz"]["sha256"]
     changed = _minimal_dia()
     changed._intensity_values = changed._intensity_values + 1

@@ -44,6 +44,9 @@ def _mmap_manifest(root: Path) -> dict:
         if not path.is_file() or path.stat().st_size != declaration["size_bytes"]:
             raise ValueError(
                 f"Phase 2 DIA mmap cache array changed: {path}")
+        if sha256_file(path) != declaration.get("sha256"):
+            raise ValueError(
+                f"Phase 2 DIA mmap cache checksum mismatch: {path}")
     return manifest
 
 
@@ -65,6 +68,7 @@ def _build_mmap_cache(npz_path: Path, output: Path,
                     "dtype": str(value.dtype),
                     "shape": list(value.shape),
                     "size_bytes": path.stat().st_size,
+                    "sha256": sha256_file(path),
                 }
                 del value
         manifest = {

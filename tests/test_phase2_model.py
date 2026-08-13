@@ -1,3 +1,4 @@
+from copy import deepcopy
 import hashlib
 import numpy as np
 import pandas as pd
@@ -132,6 +133,37 @@ def test_xic_attention_handles_samples_with_no_eligible_fragments(tmp_path):
 
     assert torch.isfinite(logits).all()
     assert attention.sum().item() == 0.0
+
+
+def test_masked_fragment_magnitude_cannot_change_scale_or_model_logit(tmp_path):
+    settings = ExtractionSettings(
+        xic_cycle_window=1, mass_tol_ppm=10.0, fragment_charges=(1, 2))
+    first = extract_signal_sample(
+        _psm(), _FakeDia(), settings,
+        {"sample_id": "masked-original", "label": 1})
+    second = deepcopy(first)
+    second.metadata["sample_id"] = "masked-amplified"
+    masked = ~(second.fragment_attempted & second.fragment_separable)
+    assert masked.any()
+    second.fragment_intensity[masked] *= 10000.0
+    second.fragment_rt_delta[masked] *= 10000.0
+    output = tmp_path / "masked-signals"
+    write_signal_dataset(
+        [first, second], output, settings, build_metadata={"mode": "test"})
+    dataset = XICDataset(open_signal_dataset(output))
+    original, amplified = dataset[0], dataset[1]
+
+    assert np.array_equal(
+        original["signal_scale"], amplified["signal_scale"])
+    assert np.array_equal(
+        original["precursor"], amplified["precursor"])
+    assert np.array_equal(
+        original["fragment"][original["fragment_mask"]],
+        amplified["fragment"][amplified["fragment_mask"]])
+    model = _model().eval()
+    with torch.no_grad():
+        logits = model(collate_xic([original, amplified]))
+    assert torch.equal(logits[0], logits[1])
 
 
 def test_xic_model_rejects_embedding_indices_outside_contract(tmp_path):
