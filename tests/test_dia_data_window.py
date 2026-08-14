@@ -155,6 +155,39 @@ def test_ms2_xic_returns_cycle_idx_field():
     assert np.all(np.isnan(xic["ppm_error"]))
 
 
+def test_ms2_xic_selects_one_centered_window_per_overlapping_cycle():
+    """Boundary-overlapping windows must not duplicate global cycle_idx."""
+    d = DIAData.__new__(DIAData)
+    # Three cycles, each with two overlapping windows containing m/z 500.6.
+    # The [500, 502] window is more centered than [499, 501].
+    d.ms1_indexs = np.array([0, 3, 6], dtype=np.int32)
+    d.ms1_indexs_rt = np.array([10.0, 20.0, 30.0], dtype=np.float32)
+    d.ms2_indexs = np.array([1, 2, 4, 5, 7, 8], dtype=np.int32)
+    d.ms2_indexs_rt = np.array(
+        [10.1, 10.2, 20.1, 20.2, 30.1, 30.2], dtype=np.float32)
+    d.rt_values = np.array(
+        [10.0, 10.1, 10.2, 20.0, 20.1, 20.2,
+         30.0, 30.1, 30.2], dtype=np.float32)
+    d.precursor_scan_ids = np.array(
+        [-1, 100, 100, -1, 101, 101, -1, 102, 102], dtype=np.int32)
+    d._scan_id_to_index = np.zeros(200, dtype=np.int32)
+    d._scan_id_to_index[100] = 0
+    d._scan_id_to_index[101] = 3
+    d._scan_id_to_index[102] = 6
+    d._precursor_lower_mz = np.array(
+        [np.nan, 499.0, 500.0, np.nan, 499.0, 500.0,
+         np.nan, 499.0, 500.0])
+    d._precursor_upper_mz = np.array(
+        [np.nan, 501.0, 502.0, np.nan, 501.0, 502.0,
+         np.nan, 501.0, 502.0])
+
+    selected = d._select_ms2_xic_indices(
+        np.float32(20.0), 1, np.float32(500.6))
+
+    assert selected == [2, 5, 8]
+    assert [d._ms2_cycle_idx(index) for index in selected] == [0, 1, 2]
+
+
 def test_ms2_xic_empty_path_still_has_cycle_idx_in_dtype():
     """Early-return path (no matching window) must still emit cycle_idx."""
     d = DIAData.__new__(DIAData)

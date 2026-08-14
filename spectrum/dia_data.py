@@ -989,7 +989,13 @@ class DIAData:
         xic_cycle_window: int,
         precursor_mz: np.float32,
     ) -> list[int]:
-        """Select one isolation-window scan per neighboring DIA cycle."""
+        """Select at most one isolation-window scan per neighboring cycle.
+
+        Adjacent or staggered DIA windows may both contain a precursor at a
+        shared boundary.  Counting matching scans therefore does not equal
+        counting acquisition cycles.  Keep one deterministic, most-centered
+        window per cycle so downstream XIC offsets remain unique.
+        """
         if self.ms2_indexs is None or len(self.ms2_indexs) == 0:
             return []
 
@@ -1009,6 +1015,62 @@ class DIAData:
             if np.isnan(lo) or np.isnan(up):
                 return False
             return (lo - 0.1) <= precursor_mz <= (up + 0.1)
+
+        def _candidate_score(i: int) -> tuple[float, float, float, float, int]:
+            """Prefer a centered/narrow window; break ties reproducibly."""
+            global_idx = int(self.ms2_indexs[i])
+            lower = float(self._precursor_lower_mz[global_idx])
+            upper = float(self._precursor_upper_mz[global_idx])
+            width = upper - lower
+            normalized_center_distance = (
+                abs(float(precursor_mz) - (lower + upper) / 2.0) / width
+                if width > 0 else float("inf"))
+            return (
+                normalized_center_distance,
+                width if width > 0 else float("inf"),
+                lower,
+                abs(float(self.ms2_indexs_rt[i]) - float(rt)),
+                global_idx,
+            )
+
+        def _cycle(i: int) -> int:
+            return self._ms2_cycle_idx(int(self.ms2_indexs[i]))
+
+        def _collect_cycles(start: int, step: int,
+                            count: int) -> list[int]:
+            """Collect the best matching scan from each encountered cycle."""
+            if count <= 0:
+                return []
+            selected: list[int] = []
+            current_cycle = None
+            best_position = None
+            best_score = None
+            i = start
+            while 0 <= i < n_ms2:
+                cycle = _cycle(i)
+                if cycle < 0:
+                    i += step
+                    continue
+                if current_cycle is None:
+                    current_cycle = cycle
+                elif cycle != current_cycle:
+                    if best_position is not None:
+                        selected.append(int(self.ms2_indexs[best_position]))
+                        if len(selected) == count:
+                            break
+                    current_cycle = cycle
+                    best_position = None
+                    best_score = None
+                if _window_contains(i):
+                    score = _candidate_score(i)
+                    if best_score is None or score < best_score:
+                        best_position = i
+                        best_score = score
+                i += step
+            else:
+                if best_position is not None and len(selected) < count:
+                    selected.append(int(self.ms2_indexs[best_position]))
+            return selected
 
         center_idx = None
         min_diff = float('inf')
@@ -1037,34 +1099,40 @@ class DIAData:
                 "no MS2 window match: precursor_mz=%s", precursor_mz)
             return []
 
-        # Step 2: 向左收集 xic_cycle_window 个有效谱图
-        left_list = []
-        i = center_idx - 1
-        while i >= 0 and len(left_list) < xic_cycle_window:
-            global_idx = self.ms2_indexs[i]
-            lower = self._precursor_lower_mz[global_idx]
-            upper = self._precursor_upper_mz[global_idx]
-            if (not (np.isnan(lower) or np.isnan(upper)) and
-                    lower <= precursor_mz <= upper):
-                left_list.append(global_idx)
-            i -= 1
+        center_cycle = _cycle(center_idx)
+        if center_cycle < 0:
+            raise ValueError(
+                "selected MS2 scan does not map to an owning MS1 cycle")
 
-        # Step 3: 向右收集 xic_cycle_window 个有效谱图
-        right_list = []
-        i = center_idx + 1
-        while (i < len(self.ms2_indexs) and
-               len(right_list) < xic_cycle_window):
-            global_idx = self.ms2_indexs[i]
-            lower = self._precursor_lower_mz[global_idx]
-            upper = self._precursor_upper_mz[global_idx]
-            if (not (np.isnan(lower) or np.isnan(upper))
-                    and lower <= precursor_mz <= upper):
-                right_list.append(global_idx)
-            i += 1
+        # Expand to the full center-cycle block.  It may contain multiple
+        # overlapping windows that match the same precursor.
+        left_edge = center_idx
+        while left_edge > 0 and _cycle(left_edge - 1) == center_cycle:
+            left_edge -= 1
+        right_edge = center_idx
+        while right_edge + 1 < n_ms2 and \
+                _cycle(right_edge + 1) == center_cycle:
+            right_edge += 1
+        center_positions = [
+            i for i in range(left_edge, right_edge + 1)
+            if _window_contains(i)
+        ]
+        if not center_positions:
+            raise AssertionError("center DIA cycle lost its matching window")
+        center_position = min(center_positions, key=_candidate_score)
 
-        # Step 4: 合并（左 + 中心 + 右）
-        return left_list[::-1] + \
-            [self.ms2_indexs[center_idx]] + right_list
+        left_list = _collect_cycles(
+            left_edge - 1, -1, xic_cycle_window)
+        right_list = _collect_cycles(
+            right_edge + 1, 1, xic_cycle_window)
+        selected = left_list[::-1] + [
+            int(self.ms2_indexs[center_position])
+        ] + right_list
+        selected_cycles = [self._ms2_cycle_idx(index) for index in selected]
+        if len(selected_cycles) != len(set(selected_cycles)):
+            raise AssertionError(
+                "MS2 XIC selector returned duplicate acquisition cycles")
+        return selected
 
     def xic_ms2_charge_resolved_extract(
         self,
