@@ -3,10 +3,12 @@ import hashlib
 import logging
 import numpy as np
 import pandas as pd
+from pathlib import Path
 import pytest
 import shutil
 import torch
 from types import SimpleNamespace
+import yaml
 
 from spectrum.dia_data import XIC_DTYPE
 from spectrum.psm_info import PSMInfo
@@ -241,6 +243,15 @@ def test_xic_training_and_dataset_bound_checkpoint_roundtrip(tmp_path):
         load_checkpoint(checkpoint, source=source)
     monkeypatch.undo()
 
+    monkeypatch = pytest.MonkeyPatch()
+    original_model = checkpoint_module.model_implementation_contract
+    monkeypatch.setattr(
+        checkpoint_module, "model_implementation_contract",
+        lambda: {**original_model(), "sha256": "future-model"})
+    with pytest.raises(ValueError, match="different Phase 2 model"):
+        load_checkpoint(checkpoint, source=source)
+    monkeypatch.undo()
+
 
 def test_xic_protocol_requires_exact_full_frozen_assignments(
         tmp_path, monkeypatch):
@@ -342,6 +353,48 @@ def test_phase2_fixed_metrics_pin_error_positive_fp_fn_semantics():
     assert metrics["error_recall_at_fpr10"] == 1.0
 
 
+def test_phase2_preflight_rejects_model_adapter_channel_mismatch(tmp_path):
+    source = _write_training_signals(tmp_path, n_samples=2)
+    protocol = SimpleNamespace(source=source)
+    config = {
+        "model": {
+            "precursor_channels": 19,
+            "fragment_channels": 10,
+            "include_predicted_intensity": False,
+        },
+    }
+
+    with pytest.raises(ValueError, match="differ from the XIC adapter"):
+        experiment_module._validate_model_input_shape(protocol, config)
+
+
+def test_phase2_preflight_requires_all_reported_working_points():
+    protocol = SimpleNamespace(prepared=SimpleNamespace(
+        target_fprs=[0.01, 0.05]))
+
+    with pytest.raises(ValueError, match="lacks required FPR working points"):
+        experiment_module._validate_required_working_points(protocol)
+
+    protocol.prepared.target_fprs = [0.05, 0.10]
+    contract = experiment_module._validate_required_working_points(protocol)
+    assert contract["required_target_fprs"] == [0.05, 0.10]
+
+
+def test_phase2_preflight_accepts_make_generated_working_points():
+    from tools.spec_trainer.gen_cv_configs import to_cv_config
+
+    project_root = Path(__file__).resolve().parents[1]
+    source = yaml.safe_load((
+        project_root / "tools" / "spec_trainer" / "config"
+        / "in_2da_neg20.yaml").read_text(encoding="utf-8"))
+    generated = to_cv_config(source, "in_2da_neg20")
+    protocol = SimpleNamespace(prepared=SimpleNamespace(
+        target_fprs=generated["operating_point"]["target_fprs"]))
+
+    contract = experiment_module._validate_required_working_points(protocol)
+    assert contract["available_target_fprs"] == [0.05, 0.10]
+
+
 def test_phase2_experiment_smoke_writes_canonical_frozen_test_bundle(
         tmp_path, monkeypatch):
     source = _write_training_signals(tmp_path, n_samples=18)
@@ -441,6 +494,10 @@ def test_phase2_experiment_smoke_writes_canonical_frozen_test_bundle(
         source.root, staging, final, prepare_only=False)
 
     table = pd.read_csv(staging / "fixed_test_summary.csv")
+    fixed_predictions = pd.read_csv(
+        staging / "predictions" / "fixed_test_predictions.csv")
+    oof_predictions = pd.read_csv(
+        staging / "predictions" / "xic_m20_seed42_train_oof.csv")
     assert summary["metric_semantics"] \
         == "error_identification_positive_v1"
     assert summary["positive_class"] == "incorrect_identification"
@@ -448,6 +505,11 @@ def test_phase2_experiment_smoke_writes_canonical_frozen_test_bundle(
         "LightGBM_M20", "XIC_M20_seed42", "XIC_M20_ensemble"}
     assert {"roc_auc", "error_pr_auc", "fnr_at_fpr5",
             "error_recall_at_fpr10"} <= set(table.columns)
+    for predictions in (fixed_predictions, oof_predictions):
+        assert set(predictions["metric_semantics"]) == {
+            "error_identification_positive_v1"}
+        assert set(predictions["positive_class"]) == {
+            "incorrect_identification"}
     assert (staging / "models" / "xic_m20_seed42.fold0.pt").is_file()
     assert (staging / "models" / "xic_m20_seed42.fold1.pt").is_file()
     assert (staging / "COMPLETE").is_file()

@@ -516,6 +516,35 @@ def test_resumable_store_rejects_different_input_identity(tmp_path):
             resume_identity={"snapshot": "second"})
 
 
+def test_resumable_store_rejects_tampered_committed_shard(tmp_path):
+    first, settings = _sample("resume-a")
+    output = tmp_path / "signals"
+
+    def interrupted(_completed, _checkpoint):
+        yield first
+        raise RuntimeError("stop")
+
+    with pytest.raises(RuntimeError, match="stop"):
+        write_signal_dataset(
+            interrupted, output, settings, build_metadata={"mode": "test"},
+            shard_size=1, resume=True,
+            resume_identity={"snapshot": "fixed"})
+
+    intensity_path = (
+        tmp_path / ".signals.building" / "shards" / "shard_00000"
+        / "precursor_intensity.npy")
+    intensity = np.load(intensity_path, mmap_mode="r+")
+    intensity[0, 0, 0] += 1.0
+    intensity.flush()
+    del intensity
+
+    with pytest.raises(ValueError, match="committed Phase 2 shard changed"):
+        write_signal_dataset(
+            lambda *_args: (), output, settings,
+            build_metadata={"mode": "test"}, shard_size=1, resume=True,
+            resume_identity={"snapshot": "fixed"})
+
+
 def test_pilot_selection_is_balanced_and_row_order_independent():
     rows = []
     for dataset in ("2da", "5da", "normal"):

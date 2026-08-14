@@ -141,7 +141,20 @@ def _clean_uncommitted_build_artifacts(staging: Path,
     if shards.is_dir():
         for path in shards.iterdir():
             if path.name not in committed_shards:
-                shutil.rmtree(path, ignore_errors=True)
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink()
+    partial_root = staging / "resume_manifests"
+    if partial_root.is_dir():
+        committed_manifests = {
+            f"{shard_name}.parquet" for shard_name in committed_shards}
+        for path in partial_root.iterdir():
+            if path.name not in committed_manifests:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink()
     for relative in (
         "manifest.parquet", "schema.json", "build_report.json",
         "checksums.json", "COMPLETE",
@@ -150,6 +163,43 @@ def _clean_uncommitted_build_artifacts(staging: Path,
         if path.exists():
             path.unlink()
     shutil.rmtree(staging / "audit", ignore_errors=True)
+
+
+def _artifact_identity(path: Path) -> dict:
+    return {
+        "sha256": sha256_file(path),
+        "size_bytes": path.stat().st_size,
+    }
+
+
+def _committed_shard_identity(staging: Path, shard_name: str) -> dict:
+    shard_root = staging / "shards" / shard_name
+    manifest_path = staging / "resume_manifests" / f"{shard_name}.parquet"
+    if not shard_root.is_dir() or not manifest_path.is_file():
+        raise ValueError(
+            f"committed Phase 2 shard is incomplete: {shard_name}")
+    paths = sorted(shard_root.iterdir())
+    expected = {f"{name}.npy" for name in _ALL_ARRAYS}
+    if {path.name for path in paths} != expected or \
+            not all(path.is_file() for path in paths):
+        raise ValueError(
+            f"committed Phase 2 shard has unexpected artifacts: "
+            f"{shard_name}")
+    artifacts = {
+        path.name: _artifact_identity(path) for path in paths
+    }
+    return {
+        "manifest": _artifact_identity(manifest_path),
+        "artifacts": artifacts,
+    }
+
+
+def _verify_committed_shard(staging: Path, shard_name: str,
+                            expected: dict) -> None:
+    observed = _committed_shard_identity(staging, shard_name)
+    if observed != expected:
+        raise ValueError(
+            f"committed Phase 2 shard changed before resume: {shard_name}")
 
 
 def _open_build_staging(staging: Path, settings: ExtractionSettings,
@@ -172,35 +222,56 @@ def _open_build_staging(staging: Path, settings: ExtractionSettings,
             "extraction": settings.to_dict(),
             "resume_identity": safe_identity,
             "build_metadata": {},
+            "committed_shards": {},
             "n_committed_shards": 0,
             "n_committed_samples": 0,
         }
         _atomic_json(state_path, state)
 
-    partial_root = staging / "resume_manifests"
-    manifests = sorted(partial_root.glob("shard_*.parquet")) \
-        if partial_root.is_dir() else []
+    committed = state.get("committed_shards")
+    if not isinstance(committed, dict):
+        raise ValueError(
+            "resumable build lacks committed-shard integrity records")
+    for shard_name, identity in committed.items():
+        _verify_committed_shard(staging, str(shard_name), identity)
+    committed_shards = set(map(str, committed))
+    expected_shards = {
+        f"shard_{index:05d}" for index in range(len(committed_shards))}
+    if committed_shards != expected_shards:
+        raise ValueError("resumable build committed shard sequence is invalid")
+    _clean_uncommitted_build_artifacts(staging, committed_shards)
+    manifests = [
+        staging / "resume_manifests" / f"{shard_name}.parquet"
+        for shard_name in sorted(committed_shards)
+    ]
     frames = [pd.read_parquet(path) for path in manifests]
     rows = (
         pd.concat(frames, ignore_index=True).to_dict("records")
         if frames else []
     )
-    committed_shards = {str(row["shard"]) for row in rows}
-    if len(committed_shards) != len(manifests):
+    manifest_shards = {str(row["shard"]) for row in rows}
+    if manifest_shards != committed_shards or \
+            len(committed_shards) != len(manifests):
         raise ValueError("resumable build has inconsistent shard manifests")
-    _clean_uncommitted_build_artifacts(staging, committed_shards)
+    if state.get("n_committed_shards") != len(committed_shards) or \
+            state.get("n_committed_samples") != len(rows):
+        raise ValueError("resumable build checkpoint counts are inconsistent")
     return rows, state
 
 
 def _checkpoint_build(staging: Path, shard_index: int, rows: list[dict],
                       state: dict, build_metadata: dict,
                       n_samples: int) -> None:
+    shard_name = f"shard_{shard_index:05d}"
     _atomic_parquet(
-        staging / "resume_manifests" / f"shard_{shard_index:05d}.parquet",
+        staging / "resume_manifests" / f"{shard_name}.parquet",
         pd.DataFrame(rows))
+    committed = dict(state.get("committed_shards", {}))
+    committed[shard_name] = _committed_shard_identity(staging, shard_name)
     state.update({
         "status": "building",
         "build_metadata": _json_safe_value(build_metadata),
+        "committed_shards": committed,
         "n_committed_shards": shard_index + 1,
         "n_committed_samples": n_samples,
     })

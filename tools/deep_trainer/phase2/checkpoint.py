@@ -7,12 +7,22 @@ from pathlib import Path
 
 import torch
 
+from artifact_identity import sha256_file
+from . import model as model_module
 from .data import XICDataset, input_adapter_contract
 from .model import model_from_architecture
 from .training import predict_trust
 
 
-CHECKPOINT_SCHEMA = "metabolic_label_xic_fusion_checkpoint_v2"
+CHECKPOINT_SCHEMA = "metabolic_label_xic_fusion_checkpoint_v3"
+
+
+def model_implementation_contract() -> dict:
+    """Bind checkpoints to the exact code that interprets their weights."""
+    return {
+        "schema": "phase2_xic_model_implementation_v1",
+        "sha256": sha256_file(Path(model_module.__file__).resolve()),
+    }
 
 
 def save_checkpoint(path, fitted, *, dataset_identity: dict, metadata: dict):
@@ -24,6 +34,7 @@ def save_checkpoint(path, fitted, *, dataset_identity: dict, metadata: dict):
         "input_adapter": input_adapter_contract(
             include_predicted_intensity=(
                 fitted.model.include_predicted_intensity)),
+        "model_implementation": model_implementation_contract(),
         "training_history": list(fitted.history),
         "best_epoch": int(fitted.best_epoch),
         "best_validation_score": float(fitted.best_validation_score),
@@ -49,6 +60,10 @@ def load_checkpoint(path, *, source=None, device="cpu"):
     if payload.get("input_adapter") != expected_adapter:
         raise ValueError(
             "checkpoint uses a different Phase 2 input adapter contract")
+    if payload.get("model_implementation") != \
+            model_implementation_contract():
+        raise ValueError(
+            "checkpoint uses a different Phase 2 model implementation")
     model.load_state_dict(payload["model_state_dict"])
     model.to(device)
     model.eval()

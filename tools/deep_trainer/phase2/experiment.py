@@ -232,6 +232,50 @@ def _model_names(config: dict, available) -> list[str]:
     return result
 
 
+def _validate_model_input_shape(protocol, config: dict) -> dict:
+    """Fail during preflight if the model disagrees with the XIC adapter."""
+    include_prediction = bool(
+        config["model"].get("include_predicted_intensity", False))
+    sample = XICDataset(
+        protocol.source, [0],
+        include_predicted_intensity=include_prediction)[0]
+    observed = {
+        "precursor_channels": int(sample["precursor"].shape[0]),
+        "fragment_channels": int(sample["fragment"].shape[1]),
+    }
+    configured = {
+        "precursor_channels": int(
+            config["model"].get("precursor_channels", 20)),
+        "fragment_channels": int(
+            config["model"].get("fragment_channels", 10)),
+    }
+    if configured != observed:
+        raise ValueError(
+            "Phase 2 model input channels differ from the XIC adapter: "
+            f"configured={configured}, observed={observed}")
+    return {
+        "validated_before_training": True,
+        "adapter_output_channels": observed,
+    }
+
+
+def _validate_required_working_points(protocol) -> dict:
+    # The frozen LightGBM prediction bundle currently publishes formal vote
+    # columns at FPR 5% and 10%. Keep Phase 2 aligned to that actual producer
+    # contract; additional configured points remain supported but optional.
+    required = {0.05, 0.10}
+    configured = {float(value) for value in protocol.prepared.target_fprs}
+    missing = sorted(required - configured)
+    if missing:
+        raise ValueError(
+            "Phase 2 frozen protocol lacks required FPR working points: "
+            f"{missing}")
+    return {
+        "required_target_fprs": sorted(required),
+        "available_target_fprs": sorted(configured),
+    }
+
+
 def _validation_score(labels, trust_scores) -> float:
     return float(evaluate_ranking(labels, trust_scores)["roc_auc"])
 
@@ -419,6 +463,8 @@ def _fit_one_pool(protocol, model_name: str, test: pd.DataFrame,
             protocol.prepared.group_col,
         ) if column in train))
     oof_frame = train[identity_columns].copy()
+    oof_frame.insert(0, "positive_class", "incorrect_identification")
+    oof_frame.insert(0, "metric_semantics", METRIC_SEMANTICS_VERSION)
     oof_frame["outer_fold"] = folds
     oof_frame["trust_score"] = oof
     oof_frame["error_score"] = 1.0 - oof
@@ -641,6 +687,8 @@ def _run_staging(config_path: Path, split_config_path: Path,
     protocol = prepare_xic_protocol(
         str(signal_root), str(split_config_path), feature_root,
         str(protocol_root))
+    protocol.validation["working_point_contract"] = \
+        _validate_required_working_points(protocol)
     include_prediction = bool(
         config["model"].get("include_predicted_intensity", False))
     if include_prediction and not protocol.validation[
@@ -648,6 +696,8 @@ def _run_staging(config_path: Path, split_config_path: Path,
         raise ValueError(
             "prediction-enabled model requires an XIC dataset built with "
             "prediction.include=true")
+    protocol.validation["model_input_shape"] = _validate_model_input_shape(
+        protocol, config)
     _atomic_json(staging / "preflight.json", protocol.validation)
     manifest_columns = list(dict.fromkeys(
         column for column in (
@@ -688,6 +738,8 @@ def _run_staging(config_path: Path, split_config_path: Path,
             protocol.prepared.group_col,
         ) if column in test))
     predictions = test[identity].copy()
+    predictions.insert(0, "positive_class", "incorrect_identification")
+    predictions.insert(0, "metric_semantics", METRIC_SEMANTICS_VERSION)
     model_results = {}
     model_predictions = {}
     flat_rows = []

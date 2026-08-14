@@ -172,7 +172,9 @@ make build-deep-xic-full \
 全量构建严格覆盖冻结协议的全部 train/test sample ID。它按 raw 逐个加载、按
 m/z panel 一次扫描一张 MS1/MS2 谱图、流式写入 shard；中断后再次执行同一命令
 会读取 `.building/RESUME_STATE.json`，只复用已经原子提交且来源指纹完全一致的
-shard。配置、划分、raw、PSM、DIA cache、冻结协议，或任一张量生成模块的源码
+shard；每个已提交 shard 的 manifest 和全部 NPY 均在 checkpoint 中记录 SHA256，
+resume 前重新验证，损坏或被修改的 shard 不会被重新纳入最终 checksum。配置、
+划分、raw、PSM、DIA cache、冻结协议，或任一张量生成模块的源码
 内容有变化时拒绝 resume，避免不同算法的 shard 混入同一数据集。启用谱库预测
 时，pepdata、RT、MS2 prediction、FASTA 和 modification 文件也全部记录 SHA256。
 
@@ -195,7 +197,8 @@ make train-deep-xic-combined \
 默认配置是 `phase2/config/xic_fusion.yaml`，训练 M20 的 3 个随机种子 × 5 个冻结
 outer folds，共 15 个成员。每个成员只在该折 inner-training rows 拟合，在冻结的
 inner-validation rows 上用 ROC-AUC early stop，并对自己的 outer-OOF rows 校准
-FPR 1%/5%/10% error-score 阈值。固定测试集的正式决策是 15 个成员分别应用各自
+冻结协议实际发布的 FPR 5%/10% error-score 阈值（额外工作点若有则一并保留）。
+固定测试集的正式决策是 15 个成员分别应用各自
 OOF 阈值后多数投票；不会把单成员阈值直接应用到平均 ensemble score。
 
 模型输入只有：
@@ -234,6 +237,6 @@ python -m tools.deep_trainer.phase2.experiment \
 训练结果包括 fold checkpoint、严格 OOF 分数、固定测试逐样本分数、15 成员多数
 投票工作点、分数据域指标，以及相同测试行/相同 leakage group 上相对冻结
 LightGBM M20 的 paired cluster bootstrap。Checkpoint 绑定 XIC 数据集的 checksum
-identity 和精确输入归一化/mask adapter contract；换了 shard 内容或输入适配规则
-后不会静默推理。结果 bundle 也带 `checksums.json` 与 `COMPLETE`，覆盖发布中断时
-会恢复旧 bundle。
+identity、精确输入归一化/mask adapter contract 和模型实现源码 hash；换了 shard
+内容、输入适配规则或模型权重解释代码后不会静默推理。结果 bundle 也带
+`checksums.json` 与 `COMPLETE`，覆盖发布中断时会恢复旧 bundle。
