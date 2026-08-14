@@ -597,7 +597,7 @@ def test_multi_batch_work_emits_R4_precursor_keys_in_empty_xic_branch():
         def xic_ms2_peaks_extract(self, *a, **kw):
             return np.array([], dtype=XIC_DTYPE), 0.0
 
-        def get_window_info(self, precursor_mz):
+        def get_window_info(self, precursor_mz, rt=None):
             return {"width": 0.0, "centering": 0.0,
                     "lower": 0.0, "upper": 0.0, "center": 0.0}
 

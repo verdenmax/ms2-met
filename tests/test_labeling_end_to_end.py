@@ -132,13 +132,13 @@ class _EmptyRecordingDIA:
     def xic_ms2_peaks_extract(self, *args, **kwargs):
         return _empty_xic(), 0.0
 
-    def get_window_info(self, mz):
+    def get_window_info(self, mz, rt=None):
         return {
             "lower": mz - 1.0, "upper": mz + 1.0,
             "width": 2.0, "centering": 0.5,
         }
 
-    def check_in_same_ms2(self, *args):
+    def check_in_same_ms2(self, *args, **kwargs):
         return False
 
     def check_in_raw(self, mz):
@@ -284,7 +284,7 @@ def test_precursor_window_position_is_clamped_to_physical_interval():
     from workflows.single_work import single_pair_work
 
     class _ToleranceEdgeDIA(_EmptyRecordingDIA):
-        def get_window_info(self, mz):
+        def get_window_info(self, mz, rt=None):
             return {
                 "lower": mz - 1.0, "upper": mz + 1.0,
                 "width": 2.0, "centering": 1.05,

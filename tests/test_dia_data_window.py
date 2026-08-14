@@ -51,6 +51,16 @@ def test_get_window_info_boundary_inclusive_with_tolerance():
     assert info["upper"] == 502.0
 
 
+def test_get_window_info_boundary_tie_uses_canonical_lower_window():
+    """An exact shared boundary uses the deterministic lower-bound tie-break."""
+    dia = _make_minimal_dia([(500.0, 502.0), (502.0, 504.0)])
+
+    info = dia.get_window_info(502.0)
+
+    assert info["lower"] == 500.0
+    assert info["upper"] == 502.0
+
+
 def test_ms2_cycle_idx_maps_to_owning_ms1_position():
     """MS2 cycle_idx = position of owning MS1 in ms1_indexs."""
     d = DIAData.__new__(DIAData)
@@ -187,6 +197,18 @@ def test_ms2_xic_selects_one_centered_window_per_overlapping_cycle():
     assert selected == [2, 5, 8]
     assert [d._ms2_cycle_idx(index) for index in selected] == [0, 1, 2]
 
+    # Window metadata and same-window routing must use the same selected
+    # center scan rather than the first matching/left-boundary window.
+    info = d.get_window_info(500.6, rt=20.0)
+    assert selected[1] == 5
+    assert info["lower"] == 500.0
+    assert info["upper"] == 502.0
+    assert info["centering"] == pytest.approx(0.3)
+    assert d.check_in_same_ms2(500.6, 500.8, rt=20.0) is True
+    # Both masses occur in both overlapping windows, but their respective
+    # most-centered scans differ.
+    assert d.check_in_same_ms2(500.4, 500.6, rt=20.0) is False
+
     # The historical table-feature API and the Phase 2 panel API must route
     # through the exact same scan selection policy.
     proton = 1.00727646677
@@ -206,6 +228,53 @@ def test_ms2_xic_selects_one_centered_window_per_overlapping_cycle():
 
     assert panel[0][1]["cycle_idx"].tolist() == [0, 1, 2]
     assert legacy["cycle_idx"].tolist() == [0, 1, 2]
+
+
+def test_window_resolution_follows_rt_for_staggered_cycles():
+    """Metadata/routing must follow the cycle actually selected at PSM RT."""
+    d = DIAData.__new__(DIAData)
+    # Cycle 0 and cycle 1 use shifted/staggered isolation boundaries.
+    d.ms1_indexs = np.array([0, 3], dtype=np.int32)
+    d.ms1_indexs_rt = np.array([10.0, 20.0], dtype=np.float32)
+    d.ms2_indexs = np.array([1, 2, 4, 5], dtype=np.int32)
+    d.ms2_indexs_rt = np.array(
+        [10.1, 10.2, 20.1, 20.2], dtype=np.float32)
+    d.rt_values = np.array(
+        [10.0, 10.1, 10.2, 20.0, 20.1, 20.2], dtype=np.float32)
+    d.precursor_scan_ids = np.array(
+        [-1, 100, 100, -1, 101, 101], dtype=np.int32)
+    d._scan_id_to_index = np.zeros(200, dtype=np.int32)
+    d._scan_id_to_index[100] = 0
+    d._scan_id_to_index[101] = 3
+    d._precursor_lower_mz = np.array(
+        [np.nan, 499.0, 501.0, np.nan, 499.5, 501.5])
+    d._precursor_upper_mz = np.array(
+        [np.nan, 501.0, 503.0, np.nan, 501.5, 503.5])
+
+    early = d.get_window_info(501.4, rt=10.0)
+    late = d.get_window_info(501.4, rt=20.0)
+
+    assert (early["lower"], early["upper"]) == (501.0, 503.0)
+    assert (late["lower"], late["upper"]) == (499.5, 501.5)
+    assert d.get_window_info(501.4, rt=20.0)["lower"] == 499.5
+    assert d._select_ms2_xic_indices(10.0, 0, 501.4) == [2]
+    assert d._select_ms2_xic_indices(20.0, 0, 501.4) == [4]
+
+
+def test_window_resolution_checks_both_sides_of_rt_insertion_point():
+    """The closest matching cycle may be immediately before insertion."""
+    d = DIAData.__new__(DIAData)
+    d.ms1_indexs = np.array([0, 2], dtype=np.int32)
+    d.ms2_indexs = np.array([1, 3], dtype=np.int32)
+    d.ms2_indexs_rt = np.array([9.0, 11.0], dtype=np.float32)
+    d.precursor_scan_ids = np.array([-1, 100, -1, 101], dtype=np.int32)
+    d._scan_id_to_index = np.zeros(200, dtype=np.int32)
+    d._scan_id_to_index[100] = 0
+    d._scan_id_to_index[101] = 2
+    d._precursor_lower_mz = np.array([np.nan, 499.0, np.nan, 499.0])
+    d._precursor_upper_mz = np.array([np.nan, 501.0, np.nan, 501.0])
+
+    assert d._select_ms2_xic_indices(9.2, 0, 500.0) == [1]
 
 
 def test_ms2_xic_empty_path_still_has_cycle_idx_in_dtype():

@@ -26,6 +26,7 @@ DEFAULT_CENTROID_REL_THRESHOLD: float = 1e-3
 # model.  Prediction-based features import this same constant so observed and
 # predicted intensities have identical charge semantics.
 OBSERVED_FRAGMENT_CHARGES: tuple[int, ...] = (1, 2)
+ISOLATION_WINDOW_TOLERANCE_DA: float = 0.1
 XIC_DTYPE = np.dtype([
     ("rt", "f8"), ("ppm_error", "f8"),
     ("intensity", "f8"), ("cycle_idx", "i4"),
@@ -848,8 +849,9 @@ class DIAData:
 
     def check_in_raw(self, precursor_mz) -> bool:
         """ 检查这个 mz 是否在当前 raw 中"""
-        if (precursor_mz <= self._max_mz_value + 0.1
-                and precursor_mz >= self._min_mz_value - 0.1):
+        if (self._min_mz_value - ISOLATION_WINDOW_TOLERANCE_DA
+                <= precursor_mz
+                <= self._max_mz_value + ISOLATION_WINDOW_TOLERANCE_DA):
             return True
 
         # P1-6 (Silent-I3, 2026-06-03 audit): was logging.warn per call
@@ -861,15 +863,25 @@ class DIAData:
             self._max_mz_value, self._min_mz_value, precursor_mz)
         return False
 
-    def check_in_same_ms2(self, p1, p2) -> bool:
-        """ 检查这两个是否在同一个 ms2 中"""
+    def check_in_same_ms2(
+        self, p1: float, p2: float, rt: float | None = None,
+    ) -> bool:
+        """Return whether two precursors resolve to the same physical scan.
 
-        idx1 = np.searchsorted(self._cycle_left_precursor, p1)
-        idx2 = np.searchsorted(self._cycle_left_precursor, p2)
+        ``rt`` should be supplied by production callers.  It makes the answer
+        follow the exact center-cycle selection used for XIC extraction on
+        overlapping or staggered window schemes.  The context-free fallback
+        remains for compatibility with callers that only have precursor m/z.
+        """
+        left = self._resolve_ms2_window_position(p1, rt)
+        right = self._resolve_ms2_window_position(p2, rt)
+        if left is None or right is None:
+            return False
+        return int(self.ms2_indexs[left]) == int(self.ms2_indexs[right])
 
-        return idx1 == idx2
-
-    def get_window_info(self, precursor_mz: float) -> dict:
+    def get_window_info(
+        self, precursor_mz: float, rt: float | None = None,
+    ) -> dict:
         """获取包含该 precursor_mz 的 DIA 窗口信息。
         返回 {
             "width": 窗口宽度Da,
@@ -880,31 +892,23 @@ class DIAData:
         """
         default = {"width": 0.0, "centering": 0.5,
                    "lower": float("nan"), "upper": float("nan")}
-        if (self._precursor_lower_mz is None or
-                self._precursor_upper_mz is None or
-                self.ms2_indexs is None or
-                len(self.ms2_indexs) == 0):
+        if (self._precursor_lower_mz is None
+                or self._precursor_upper_mz is None):
             return default
-
-        cycle_len = (len(self._cycle_left_precursor)
-                     if self._cycle_left_precursor is not None
-                     else len(self.ms2_indexs))
-        search_range = min(len(self.ms2_indexs), max(cycle_len, 50))
-
-        for i in range(search_range):
-            gidx = self.ms2_indexs[i]
-            lower = self._precursor_lower_mz[gidx]
-            upper = self._precursor_upper_mz[gidx]
-            if np.isnan(lower) or np.isnan(upper):
-                continue
-            if lower - 0.1 <= precursor_mz <= upper + 0.1:
-                width = float(upper - lower)
-                centering = (float(precursor_mz - lower) / width
-                             if width > 0 else 0.5)
-                return {"width": width, "centering": centering,
-                        "lower": float(lower), "upper": float(upper)}
-
-        return default
+        position = self._resolve_ms2_window_position(precursor_mz, rt)
+        if position is None:
+            return default
+        global_idx = int(self.ms2_indexs[position])
+        lower = float(self._precursor_lower_mz[global_idx])
+        upper = float(self._precursor_upper_mz[global_idx])
+        width = upper - lower
+        return {
+            "width": float(width),
+            "centering": (
+                float(precursor_mz - lower) / width if width > 0 else 0.5),
+            "lower": lower,
+            "upper": upper,
+        }
 
     def _check_is_ms1(self, index: int) -> bool:
         """ 检查这个下标对应的谱图是不是一个ms1"""
@@ -937,9 +941,9 @@ class DIAData:
         precursor_scan_ids[global_ms2_idx]. Return -1 if the owning MS1 isn't
         found in ms1_indexs (defensive; shouldn't happen on well-formed data).
         """
-        if (self.precursor_scan_ids is None or
-                self._scan_id_to_index is None or
-                self.ms1_indexs is None):
+        if (getattr(self, "precursor_scan_ids", None) is None or
+                getattr(self, "_scan_id_to_index", None) is None or
+                getattr(self, "ms1_indexs", None) is None):
             return -1
         ms1_scan_id = int(self.precursor_scan_ids[global_ms2_idx])
         if ms1_scan_id < 0:
@@ -983,6 +987,116 @@ class DIAData:
         logging.info(f"idx: {idx}")
         return self.get_spectrum_by_index(idx)
 
+    def _isolation_window_contains_position(
+        self, ms2_position: int, precursor_mz: float,
+    ) -> bool:
+        """Test one local ``ms2_indexs`` position with canonical tolerance."""
+        global_idx = int(self.ms2_indexs[ms2_position])
+        lower = float(self._precursor_lower_mz[global_idx])
+        upper = float(self._precursor_upper_mz[global_idx])
+        if not np.isfinite(lower) or not np.isfinite(upper):
+            return False
+        return bool(
+            lower - ISOLATION_WINDOW_TOLERANCE_DA <= precursor_mz
+            <= upper + ISOLATION_WINDOW_TOLERANCE_DA)
+
+    def _isolation_window_candidate_score(
+        self,
+        ms2_position: int,
+        precursor_mz: float,
+        rt: float | None,
+    ) -> tuple[float, float, float, float, int]:
+        """Rank matching windows with the canonical deterministic policy."""
+        global_idx = int(self.ms2_indexs[ms2_position])
+        lower = float(self._precursor_lower_mz[global_idx])
+        upper = float(self._precursor_upper_mz[global_idx])
+        width = upper - lower
+        normalized_center_distance = (
+            abs(float(precursor_mz) - (lower + upper) / 2.0) / width
+            if width > 0 else float("inf"))
+        rt_distance = (
+            abs(float(self.ms2_indexs_rt[ms2_position]) - float(rt))
+            if rt is not None else 0.0)
+        return (
+            normalized_center_distance,
+            width if width > 0 else float("inf"),
+            lower,
+            rt_distance,
+            global_idx,
+        )
+
+    def _resolve_ms2_window_position(
+        self, precursor_mz: float, rt: float | None,
+    ) -> int | None:
+        """Resolve the canonical center-window position for one precursor."""
+        if self.ms2_indexs is None or len(self.ms2_indexs) == 0:
+            return None
+
+        n_ms2 = len(self.ms2_indexs)
+        contains = self._isolation_window_contains_position
+        score = self._isolation_window_candidate_score
+
+        if rt is None:
+            # Compatibility fallback for metadata-only callers.  Production
+            # extraction supplies RT so staggered schemes resolve by cycle.
+            matching = [
+                position for position in range(n_ms2)
+                if contains(position, precursor_mz)
+            ]
+            return (min(matching, key=lambda position: score(
+                position, precursor_mz, None)) if matching else None)
+
+        pos = int(np.searchsorted(self.ms2_indexs_rt, rt))
+        center_position = None
+        min_rt_distance = float("inf")
+
+        # Find the closest matching scan on each side of the insertion point.
+        position = min(pos - 1, n_ms2 - 1)
+        while position >= 0:
+            if contains(position, precursor_mz):
+                center_position = position
+                min_rt_distance = abs(
+                    float(self.ms2_indexs_rt[position]) - float(rt))
+                break
+            position -= 1
+
+        position = pos
+        while position < n_ms2:
+            if contains(position, precursor_mz):
+                distance = abs(
+                    float(self.ms2_indexs_rt[position]) - float(rt))
+                if distance < min_rt_distance:
+                    center_position = position
+                break
+            position += 1
+
+        if center_position is None:
+            return None
+
+        center_cycle = self._ms2_cycle_idx(
+            int(self.ms2_indexs[center_position]))
+        if center_cycle < 0:
+            raise ValueError(
+                "selected MS2 scan does not map to an owning MS1 cycle")
+
+        left_edge = center_position
+        while left_edge > 0 and self._ms2_cycle_idx(
+                int(self.ms2_indexs[left_edge - 1])) == center_cycle:
+            left_edge -= 1
+        right_edge = center_position
+        while right_edge + 1 < n_ms2 and self._ms2_cycle_idx(
+                int(self.ms2_indexs[right_edge + 1])) == center_cycle:
+            right_edge += 1
+
+        cycle_matches = [
+            position for position in range(left_edge, right_edge + 1)
+            if contains(position, precursor_mz)
+        ]
+        if not cycle_matches:
+            raise AssertionError("center DIA cycle lost its matching window")
+        return min(cycle_matches, key=lambda position: score(
+            position, precursor_mz, rt))
+
     def _select_ms2_xic_indices(
         self,
         rt: np.float32,
@@ -999,39 +1113,7 @@ class DIAData:
         if self.ms2_indexs is None or len(self.ms2_indexs) == 0:
             return []
 
-        # Step 1: 找到 _ms2_rt_values 中最接近 rt 的位置
-        pos = np.searchsorted(self.ms2_indexs_rt, rt)
-
-        # Step 1b: 从 pos 向两侧无界扩展，找最近的、窗口含 precursor_mz 的 MS2 谱图。
-        # DIA 每 cycle 轮询 N 个隔离窗口，含 precursor_mz 的窗口每 N 个 MS2 谱图
-        # 才出现一次（N 常 20-70）；固定 ±5 在 N>5 时几乎必然漏掉 → 空 XIC。
-        # 与下方 Step 2/3 的无界左右收集保持一致。
-        n_ms2 = len(self.ms2_indexs_rt)
-
-        def _window_contains(i: int) -> bool:
-            gidx = self.ms2_indexs[i]
-            lo = self._precursor_lower_mz[gidx]
-            up = self._precursor_upper_mz[gidx]
-            if np.isnan(lo) or np.isnan(up):
-                return False
-            return (lo - 0.1) <= precursor_mz <= (up + 0.1)
-
-        def _candidate_score(i: int) -> tuple[float, float, float, float, int]:
-            """Prefer a centered/narrow window; break ties reproducibly."""
-            global_idx = int(self.ms2_indexs[i])
-            lower = float(self._precursor_lower_mz[global_idx])
-            upper = float(self._precursor_upper_mz[global_idx])
-            width = upper - lower
-            normalized_center_distance = (
-                abs(float(precursor_mz) - (lower + upper) / 2.0) / width
-                if width > 0 else float("inf"))
-            return (
-                normalized_center_distance,
-                width if width > 0 else float("inf"),
-                lower,
-                abs(float(self.ms2_indexs_rt[i]) - float(rt)),
-                global_idx,
-            )
+        n_ms2 = len(self.ms2_indexs)
 
         def _cycle(i: int) -> int:
             return self._ms2_cycle_idx(int(self.ms2_indexs[i]))
@@ -1061,8 +1143,10 @@ class DIAData:
                     current_cycle = cycle
                     best_position = None
                     best_score = None
-                if _window_contains(i):
-                    score = _candidate_score(i)
+                if self._isolation_window_contains_position(
+                        i, precursor_mz):
+                    score = self._isolation_window_candidate_score(
+                        i, precursor_mz, rt)
                     if best_score is None or score < best_score:
                         best_position = i
                         best_score = score
@@ -1072,26 +1156,9 @@ class DIAData:
                     selected.append(int(self.ms2_indexs[best_position]))
             return selected
 
-        center_idx = None
-        min_diff = float('inf')
-        # 向左（含 pos）找最近的匹配窗口
-        i = min(pos, n_ms2 - 1)
-        while i >= 0:
-            if _window_contains(i):
-                center_idx = i
-                min_diff = abs(self.ms2_indexs_rt[i] - rt)
-                break
-            i -= 1
-        # 向右（pos 之后）找最近的匹配窗口，与 rt 更近者胜出
-        i = pos + 1
-        while i < n_ms2:
-            if _window_contains(i):
-                if abs(self.ms2_indexs_rt[i] - rt) < min_diff:
-                    center_idx = i
-                break
-            i += 1
-
-        if center_idx is None:
+        center_position = self._resolve_ms2_window_position(
+            precursor_mz, float(rt))
+        if center_position is None:
             # P1-6 (Silent-I3, 2026-06-03 audit): debug + counter instead
             # of per-call warn.
             self._n_out_of_window_xic += 1
@@ -1099,27 +1166,17 @@ class DIAData:
                 "no MS2 window match: precursor_mz=%s", precursor_mz)
             return []
 
-        center_cycle = _cycle(center_idx)
-        if center_cycle < 0:
-            raise ValueError(
-                "selected MS2 scan does not map to an owning MS1 cycle")
+        center_cycle = _cycle(center_position)
 
         # Expand to the full center-cycle block.  It may contain multiple
         # overlapping windows that match the same precursor.
-        left_edge = center_idx
+        left_edge = center_position
         while left_edge > 0 and _cycle(left_edge - 1) == center_cycle:
             left_edge -= 1
-        right_edge = center_idx
+        right_edge = center_position
         while right_edge + 1 < n_ms2 and \
                 _cycle(right_edge + 1) == center_cycle:
             right_edge += 1
-        center_positions = [
-            i for i in range(left_edge, right_edge + 1)
-            if _window_contains(i)
-        ]
-        if not center_positions:
-            raise AssertionError("center DIA cycle lost its matching window")
-        center_position = min(center_positions, key=_candidate_score)
 
         left_list = _collect_cycles(
             left_edge - 1, -1, xic_cycle_window)

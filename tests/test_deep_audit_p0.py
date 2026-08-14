@@ -81,10 +81,10 @@ class _FakeDIA:
     def check_in_raw(self, mz):
         return True
 
-    def check_in_same_ms2(self, p1, p2):
+    def check_in_same_ms2(self, p1, p2, rt=None):
         return False
 
-    def get_window_info(self, mz):
+    def get_window_info(self, mz, rt=None):
         return {"width": 2.0, "centering": 0.5,
                 "lower": mz - 1.0, "upper": mz + 1.0,
                 "split_window": False}

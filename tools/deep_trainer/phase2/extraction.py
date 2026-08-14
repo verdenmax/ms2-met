@@ -152,7 +152,7 @@ def extract_signal_sample(
     }
     heavy_in_raw = bool(dia_data.check_in_raw(heavy_precursor_mz))
     same_window = bool(dia_data.check_in_same_ms2(
-        psm._precursor_mz, heavy_precursor_mz))
+        psm._precursor_mz, heavy_precursor_mz, rt=psm._rt))
 
     light_panels = _extract_ms2_panel(
         dia_data, psm, settings, psm._precursor_mz,

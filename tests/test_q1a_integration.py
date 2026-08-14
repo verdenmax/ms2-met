@@ -28,11 +28,11 @@ class StubDIA:
     def xic_ms2_peaks_extract(self, *args, **kwargs):
         return np.array([], dtype=XIC_DTYPE), 0.0
 
-    def get_window_info(self, mz):
+    def get_window_info(self, mz, rt=None):
         return {"width": 2.0, "centering": 0.5,
                 "lower": 499.0, "upper": 501.0}
 
-    def check_in_same_ms2(self, mz1, mz2):
+    def check_in_same_ms2(self, mz1, mz2, rt=None):
         return True
 
     def check_in_raw(self, mz):
@@ -95,14 +95,14 @@ def test_multi_batch_work_skips_when_heavy_out_of_raw():
         def xic_ms2_peaks_extract(self, *args, **kwargs):
             return np.array([], dtype=XIC_DTYPE), 0.0
 
-        def get_window_info(self, mz):
+        def get_window_info(self, mz, rt=None):
             if 499.0 <= mz <= 501.0:
                 return {"width": 2.0, "centering": 0.5,
                         "lower": 499.0, "upper": 501.0}
             return {"width": 0.0, "centering": 0.5,
                     "lower": float("nan"), "upper": float("nan")}
 
-        def check_in_same_ms2(self, mz1, mz2):
+        def check_in_same_ms2(self, mz1, mz2, rt=None):
             return True
 
         def check_in_raw(self, mz):

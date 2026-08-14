@@ -57,7 +57,7 @@ class _FakeDia:
         return True
 
     @staticmethod
-    def check_in_same_ms2(_left, _right):
+    def check_in_same_ms2(_left, _right, rt=None):
         return True
 
     def xic_ms2_charge_resolved_extract(

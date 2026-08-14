@@ -66,11 +66,11 @@ class _FakeDia:
         return _EMPTY_XIC
     def xic_ms2_peaks_extract(self, rt, win, precursor_mz, ions_mass, mass_tol_ppm):
         return _EMPTY_XIC, 0.0
-    def get_window_info(self, mz):
+    def get_window_info(self, mz, rt=None):
         return {"lower": 400.0, "upper": 600.0, "width": 200.0, "centering": 0.5}
     def check_in_raw(self, mz):
         return True
-    def check_in_same_ms2(self, a, b):
+    def check_in_same_ms2(self, a, b, rt=None):
         return False
 
 

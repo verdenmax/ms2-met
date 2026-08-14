@@ -295,9 +295,11 @@ def multi_batch_work(
     last_heavy_all = 0.0
 
     # --- Q1a setup: classify co/split-isolation for accumulator ---
-    w_light_for_q1a = dia_data1.get_window_info(psm1._precursor_mz)
+    w_light_for_q1a = dia_data1.get_window_info(
+        psm1._precursor_mz, rt=psm1._rt)
     heavy_precursor_mz, fragment_ions = psm1.get_heavy_info(heavy_type)
-    w_heavy_for_q1a = dia_data2.get_window_info(heavy_precursor_mz)
+    w_heavy_for_q1a = dia_data2.get_window_info(
+        heavy_precursor_mz, rt=psm2._rt)
     psm_is_split_window = is_split_window(
         w_light_for_q1a, w_heavy_for_q1a)
     q1a_acc = Q1aAccumulator(split_window=psm_is_split_window)
@@ -511,7 +513,8 @@ def multi_batch_work(
     features["labeling"] = canonical_labeling_name(heavy_type)
 
     # DIA 窗口感知特征
-    win_info = dia_data1.get_window_info(psm1._precursor_mz)
+    win_info = dia_data1.get_window_info(
+        psm1._precursor_mz, rt=psm1._rt)
     features["window_width"] = win_info["width"]
     features["precursor_centering"] = float(np.clip(
         win_info["centering"], 0.0, 1.0))
@@ -593,9 +596,11 @@ def single_pair_work(
         psm._precursor_mz, mass_tol_ppm)
 
     # --- Q1a setup (single get_heavy_info call shared with fragment loop) ---
-    w_light_for_q1a = dia_data.get_window_info(psm._precursor_mz)
+    w_light_for_q1a = dia_data.get_window_info(
+        psm._precursor_mz, rt=psm._rt)
     heavy_precursor_mz, fragment_ions = psm.get_heavy_info(heavy_type)
-    w_heavy_for_q1a = dia_data.get_window_info(heavy_precursor_mz)
+    w_heavy_for_q1a = dia_data.get_window_info(
+        heavy_precursor_mz, rt=psm._rt)
     q1a_acc = Q1aAccumulator(
         split_window=is_split_window(w_light_for_q1a, w_heavy_for_q1a))
 
@@ -673,7 +678,7 @@ def single_pair_work(
     ))
 
     is_same_ms2 = dia_data.check_in_same_ms2(
-        psm._precursor_mz, heavy_precursor_mz)
+        psm._precursor_mz, heavy_precursor_mz, rt=psm._rt)
 
     pearsons_map = {
         "b": [],
@@ -944,7 +949,8 @@ def single_pair_work(
         features["heavy_in_raw"] = 0
 
     # DIA 窗口感知特征
-    win_info = dia_data.get_window_info(psm._precursor_mz)
+    win_info = dia_data.get_window_info(
+        psm._precursor_mz, rt=psm._rt)
     features["window_width"] = win_info["width"]
     features["precursor_centering"] = float(np.clip(
         win_info["centering"], 0.0, 1.0))
