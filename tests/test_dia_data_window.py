@@ -187,6 +187,26 @@ def test_ms2_xic_selects_one_centered_window_per_overlapping_cycle():
     assert selected == [2, 5, 8]
     assert [d._ms2_cycle_idx(index) for index in selected] == [0, 1, 2]
 
+    # The historical table-feature API and the Phase 2 panel API must route
+    # through the exact same scan selection policy.
+    proton = 1.00727646677
+    ion_mass = 200.0
+    fragment_mz = np.array([
+        ion_mass + proton,
+        (ion_mass + 2 * proton) / 2,
+    ])
+    d.get_spectrum_by_index = lambda index: (
+        fragment_mz, np.array([float(index), float(index)]))
+    panel, _ = d.xic_ms2_fragment_panel_extract(
+        np.float32(20.0), 1, np.float32(500.6), [ion_mass],
+        np.float32(10.0))
+    legacy, _ = d.xic_ms2_peaks_extract(
+        np.float32(20.0), 1, np.float32(500.6), np.float32(ion_mass),
+        np.float32(10.0))
+
+    assert panel[0][1]["cycle_idx"].tolist() == [0, 1, 2]
+    assert legacy["cycle_idx"].tolist() == [0, 1, 2]
+
 
 def test_ms2_xic_empty_path_still_has_cycle_idx_in_dtype():
     """Early-return path (no matching window) must still emit cycle_idx."""
