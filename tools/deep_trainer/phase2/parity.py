@@ -77,7 +77,10 @@ def _pool_fragment_group(sample: SignalSample, indices: list[int], side: int,
     return _decode_xic(
         intensity, ppm, sample.fragment_rt_delta[first, side], scan_mask,
         peak_mask, center_rt=float(sample.metadata["rt"]),
-        center_cycle=int(sample.metadata["center_cycle"]), settings=settings)
+        center_cycle=int(sample.metadata[
+            "fragment_light_center_cycle" if side == 0
+            else "fragment_heavy_center_cycle"
+        ]), settings=settings)
 
 
 def reconstruct_legacy_features(sample: SignalSample,

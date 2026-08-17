@@ -196,6 +196,7 @@ def test_ms2_xic_selects_one_centered_window_per_overlapping_cycle():
 
     assert selected == [2, 5, 8]
     assert [d._ms2_cycle_idx(index) for index in selected] == [0, 1, 2]
+    assert d.resolve_ms2_xic_center_cycle(20.0, 500.6) == 1
 
     # Window metadata and same-window routing must use the same selected
     # center scan rather than the first matching/left-boundary window.

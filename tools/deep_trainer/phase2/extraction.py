@@ -44,7 +44,10 @@ def _encode_xic(
         cycle_idx = int(row["cycle_idx"])
         slot = cycle_idx - center_cycle + settings.xic_cycle_window
         if slot < 0 or slot >= trace_length:
-            continue
+            raise ValueError(
+                "XIC scan falls outside its declared center cycle: "
+                f"cycle_idx={cycle_idx}, center_cycle={center_cycle}, "
+                f"window={settings.xic_cycle_window}")
         if scan_mask[slot]:
             raise ValueError(
                 f"XIC contains duplicate global cycle_idx={cycle_idx}")
@@ -105,6 +108,19 @@ def _extract_ms2_panel(dia_data, psm, settings, precursor_mz, masses):
     ]
 
 
+def _resolve_ms2_center_cycle(
+    dia_data, *, rt: float, precursor_mz: float, fallback: int,
+) -> int:
+    """Resolve the actual center used by the MS2 isolation-window selector."""
+    method = getattr(dia_data, "resolve_ms2_xic_center_cycle", None)
+    if method is None:
+        # Lightweight third-party/test DIA stand-ins predate the explicit
+        # center API and historically align their traces to the MS1 center.
+        return int(fallback)
+    center = method(rt, precursor_mz)
+    return int(fallback if center is None else center)
+
+
 def extract_signal_sample(
     psm: PSMInfo,
     dia_data: DIAData,
@@ -157,12 +173,18 @@ def extract_signal_sample(
     light_panels = _extract_ms2_panel(
         dia_data, psm, settings, psm._precursor_mz,
         [ion[2] for ion in fragment_ions])
+    light_fragment_center_cycle = _resolve_ms2_center_cycle(
+        dia_data, rt=psm._rt, precursor_mz=psm._precursor_mz,
+        fallback=center_cycle)
     heavy_panels = (
         _extract_ms2_panel(
             dia_data, psm, settings, heavy_precursor_mz,
             [ion[3] for ion in fragment_ions])
         if heavy_in_raw else None
     )
+    heavy_fragment_center_cycle = _resolve_ms2_center_cycle(
+        dia_data, rt=psm._rt, precursor_mz=heavy_precursor_mz,
+        fallback=center_cycle)
 
     for ion_index, (
             ion_type, ordinal, light_mass, heavy_mass) in enumerate(
@@ -202,9 +224,14 @@ def extract_signal_sample(
             encoded_pair = [
                 _encode_xic(
                     by_charge.get(charge, _empty_xic()),
-                    center_cycle=center_cycle, center_rt=center_rt,
+                    center_cycle=fragment_center_cycle,
+                    center_rt=center_rt,
                     settings=settings)
-                for by_charge in (light_by_charge, heavy_by_charge)
+                for by_charge, fragment_center_cycle in zip(
+                    (light_by_charge, heavy_by_charge),
+                    (light_fragment_center_cycle,
+                     heavy_fragment_center_cycle),
+                )
             ]
             fragment_values["intensity"].append(np.stack(
                 [encoded[0] for encoded in encoded_pair]))
@@ -247,6 +274,8 @@ def extract_signal_sample(
     sample_metadata.update({
         "labeling": canonical_labeling_name(selected_labeling),
         "center_cycle": center_cycle,
+        "fragment_light_center_cycle": light_fragment_center_cycle,
+        "fragment_heavy_center_cycle": heavy_fragment_center_cycle,
         "heavy_precursor_mz": float(heavy_precursor_mz),
         "heavy_in_raw": int(heavy_in_raw),
         "precursor_channels": json.dumps(PRECURSOR_CHANNELS),

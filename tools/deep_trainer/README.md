@@ -152,7 +152,11 @@ raw 仍可访问才会重建，不能在 cache-only 模式下被静默复用。�
   检查通过才原子发布。`COMPLETE` 保存 checksum 清单本身的 SHA256，读取器默认
   校验全部文件，覆盖发布中断后会恢复唯一的旧版本备份。
 
-输出 schema 为 `phase2_raw_xic_v2`，并把当前同位素模型写入顶层 contract。
+输出 schema 为 `phase2_raw_xic_v3`，并把当前同位素模型写入顶层 contract。
+MS1 前体 trace 以最近 MS1 cycle 对齐；fragment light/heavy trace 各自以
+实际选中的 MS2 isolation-window cycle 对齐，避免 PSM RT 位于 cycle
+边界时将完整 13-scan XIC 静默截成 12 scans。任何超出声明 cycle
+窗口的 scan 都会直接报错，不会发布有损 tensor。
 若冻结 E20 snapshot 的 `isotope_model` 不是当前的
 `ideal_full_label_exact_mass_v2`（或未声明），`isotope_correlation` 仍逐值写入
 parity 审计，但标为
@@ -177,6 +181,9 @@ resume 前重新验证，损坏或被修改的 shard 不会被重新纳入最终
 划分、raw、PSM、DIA cache、冻结协议，或任一张量生成模块的源码
 内容有变化时拒绝 resume，避免不同算法的 shard 混入同一数据集。启用谱库预测
 时，pepdata、RT、MS2 prediction、FASTA 和 modification 文件也全部记录 SHA256。
+因此 `phase2_raw_xic_v2` 升级到 v3 时，旧 `.full.building` 不能继续复用；应先将
+该目录移到别处留档，再从 shard 0 重建。DIA NPZ/mmap cache 和冻结 feature/protocol
+仍可复用，不需要重新生成。
 
 原始 DIA cache 仍采用兼容旧流程的压缩 `.npz`；全量 Phase 2 会为每个 raw 一次性
 原子生成同级 `.mmap-v1/` 目录，将成员拆成独立 `.npy`。正式提取从该目录以真正

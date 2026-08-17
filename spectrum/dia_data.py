@@ -1191,6 +1191,23 @@ class DIAData:
                 "MS2 XIC selector returned duplicate acquisition cycles")
         return selected
 
+    def resolve_ms2_xic_center_cycle(
+        self, rt: float, precursor_mz: float,
+    ) -> int | None:
+        """Return the acquisition cycle anchoring an MS2 XIC window.
+
+        The closest MS2 isolation-window scan can belong to the acquisition
+        cycle immediately before or after the MS1 scan nearest ``rt``.  XIC
+        consumers must therefore use the selector's own center instead of
+        independently calling :meth:`find_near_ms1_idx`; otherwise one edge
+        of a complete ``2 * window + 1`` trace can be silently truncated.
+        """
+        position = self._resolve_ms2_window_position(
+            float(precursor_mz), float(rt))
+        if position is None:
+            return None
+        return int(self._ms2_cycle_idx(int(self.ms2_indexs[position])))
+
     def xic_ms2_charge_resolved_extract(
         self,
         rt: np.float32,

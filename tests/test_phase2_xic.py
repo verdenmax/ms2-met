@@ -1,3 +1,4 @@
+import configparser
 import json
 import shutil
 
@@ -16,7 +17,7 @@ from tools.deep_trainer.phase2.matching import (
     match_psms_to_protocol, select_pilot_rows,
 )
 from tools.deep_trainer.phase2.parity import (
-    compare_to_feature_row, reconstruct_legacy_features,
+    PARITY_FEATURES, compare_to_feature_row, reconstruct_legacy_features,
 )
 from tools.deep_trainer.phase2.schema import (
     FRAGMENT_STATUS_TO_CODE, ExtractionSettings,
@@ -25,6 +26,7 @@ from tools.deep_trainer.phase2.store import (
     StagedValidation, open_signal_dataset, recover_interrupted_publish,
     write_signal_dataset,
 )
+from workflows.single_work import single_pair_work
 
 
 class _FakeDia:
@@ -109,6 +111,137 @@ def test_extract_signal_sample_preserves_masks_charge_and_skip_status():
     assert sample.fragment_attempted.tolist() == [False, False, True, True]
     assert not sample.fragment_prediction_present.any()
     assert np.isnan(sample.fragment_predicted_intensity).all()
+
+
+def test_fragment_tensor_uses_ms2_selector_center_without_dropping_edge():
+    class ShiftedMS2CenterDia(_FakeDia):
+        @staticmethod
+        def resolve_ms2_xic_center_cycle(_rt, _precursor_mz):
+            return 3
+
+        @staticmethod
+        def _shifted_xic(scale):
+            return np.asarray([
+                (9.8, -1.0, 2.0 * scale, 2),
+                (9.9, 0.5, 4.0 * scale, 3),
+                (10.0, np.nan, 1.0 * scale, 4),
+            ], dtype=XIC_DTYPE)
+
+        def xic_ms2_charge_resolved_extract(
+                self, _rt, _window, precursor_mz, ions_mass, mass_tol_ppm,
+                fragment_charges):
+            assert mass_tol_ppm > 0
+            scale = 1.0 + float(precursor_mz) / 1000.0 \
+                + float(ions_mass) / 10000.0
+            return {
+                charge: self._shifted_xic(scale * charge)
+                for charge in fragment_charges
+            }, 1000.0
+
+    settings = ExtractionSettings(
+        xic_cycle_window=1, mass_tol_ppm=10.0,
+        fragment_charges=(1, 2))
+    sample = extract_signal_sample(
+        _psm(), ShiftedMS2CenterDia(), settings, {
+            "sample_id": "shifted-center", "dataset": "2da", "label": 1,
+            "sequence": "AK", "charge": 2, "precursor_mz": 500.0,
+            "rt": 10.0, "raw_title1": "raw-a",
+        })
+
+    assert sample.metadata["center_cycle"] == 4
+    assert sample.metadata["fragment_light_center_cycle"] == 3
+    assert sample.metadata["fragment_heavy_center_cycle"] == 3
+    assert sample.fragment_scan_mask.all()
+    reconstructed = reconstruct_legacy_features(sample, settings)
+    assert reconstructed["valid_fragment_ions_num"] == 1
+    assert reconstructed["y_count"] == 1
+
+
+def test_phase2_parity_matches_legacy_with_independent_ms2_centers():
+    class SplitWindowDia(_FakeDia):
+        @staticmethod
+        def check_in_same_ms2(_left, _right, rt=None):
+            return False
+
+        @staticmethod
+        def get_window_info(mz, rt=None):
+            lower = float(mz) - 1.0
+            return {
+                "lower": lower, "upper": lower + 2.0,
+                "width": 2.0, "centering": 0.5,
+            }
+
+        @staticmethod
+        def resolve_ms2_xic_center_cycle(_rt, precursor_mz):
+            return 3 if float(precursor_mz) < 502.0 else 5
+
+        def _fragment_xic(self, precursor_mz, ions_mass, charge):
+            center = self.resolve_ms2_xic_center_cycle(
+                10.0, precursor_mz)
+            mass_component = float(ions_mass) % 7.0
+            precursor_component = float(precursor_mz) % 11.0
+            intensity = np.asarray([
+                1.0 + mass_component / 7.0,
+                2.0 + precursor_component / 11.0,
+                0.5 + (mass_component + precursor_component) / 9.0,
+            ]) * int(charge)
+            rows = np.empty(3, dtype=XIC_DTYPE)
+            rows["rt"] = 9.6 + 0.1 * np.arange(center - 1, center + 2)
+            rows["ppm_error"] = [-2.0, 0.5, np.nan]
+            rows["intensity"] = intensity
+            rows["cycle_idx"] = np.arange(center - 1, center + 2)
+            return rows
+
+        def xic_ms2_charge_resolved_extract(
+                self, _rt, _window, precursor_mz, ions_mass, mass_tol_ppm,
+                fragment_charges):
+            assert mass_tol_ppm > 0
+            return {
+                charge: self._fragment_xic(
+                    precursor_mz, ions_mass, charge)
+                for charge in fragment_charges
+            }, 1000.0
+
+        def xic_ms2_peaks_extract(
+                self, rt, window, precursor_mz, ions_mass, mass_tol_ppm):
+            resolved, total = self.xic_ms2_charge_resolved_extract(
+                rt, window, precursor_mz, ions_mass, mass_tol_ppm, (1, 2))
+            pooled = resolved[1].copy()
+            pooled["intensity"] = (
+                resolved[1]["intensity"] + resolved[2]["intensity"])
+            # Both charge traces deliberately carry the same ppm errors.
+            pooled["ppm_error"] = resolved[1]["ppm_error"]
+            return pooled, total
+
+    config = configparser.ConfigParser()
+    config.read_dict({
+        "general": {
+            "mass_tol_ppm": "10", "xic_cycle_window": "1",
+            "labeling": "silac",
+        },
+    })
+    settings = ExtractionSettings(
+        xic_cycle_window=1, mass_tol_ppm=10.0,
+        fragment_charges=(1, 2))
+    psm = _psm()
+    dia = SplitWindowDia()
+
+    expected = single_pair_work(psm, dia, config)
+    sample = extract_signal_sample(psm, dia, settings, {
+        "sample_id": "legacy-differential", "dataset": "2da",
+        "label": 1, "sequence": "AK", "charge": 2,
+        "precursor_mz": 500.0, "rt": 10.0, "raw_title1": "raw-a",
+    })
+    reconstructed = reconstruct_legacy_features(sample, settings)
+
+    assert sample.metadata["center_cycle"] == 4
+    assert sample.metadata["fragment_light_center_cycle"] == 3
+    assert sample.metadata["fragment_heavy_center_cycle"] == 5
+    for feature in PARITY_FEATURES:
+        assert np.isclose(
+            expected[feature], reconstructed[feature],
+            atol=1e-4, rtol=1e-5, equal_nan=True,
+        ), feature
 
 
 def test_fragment_peak_status_is_charge_resolved():
@@ -234,7 +367,7 @@ def test_sharded_store_roundtrip_and_checksum_validation(tmp_path):
         restored["fragment_status"], second.fragment_status)
     schema = json.loads((output / "schema.json").read_text())
     assert schema["positive_class"] == "incorrect_identification"
-    assert schema["schema"] == "phase2_raw_xic_v2"
+    assert schema["schema"] == "phase2_raw_xic_v3"
     assert schema["isotope_model"] == "ideal_full_label_exact_mass_v2"
 
 

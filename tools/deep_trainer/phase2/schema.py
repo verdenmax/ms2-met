@@ -9,7 +9,7 @@ import numpy as np
 
 from spectrum.labeling import IDEAL_FULL_LABEL_ISOTOPE_MODEL
 
-SCHEMA_VERSION = "phase2_raw_xic_v2"
+SCHEMA_VERSION = "phase2_raw_xic_v3"
 PRECURSOR_CHANNELS = ("light_m0", "heavy_m0", "heavy_m1", "heavy_m2")
 PAIR_CHANNELS = ("light", "heavy")
 ION_TYPE_TO_CODE = {"b": 0, "y": 1}
@@ -93,6 +93,17 @@ class SignalSample:
             raise ValueError("sample metadata requires a non-empty sample_id")
         if self.metadata.get("label") not in (0, 1):
             raise ValueError("stored label must be 1=correct or 0=incorrect")
+        for name in (
+            "center_cycle", "fragment_light_center_cycle",
+            "fragment_heavy_center_cycle",
+        ):
+            if name not in self.metadata:
+                raise ValueError(f"sample metadata requires {name}")
+            try:
+                int(self.metadata[name])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"sample metadata {name} must be an integer") from exc
 
         trace = settings.trace_length
         precursor_shape = (len(PRECURSOR_CHANNELS), trace)
@@ -172,6 +183,14 @@ def schema_document(settings: ExtractionSettings) -> dict[str, Any]:
             "scan_mask": "1=real acquired scan,0=padding or unavailable",
             "peak_mask": "1=matched peak with finite ppm error",
             "zero_intensity_with_scan_mask_1": "real scan with no matched peak",
+        },
+        "cycle_alignment_contract": {
+            "precursor_center": "nearest_ms1_cycle_to_psm_rt",
+            "fragment_light_center": (
+                "selected_light_precursor_ms2_isolation_window_cycle"),
+            "fragment_heavy_center": (
+                "selected_heavy_precursor_ms2_isolation_window_cycle"),
+            "out_of_range_scan_policy": "error_never_silently_truncate",
         },
         "model_input_policy": {
             "signal_derived_global_features": [
