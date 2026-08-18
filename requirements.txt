@@ -17,6 +17,8 @@ matplotlib
 pyyaml
 joblib
 
-# Phase-1 deep-learning baseline (tools/deep_trainer). For a CUDA-specific
-# wheel, follow the PyTorch installer for the target machine instead.
-torch
+# Deep-learning stages run on a server whose NVIDIA driver supports CUDA 12.2
+# but not CUDA 13.x.  Pin the official cu121 build so a generic dependency
+# install cannot silently replace it with an incompatible cu130 wheel.
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
