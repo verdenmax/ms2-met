@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +18,17 @@ from tools.deep_trainer.model import TabularMLP, n_trainable_parameters
 from tools.deep_trainer.missingness_sensitivity import _assert_matched
 from tools.deep_trainer.preprocessing import FoldPreprocessor
 from tools.deep_trainer.spec_adapter import _assert_columns_equal
-from tools.deep_trainer.training import fit_mlp, predict_trust
+from tools.deep_trainer.training import (
+    configure_torch, fit_mlp, predict_trust,
+)
+
+
+def test_deterministic_torch_configures_cublas_before_cuda(monkeypatch):
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+
+    configure_torch(7, deterministic=True)
+
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
 
 
 def test_fold_preprocessor_fits_train_only_and_preserves_missingness():

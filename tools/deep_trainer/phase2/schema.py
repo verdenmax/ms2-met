@@ -147,6 +147,25 @@ class SignalSample:
             if not np.isfinite(np.asarray(getattr(self, name))).all():
                 raise ValueError(f"{name} must use masks, not NaN/Inf")
 
+        for prefix in ("precursor", "fragment"):
+            scan = np.asarray(getattr(self, f"{prefix}_scan_mask"))
+            peak = np.asarray(getattr(self, f"{prefix}_peak_mask"))
+            if scan.dtype.kind != "b" or peak.dtype.kind != "b":
+                raise ValueError(f"{prefix} masks must be boolean")
+            if np.any(peak & ~scan):
+                raise ValueError(
+                    f"{prefix}_peak_mask must be a subset of scan_mask")
+            intensity = np.asarray(getattr(self, f"{prefix}_intensity"))
+            ppm = np.asarray(getattr(self, f"{prefix}_ppm_error"))
+            rt_delta = np.asarray(getattr(self, f"{prefix}_rt_delta"))
+            if np.any(intensity[~scan] != 0) or \
+                    np.any(rt_delta[~scan] != 0):
+                raise ValueError(
+                    f"{prefix} values outside scan_mask must be zero")
+            if np.any(ppm[~peak] != 0):
+                raise ValueError(
+                    f"{prefix}_ppm_error outside peak_mask must be zero")
+
         if not set(np.unique(self.fragment_ion_type)).issubset(
                 ION_CODE_TO_TYPE):
             raise ValueError("fragment_ion_type contains an unknown code")

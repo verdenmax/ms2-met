@@ -113,6 +113,39 @@ def test_extract_signal_sample_preserves_masks_charge_and_skip_status():
     assert np.isnan(sample.fragment_predicted_intensity).all()
 
 
+@pytest.mark.parametrize("mutation,match", [
+    (
+        lambda sample: sample.precursor_peak_mask.__setitem__(
+            (0, 0), True),
+        "peak_mask must be a subset",
+    ),
+    (
+        lambda sample: sample.precursor_intensity.__setitem__(
+            (0, 0), 1.0),
+        "values outside scan_mask must be zero",
+    ),
+    (
+        lambda sample: sample.fragment_ppm_error.__setitem__(
+            (0, 0, -1), 1.0),
+        "ppm_error outside peak_mask must be zero",
+    ),
+])
+def test_signal_sample_rejects_values_that_contradict_masks(
+        mutation, match):
+    sample, settings = _sample()
+    sample.precursor_scan_mask[0, 0] = False
+    sample.precursor_peak_mask[0, 0] = False
+    sample.precursor_intensity[0, 0] = 0.0
+    sample.precursor_rt_delta[0, 0] = 0.0
+    sample.precursor_ppm_error[0, 0] = 0.0
+    sample.fragment_peak_mask[0, 0, -1] = False
+    sample.fragment_ppm_error[0, 0, -1] = 0.0
+    mutation(sample)
+
+    with pytest.raises(ValueError, match=match):
+        sample.validate(settings)
+
+
 def test_fragment_tensor_uses_ms2_selector_center_without_dropping_edge():
     class ShiftedMS2CenterDia(_FakeDia):
         @staticmethod
@@ -390,6 +423,9 @@ def test_xic_torch_adapter_uses_bounded_signal_inputs_and_ragged_padding(
         setattr(second, name, getattr(second, name)[:2])
     second.fragment_scan_mask[:] = False
     second.fragment_peak_mask[:] = False
+    second.fragment_intensity[:] = 0.0
+    second.fragment_ppm_error[:] = 0.0
+    second.fragment_rt_delta[:] = 0.0
     output = tmp_path / "signals"
     write_signal_dataset(
         [first, second], output, settings,

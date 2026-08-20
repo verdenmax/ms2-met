@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import logging
+import os
 import random
 
 import numpy as np
@@ -26,6 +27,11 @@ class FittedMLP:
 def configure_torch(seed: int, *, num_threads: int = 0,
                     deterministic: bool = True) -> None:
     """Configure reproducibility once per fold."""
+    # PyTorch raises on CUDA mm/mv/bmm in strict deterministic mode unless
+    # cuBLAS receives one of its reproducible workspace configurations.  Set
+    # this before any CUDA availability/seed call can initialize cuBLAS.
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
