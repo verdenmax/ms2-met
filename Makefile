@@ -44,6 +44,8 @@ PHASE2_FULL_XIC_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic/full
 PHASE2_CACHE_ROOT ?= workspace
 PHASE2_TRAIN_CONFIG ?= tools/deep_trainer/phase2/config/xic_fusion.yaml
 PHASE2_TRAIN_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic-model/combined
+PHASE2_STRONG_TRAIN_CONFIG ?= tools/deep_trainer/phase2/config/xic_pair_interaction.yaml
+PHASE2_STRONG_TRAIN_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic-model/strong-combined
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -144,7 +146,7 @@ endef
 
 # --------------------------- 主 target ---------------------------
 
-.PHONY: help all run clean build-deep-xic-pilot build-deep-xic-full train-deep-xic-combined
+.PHONY: help all run clean build-deep-xic-pilot build-deep-xic-full train-deep-xic-combined smoke-deep-xic-cuda train-deep-xic-strong-combined
 .PHONY: 2th 5th normal
 .PHONY: filter filter-dry
 .PHONY: extract-2th extract-5th extract-normal
@@ -232,6 +234,8 @@ help:
 	@echo "  make build-deep-xic-pilot FEATURE_ROOT=/path/to/results  构建 1200 条 Phase 2 原始 XIC 完整性 pilot"
 	@echo "  make build-deep-xic-full FEATURE_ROOT=/path/to/results   可恢复地构建全量 Phase 2 XIC"
 	@echo "  make train-deep-xic-combined FEATURE_ROOT=/path/to/results  冻结 E20 上训练 15 成员 XIC 模型"
+	@echo "  make smoke-deep-xic-cuda                         严格确定性 CUDA 前后向冒烟测试"
+	@echo "  make train-deep-xic-strong-combined FEATURE_ROOT=/path/to/results  训练增强的 pair-interaction XIC 模型"
 	@echo ""
 	@echo "  Formal MS1/MS2 ablation（共同队列 + 注册表特征组）："
 	@echo "  make train-ablation-neg20-2da FEATURE_ROOT=/path/to/results  2da 预跑（8 组）"
@@ -1427,6 +1431,36 @@ train-deep-xic-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
 	    --protocol-root "$(DEEP_PROTOCOL_ROOT)" \
 	    --signal-root "$(PHASE2_FULL_XIC_OUTPUT_ROOT)" \
 	    --output-root "$(PHASE2_TRAIN_OUTPUT_ROOT)" \
+	    $(CV_OVERWRITE_FLAG)
+
+# Strong signal-only arm. It reuses the exact v3 XIC dataset and frozen
+# membership, but writes to a separate result root so the v2 baseline remains
+# immutable and directly comparable.
+smoke-deep-xic-cuda:
+	CUBLAS_WORKSPACE_CONFIG="$${CUBLAS_WORKSPACE_CONFIG:-:4096:8}" \
+	$(PY) -m tools.deep_trainer.phase2.cuda_smoke \
+	    --config "$(PHASE2_STRONG_TRAIN_CONFIG)"
+
+train-deep-xic-strong-combined: $(FIXED_NEGPOOL_COMBINED_FEATURES) \
+	$(DEEP_PROTOCOL_ROOT)/summary.json \
+	$(PHASE2_FULL_XIC_OUTPUT_ROOT)/COMPLETE
+	CUBLAS_WORKSPACE_CONFIG="$${CUBLAS_WORKSPACE_CONFIG:-:4096:8}" \
+	$(PY) -m tools.deep_trainer.phase2.cuda_smoke \
+	    --config "$(PHASE2_STRONG_TRAIN_CONFIG)"
+	@mkdir -p "$(DEEP_OUTPUT_ROOT)/configs"
+	$(PY) tools/spec_trainer/gen_cv_configs.py \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --output-root "$(DEEP_OUTPUT_ROOT)/reference-cv" \
+	    --config-dir "$(DEEP_OUTPUT_ROOT)/configs" \
+	    --feature-arm "$(FIXED_NEGPOOL_FEATURE_ARM)"
+	CUBLAS_WORKSPACE_CONFIG="$${CUBLAS_WORKSPACE_CONFIG:-:4096:8}" \
+	$(PY) -m tools.deep_trainer.phase2.experiment \
+	    --config "$(PHASE2_STRONG_TRAIN_CONFIG)" \
+	    --split-config "$(DEEP_OUTPUT_ROOT)/configs/cv_in_2da_neg20.yaml" \
+	    --feature-root "$(FEATURE_ROOT)" \
+	    --protocol-root "$(DEEP_PROTOCOL_ROOT)" \
+	    --signal-root "$(PHASE2_FULL_XIC_OUTPUT_ROOT)" \
+	    --output-root "$(PHASE2_STRONG_TRAIN_OUTPUT_ROOT)" \
 	    $(CV_OVERWRITE_FLAG)
 
 $(PHASE2_FULL_XIC_OUTPUT_ROOT)/COMPLETE:

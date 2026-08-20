@@ -223,10 +223,52 @@ OOF 阈值后多数投票；不会把单成员阈值直接应用到平均 ensemb
 保留在审计张量中，attention 权重强制为 0。`fragment_ordinal` 和显式 fragment
 count 也不进入网络，避免肽长或理论碎片数量成为构造负例的捷径。
 
+每个物理 XIC channel 在每个 cycle 使用固定五字段：样本内统一尺度的
+`log1p(intensity)`、`ppm_error/mass_tol_ppm`、相对 PSM RT 的归一化
+`rt_delta`、`scan_mask` 和 `peak_mask`。两个 mask 区分“没有实际 scan”、
+“有 scan 但没有匹配峰”和“有 scan 且匹配到峰”；数据发布前强制
+`peak_mask <= scan_mask`，并要求 mask 外的 intensity/RT/ppm 为零。前体逻辑
+张量 `[B,4,5,T]` 只是在 adapter seam flatten 为 `[B,20,T]`，fragment 的
+`[B,F,2,5,T]` 同理 flatten 为 `[B,F,10,T]`，不是把物理量做数值乘法。
+
 网络由一个前体 1D-CNN、所有 fragment 共享的 1D-CNN、离子属性 embedding、
 masked attention set pooling 和融合 MLP 组成，输出仍是
 `trust_score=P(correct identification)`。统计边界统一转换为错误鉴定阳性，所有
 ROC、PR、FNR 和固定 FPR 指标复用 `spec_trainer/src/cv_core.py`。
+
+该网络是 `xic_fusion_attention_v2` 基线，并非纯 MLP。增强 arm 使用相同输入和
+冻结协议运行：
+
+```bash
+make train-deep-xic-strong-combined \
+  FEATURE_ROOT=/path/to/feature_result/ms2-met-runs-08-20 \
+  DEEP_PROTOCOL_ROOT=/path/to/fixed-negpool/combined \
+  PHASE2_FULL_XIC_OUTPUT_ROOT=/path/to/phase2-xic/full
+```
+
+增强配置 `phase2/config/xic_pair_interaction.yaml` 声明
+`xic_pair_interaction_v3`：每个物理 XIC channel 先经过共享参数的残差时序编码，
+并直通原始归一化强度 mean/max；再显式构造 light/heavy、heavy M0/M1/M2 以及
+M1/M2 的差值和乘积交互。fragment 经过一层线性复杂度的 masked set-context、
+双头 attention pooling 和 mean/max pooling 后与 precursor 融合。完整 attention
+head 可用于相关性/塌缩诊断，不能在无消融证据时把多个 head 解释成已学习到互补
+机制；每个 OOF fold 会记录头间平均余弦相似度、相似度不低于 0.99 的比例以及
+每个 head 的平均有效 fragment 数。默认增强配置为 180,099 参数，介于 42,146
+参数的 v2 和先前 557,253 参数
+的容量上限草案之间。它仍不读取 fragment ordinal/count 或任何协议元数据。
+结果写到独立的 `phase2-xic-model/strong-combined`，不会覆盖 v2 基线。正式配置
+要求 `device: cuda`，CUDA 不可用时立即失败；4 个 DataLoader worker、pinned
+memory 和异步 host-to-device copy 用于避免重复出现静默 CPU 长跑。Make target
+会先设置确定性 cuBLAS workspace，并运行实际模型的一次 CUDA 前向、反向和
+AdamW 更新；也可单独执行：
+
+```bash
+make smoke-deep-xic-cuda
+```
+
+每个训练成员都会打印并保存 `runtime_device` trace。CUDA 运行记录设备编号、
+GPU 名称、compute capability、显存大小和 PyTorch CUDA runtime；CPU 运行会明确
+输出一行 `WARNING`，并在 checkpoint 与 fold summary 中留下相同记录。
 
 正式运行前只做协议检查：
 
@@ -244,6 +286,9 @@ python -m tools.deep_trainer.phase2.experiment \
 训练结果包括 fold checkpoint、严格 OOF 分数、固定测试逐样本分数、15 成员多数
 投票工作点、分数据域指标，以及相同测试行/相同 leakage group 上相对冻结
 LightGBM M20 的 paired cluster bootstrap。Checkpoint 绑定 XIC 数据集的 checksum
-identity、精确输入归一化/mask adapter contract 和模型实现源码 hash；换了 shard
+identity、精确输入归一化/mask adapter contract 和按 architecture 隔离的模型实现
+源码 hash；换了 shard
 内容、输入适配规则或模型权重解释代码后不会静默推理。结果 bundle 也带
 `checksums.json` 与 `COMPLETE`，覆盖发布中断时会恢复旧 bundle。
+已发布的 `xic_fusion_attention_v2` 实现 hash 作为窄范围 legacy allowlist 保留，
+因此添加 v3 arm 后仍能加载原 v2 checkpoint；未知或跨模型的源码 hash 仍拒绝。

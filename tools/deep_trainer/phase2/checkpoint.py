@@ -46,6 +46,7 @@ def save_checkpoint(path, fitted, *, dataset_identity: dict, metadata: dict):
         "training_history": list(fitted.history),
         "best_epoch": int(fitted.best_epoch),
         "best_validation_score": float(fitted.best_validation_score),
+        "runtime_device": dict(fitted.device_trace),
         "metadata": dict(metadata),
     }
     path = Path(path)

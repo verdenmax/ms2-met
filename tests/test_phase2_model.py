@@ -377,7 +377,9 @@ def test_xic_model_rejects_embedding_indices_outside_contract(tmp_path):
         _model()(batch)
 
 
-def test_xic_training_and_dataset_bound_checkpoint_roundtrip(tmp_path):
+def test_xic_training_and_dataset_bound_checkpoint_roundtrip(
+        tmp_path, caplog):
+    caplog.set_level(logging.INFO)
     source = _write_training_signals(tmp_path)
     config = {
         "model": {
@@ -423,6 +425,11 @@ def test_xic_training_and_dataset_bound_checkpoint_roundtrip(tmp_path):
         == "error_identification_positive_v1"
     assert payload["model_implementation"]["model_type"] \
         == "xic_fusion_attention_v2"
+    assert payload["runtime_device"] == fitted.device_trace
+    assert fitted.device_trace["device_type"] == "cpu"
+    assert sum(
+        "training will run without GPU acceleration" in record.message
+        for record in caplog.records) == 1
     assert scores.shape == (2,)
     assert np.isfinite(scores).all()
 
@@ -498,7 +505,11 @@ def test_published_v2_checkpoint_implementation_remains_allowlisted(tmp_path):
             parameter.fill_((index + 1) * 0.001)
     fitted = SimpleNamespace(
         model=model, history=[], best_epoch=1,
-        best_validation_score=0.5)
+        best_validation_score=0.5,
+        device_trace={
+            "device": "cpu", "device_type": "cpu",
+            "cuda_available": False, "torch_cuda_runtime": None,
+        })
     save_checkpoint(checkpoint, fitted, dataset_identity={
         "signal_checksums_sha256": source.complete["checksums_sha256"],
     }, metadata={

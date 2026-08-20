@@ -24,6 +24,7 @@ class FittedXICModel:
     best_validation_score: float
     history: list[dict]
     device: str
+    device_trace: dict
 
 
 def _model_from_config(config: dict) -> XICModel:
@@ -45,6 +46,39 @@ def _seed_worker(_worker_id: int) -> None:
     worker_seed = torch.initial_seed() % (2 ** 32)
     random.seed(worker_seed)
     np.random.seed(worker_seed)
+
+
+def runtime_device_trace(device: torch.device) -> dict:
+    """Return and log the accelerator identity used by one fitted member."""
+    trace = {
+        "device": str(device),
+        "device_type": device.type,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "torch_cuda_runtime": torch.version.cuda,
+    }
+    if device.type != "cuda":
+        logging.warning(
+            "Phase2 GPU trace device=%s cuda_available=%s torch_cuda=%s; "
+            "training will run without GPU acceleration",
+            device, trace["cuda_available"], trace["torch_cuda_runtime"])
+        return trace
+    device_index = (
+        int(device.index) if device.index is not None
+        else int(torch.cuda.current_device()))
+    properties = torch.cuda.get_device_properties(device_index)
+    trace.update({
+        "device_index": device_index,
+        "device_name": properties.name,
+        "compute_capability": [
+            int(properties.major), int(properties.minor)],
+        "total_memory_bytes": int(properties.total_memory),
+    })
+    logging.info(
+        "Phase2 GPU trace device=cuda:%d name=%s capability=%d.%d "
+        "memory_gib=%.2f torch_cuda=%s",
+        device_index, properties.name, properties.major, properties.minor,
+        properties.total_memory / (1024 ** 3), trace["torch_cuda_runtime"])
+    return trace
 
 
 def _loader(dataset: XICDataset, *, batch_size: int, seed: int,
@@ -193,6 +227,7 @@ def fit_xic_model(
         deterministic=bool(training.get("deterministic", True)),
     )
     device = resolve_device(training.get("device", "auto"))
+    device_trace = runtime_device_trace(device)
     model = _model_from_config(config).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -288,4 +323,4 @@ def fit_xic_model(
     return FittedXICModel(
         model=model, best_epoch=best_epoch,
         best_validation_score=best_score, history=history,
-        device=str(device))
+        device=str(device), device_trace=device_trace)
