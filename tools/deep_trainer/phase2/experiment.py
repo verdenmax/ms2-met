@@ -26,9 +26,14 @@ from ..comparison import (
 )
 from .checkpoint import save_checkpoint
 from .data import XICDataset, input_adapter_contract
-from .model import n_trainable_parameters
+from .model import (
+    SUPPORTED_XIC_MODEL_TYPES, model_from_architecture,
+    n_trainable_parameters,
+)
 from .protocol import prepare_xic_protocol
-from .training import fit_xic_model, predict_trust
+from .training import (
+    attention_head_diagnostics, fit_xic_model, predict_trust,
+)
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -204,9 +209,16 @@ def _validate_config(config: dict) -> None:
         raise ValueError(
             "evaluation_semantics must exactly preserve the canonical "
             "incorrect-identification-positive convention")
-    if config.get("model", {}).get("type") != "xic_fusion_attention_v2":
+    model_type = config.get("model", {}).get("type")
+    if model_type not in SUPPORTED_XIC_MODEL_TYPES:
         raise ValueError(
-            "Phase 2 config requires model.type=xic_fusion_attention_v2")
+            "Phase 2 config model.type must be one of "
+            f"{sorted(SUPPORTED_XIC_MODEL_TYPES)}")
+    try:
+        model_from_architecture(dict(config["model"]))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"invalid Phase 2 model configuration: {exc}") from exc
     if config.get("training", {}).get("early_stopping_metric") != "roc_auc":
         raise ValueError("Phase 2 early_stopping_metric must be roc_auc")
     if str(config.get("training", {}).get(
@@ -363,6 +375,9 @@ def _fit_one_pool(protocol, model_name: str, test: pd.DataFrame,
         oof_scores = predict_trust(
             fitted.model, oof_dataset, batch_size=inference_batch_size,
             device=fitted.device, num_workers=num_workers)
+        head_diagnostics = attention_head_diagnostics(
+            fitted.model, oof_dataset, batch_size=inference_batch_size,
+            device=fitted.device, num_workers=num_workers)
         test_scores = predict_trust(
             fitted.model, test_dataset, batch_size=inference_batch_size,
             device=fitted.device, num_workers=num_workers)
@@ -420,6 +435,7 @@ def _fit_one_pool(protocol, model_name: str, test: pd.DataFrame,
             "best_epoch": fitted.best_epoch,
             "best_validation_roc_auc": fitted.best_validation_score,
             "n_trainable_parameters": n_trainable_parameters(fitted.model),
+            "attention_head_diagnostics": head_diagnostics,
             "checkpoint": str(relative_checkpoint),
             "roc_auc": fold_metrics["roc_auc"],
             "error_pr_auc": fold_metrics["error_pr_auc"],

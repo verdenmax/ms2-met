@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import logging
+import random
 
 import numpy as np
 import torch
@@ -13,49 +14,62 @@ from torch.utils.data import DataLoader
 
 from ..training import _class_weights, configure_torch, resolve_device
 from .data import ShardBatchSampler, XICDataset, collate_xic
-from .model import XICFusionNetwork
+from .model import XICModel, model_from_architecture
 
 
 @dataclass
 class FittedXICModel:
-    model: XICFusionNetwork
+    model: XICModel
     best_epoch: int
     best_validation_score: float
     history: list[dict]
     device: str
 
 
-def _model_from_config(config: dict) -> XICFusionNetwork:
-    values = dict(config["model"])
-    model_type = values.pop("type", None)
-    if model_type != "xic_fusion_attention_v2":
-        raise ValueError(
-            "Phase 2 requires model.type=xic_fusion_attention_v2")
-    return XICFusionNetwork(**values)
+def _model_from_config(config: dict) -> XICModel:
+    """Build a declared XIC model through the checkpoint model seam."""
+    return model_from_architecture(dict(config["model"]))
 
 
-def _move_batch(batch: dict, device: torch.device) -> dict:
+def _move_batch(batch: dict, device: torch.device, *,
+                non_blocking: bool = False) -> dict:
     return {
-        key: value.to(device) if torch.is_tensor(value) else value
+        key: value.to(device, non_blocking=non_blocking)
+        if torch.is_tensor(value) else value
         for key, value in batch.items()
     }
 
 
+def _seed_worker(_worker_id: int) -> None:
+    """Seed libraries if a future dataset transform adds randomness."""
+    worker_seed = torch.initial_seed() % (2 ** 32)
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+
+
 def _loader(dataset: XICDataset, *, batch_size: int, seed: int,
-            shuffle: bool, num_workers: int) -> DataLoader:
+            shuffle: bool, num_workers: int,
+            pin_memory: bool = False) -> DataLoader:
+    common = {
+        "collate_fn": collate_xic,
+        "num_workers": int(num_workers),
+        "pin_memory": bool(pin_memory),
+        "persistent_workers": int(num_workers) > 0,
+        "worker_init_fn": _seed_worker if int(num_workers) > 0 else None,
+        "generator": torch.Generator().manual_seed(int(seed)),
+    }
     if shuffle:
         sampler = ShardBatchSampler(
             dataset, batch_size, seed=seed, shuffle=True)
         return DataLoader(
-            dataset, batch_sampler=sampler, collate_fn=collate_xic,
-            num_workers=num_workers)
+            dataset, batch_sampler=sampler, **common)
     return DataLoader(
         dataset, batch_size=batch_size, shuffle=False,
-        collate_fn=collate_xic, num_workers=num_workers)
+        **common)
 
 
 def predict_trust(
-    model: XICFusionNetwork,
+    model: XICModel,
     dataset: XICDataset,
     *,
     batch_size: int,
@@ -64,19 +78,87 @@ def predict_trust(
 ) -> np.ndarray:
     """Return ``P(correct identification)`` in dataset index order."""
     resolved = torch.device(device)
+    use_pinned_memory = resolved.type == "cuda"
     loader = _loader(
         dataset, batch_size=int(batch_size), seed=0, shuffle=False,
-        num_workers=int(num_workers))
+        num_workers=int(num_workers), pin_memory=use_pinned_memory)
     outputs = []
     model.eval()
     with torch.no_grad():
         for batch in loader:
-            logits = model(_move_batch(batch, resolved))
+            logits = model(_move_batch(
+                batch, resolved, non_blocking=use_pinned_memory))
             outputs.append(torch.sigmoid(logits).cpu().numpy())
     result = np.concatenate(outputs).astype("f8") if outputs else np.array([])
     if len(result) != len(dataset) or not np.isfinite(result).all():
         raise ValueError("XIC model produced incomplete/non-finite trust scores")
     return result
+
+
+def attention_head_diagnostics(
+    model: XICModel,
+    dataset: XICDataset,
+    *,
+    batch_size: int,
+    device: str | torch.device,
+    num_workers: int = 0,
+) -> dict:
+    """Measure multi-head collapse without assigning semantics to a head."""
+    n_heads = int(getattr(model, "attention_heads", 1))
+    if n_heads <= 1:
+        return {
+            "n_heads": n_heads,
+            "n_samples_with_multiple_fragments": 0,
+            "mean_pairwise_cosine_similarity": None,
+            "fraction_pairwise_cosine_ge_0_99": None,
+            "mean_effective_fragments_per_head": None,
+        }
+    resolved = torch.device(device)
+    use_pinned_memory = resolved.type == "cuda"
+    loader = _loader(
+        dataset, batch_size=int(batch_size), seed=0, shuffle=False,
+        num_workers=int(num_workers), pin_memory=use_pinned_memory)
+    similarities: list[float] = []
+    effective_fragments: list[float] = []
+    n_samples = 0
+    model.eval()
+    with torch.no_grad():
+        for batch in loader:
+            moved = _move_batch(
+                batch, resolved, non_blocking=use_pinned_memory)
+            _logits, heads = model(
+                moved, return_attention_heads=True)
+            mask = moved["fragment_mask"].to(dtype=torch.bool)
+            for row in range(len(mask)):
+                valid = mask[row]
+                if int(valid.sum()) < 2:
+                    continue
+                n_samples += 1
+                weights = heads[row, :, valid]
+                normalized = weights / torch.linalg.vector_norm(
+                    weights, dim=-1, keepdim=True).clamp_min(1e-12)
+                cosine = normalized @ normalized.transpose(0, 1)
+                pair_mask = torch.triu(torch.ones_like(
+                    cosine, dtype=torch.bool), diagonal=1)
+                similarities.extend(
+                    cosine[pair_mask].detach().cpu().tolist())
+                entropy = -torch.sum(
+                    weights * torch.log(weights.clamp_min(1e-12)), dim=-1)
+                effective_fragments.extend(
+                    torch.exp(entropy).detach().cpu().tolist())
+    mean_similarity = (
+        float(np.mean(similarities)) if similarities else None)
+    return {
+        "n_heads": n_heads,
+        "n_samples_with_multiple_fragments": n_samples,
+        "mean_pairwise_cosine_similarity": mean_similarity,
+        "fraction_pairwise_cosine_ge_0_99": (
+            float(np.mean(np.asarray(similarities) >= 0.99))
+            if similarities else None),
+        "mean_effective_fragments_per_head": (
+            float(np.mean(effective_fragments))
+            if effective_fragments else None),
+    }
 
 
 def fit_xic_model(
@@ -138,9 +220,14 @@ def fit_xic_model(
     if num_workers < 0:
         raise ValueError("num_workers must be non-negative")
 
+    logging.info(
+        "Phase2 fit model=%s device=%s train=%d valid=%d batch_size=%d "
+        "num_workers=%d",
+        model.architecture()["type"], device, len(train), len(valid),
+        batch_size, num_workers)
     loader = _loader(
         train, batch_size=batch_size, seed=seed, shuffle=True,
-        num_workers=num_workers)
+        num_workers=num_workers, pin_memory=device.type == "cuda")
     best_score = -float("inf")
     best_epoch = 0
     best_state = None
@@ -159,7 +246,8 @@ def fit_xic_model(
             weights = torch.tensor([
                 weights_by_source[int(index)] for index in source_indices
             ], dtype=torch.float32, device=device)
-            batch = _move_batch(batch, device)
+            batch = _move_batch(
+                batch, device, non_blocking=device.type == "cuda")
             optimizer.zero_grad(set_to_none=True)
             loss = (
                 loss_function(model(batch), batch["label"]) * weights

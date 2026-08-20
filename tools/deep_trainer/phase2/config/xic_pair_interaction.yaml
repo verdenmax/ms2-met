@@ -1,0 +1,54 @@
+schema: phase2_xic_training_config_v1
+
+experiment:
+  # Controlled architecture comparison against the v2 XIC baseline and the
+  # same frozen LightGBM M20 protocol.
+  negative_pool_models: [M20]
+
+model:
+  type: xic_pair_interaction_v3
+  precursor_channels: 20
+  fragment_channels: 10
+  # Conservative capacity arm: preserve the full 13-cycle receptive field
+  # without jumping directly from the 42k v2 baseline to a 557k network.
+  trace_hidden_dim: 32
+  trace_blocks: 3
+  precursor_hidden_dim: 64
+  embedding_dim: 8
+  fragment_hidden_dim: 64
+  set_blocks: 1
+  attention_dim: 32
+  attention_heads: 2
+  fusion_hidden_dims: [128, 64]
+  max_fragment_charge: 8
+  dropout: 0.15
+  include_predicted_intensity: false
+
+training:
+  seeds: [42, 43, 44]
+  early_stopping_metric: roc_auc
+  # Fail loudly instead of silently repeating the 36-hour CPU baseline.
+  device: cuda
+  deterministic: true
+  torch_num_threads: 0
+  num_workers: 4
+  epochs: 50
+  batch_size: 128
+  inference_batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  gradient_clip_norm: 5.0
+  patience: 8
+  min_delta: 0.0001
+  class_weighting: none
+  min_class_groups_per_split: 5
+
+comparison:
+  bootstrap_reps: 1000
+  bootstrap_seed: 20260813
+
+evaluation_semantics:
+  positive_class: incorrect_identification
+  stored_label: 1=correct_identification, 0=incorrect_identification
+  model_score: trust_score=P(correct_identification)
+  metric_score: error_score=1-trust_score

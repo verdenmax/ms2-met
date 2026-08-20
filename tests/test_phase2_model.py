@@ -2,6 +2,7 @@ from copy import deepcopy
 import hashlib
 import logging
 import numpy as np
+import os
 import pandas as pd
 from pathlib import Path
 import pytest
@@ -12,9 +13,16 @@ import yaml
 
 from spectrum.dia_data import XIC_DTYPE
 from spectrum.psm_info import PSMInfo
-from tools.deep_trainer.phase2.data import XICDataset, collate_xic
+from tools.deep_trainer.phase2.data import (
+    XICDataset, _normalize_record, collate_xic,
+)
 from tools.deep_trainer.phase2.extraction import extract_signal_sample
-from tools.deep_trainer.phase2.model import XICFusionNetwork
+from tools.deep_trainer.phase2.model import (
+    ResidualTraceEncoder, XICFusionNetwork, XICPairInteractionNetwork,
+    model_from_architecture, model_implementation_sha256,
+    n_trainable_parameters,
+)
+from tools.deep_trainer.phase2 import model as xic_model_module
 from tools.deep_trainer.phase2 import protocol as protocol_module
 from tools.deep_trainer.phase2 import experiment as experiment_module
 from tools.deep_trainer.phase2.experiment import _fixed_metrics
@@ -27,7 +35,10 @@ from tools.deep_trainer.phase2.schema import ExtractionSettings
 from tools.deep_trainer.phase2.store import (
     open_signal_dataset, write_signal_dataset,
 )
-from tools.deep_trainer.phase2.training import fit_xic_model
+from tools.deep_trainer.phase2.training import (
+    attention_head_diagnostics, fit_xic_model,
+)
+from tools.deep_trainer.training import configure_torch
 
 
 
@@ -109,6 +120,84 @@ def _model():
         attention_dim=5, fusion_hidden_dims=[9], dropout=0.0)
 
 
+def _strong_model():
+    return XICPairInteractionNetwork(
+        trace_hidden_dim=4, trace_blocks=2, precursor_hidden_dim=8,
+        embedding_dim=3, fragment_hidden_dim=7, set_blocks=2,
+        attention_dim=5, attention_heads=2, fusion_hidden_dims=[9],
+        dropout=0.0)
+
+
+def test_xic_adapter_normalization_has_exact_five_field_semantics():
+    precursor_intensity = np.zeros((4, 3), dtype="f4")
+    precursor_ppm = np.zeros((4, 3), dtype="f4")
+    precursor_rt = np.zeros((4, 3), dtype="f4")
+    precursor_scan = np.zeros((4, 3), dtype=bool)
+    precursor_peak = np.zeros((4, 3), dtype=bool)
+    precursor_intensity[0] = [0.0, 999.0, 9999.0]
+    precursor_ppm[0] = [0.0, -3.0, 5.0]
+    precursor_rt[0] = [0.0, 0.4, 1.2]
+    precursor_scan[0] = [False, True, True]
+    precursor_peak[0] = [False, True, True]
+    # A real scan with no matched peak must differ from padding.
+    precursor_rt[1, 1] = 0.4
+    precursor_scan[1, 1] = True
+
+    fragment_intensity = np.zeros((2, 2, 3), dtype="f4")
+    fragment_rt = np.zeros((2, 2, 3), dtype="f4")
+    fragment_scan = np.zeros((2, 2, 3), dtype=bool)
+    fragment_peak = np.zeros((2, 2, 3), dtype=bool)
+    fragment_ppm = np.zeros((2, 2, 3), dtype="f4")
+    fragment_intensity[0, 0, 1] = 500.0
+    fragment_rt[0, 0, 1] = -0.6
+    fragment_scan[0, 0, 1] = True
+    fragment_peak[0, 0, 1] = True
+    # This ineligible fragment must not alter either sample-level scale.
+    fragment_intensity[1, 0, 1] = 1e6
+    fragment_rt[1, 0, 1] = 100.0
+    fragment_scan[1, 0, 1] = True
+    fragment_peak[1, 0, 1] = True
+    record = {
+        "precursor_intensity": precursor_intensity,
+        "precursor_ppm_error": precursor_ppm,
+        "precursor_rt_delta": precursor_rt,
+        "precursor_scan_mask": precursor_scan,
+        "precursor_peak_mask": precursor_peak,
+        "fragment_intensity": fragment_intensity,
+        "fragment_ppm_error": fragment_ppm,
+        "fragment_rt_delta": fragment_rt,
+        "fragment_scan_mask": fragment_scan,
+        "fragment_peak_mask": fragment_peak,
+        "fragment_attempted": np.array([True, False]),
+        "fragment_separable": np.array([True, False]),
+        "fragment_ion_type": np.array([0, 1]),
+        "fragment_charge": np.array([1, 2]),
+        "metadata": {"sample_id": "exact-normalization", "label": 1},
+    }
+
+    normalized = _normalize_record(
+        record, mass_tol_ppm=10.0,
+        include_predicted_intensity=False)
+
+    expected_intensity = np.log1p(999.0) / np.log1p(9999.0)
+    np.testing.assert_allclose(
+        normalized["precursor"][0],
+        [0.0, expected_intensity, 1.0], rtol=1e-6)
+    np.testing.assert_allclose(
+        normalized["precursor"][1], [0.0, -0.3, 0.5])
+    np.testing.assert_allclose(
+        normalized["precursor"][2], [0.0, 1.0 / 3.0, 1.0],
+        rtol=1e-6)
+    assert normalized["precursor"][3].tolist() == [0.0, 1.0, 1.0]
+    assert normalized["precursor"][4].tolist() == [0.0, 1.0, 1.0]
+    assert normalized["precursor"][5:10, 1].tolist() == [
+        0.0, 0.0, pytest.approx(1.0 / 3.0), 1.0, 0.0,
+    ]
+    np.testing.assert_allclose(normalized["signal_scale"], [
+        np.log1p(9999.0), np.log1p(1.2),
+    ], rtol=1e-6)
+
+
 def test_xic_fusion_forward_is_finite_and_returns_trust_logits(tmp_path):
     source = _write_training_signals(tmp_path)
     dataset = XICDataset(source, [0, 1])
@@ -137,6 +226,112 @@ def test_xic_attention_handles_samples_with_no_eligible_fragments(tmp_path):
 
     assert torch.isfinite(logits).all()
     assert attention.sum().item() == 0.0
+
+
+def test_xic_v3_pair_interaction_forward_preserves_model_interface(tmp_path):
+    source = _write_training_signals(tmp_path)
+    dataset = XICDataset(source, [0, 1])
+    batch = collate_xic([dataset[0], dataset[1]])
+    model = _strong_model()
+
+    logits, attention = model(batch, return_attention=True)
+
+    assert logits.shape == (2,)
+    assert attention.shape == batch["fragment_mask"].shape
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(attention).all()
+    assert torch.allclose(attention.sum(dim=1), torch.ones(2))
+    assert attention[:, :2].sum().item() == 0.0
+    architecture = model.architecture()
+    assert architecture["type"] == "xic_pair_interaction_v3"
+    restored = model_from_architecture(architecture)
+    assert restored.architecture() == architecture
+    assert n_trainable_parameters(model) > n_trainable_parameters(_model())
+    _, attention_heads = model(batch, return_attention_heads=True)
+    assert attention_heads.shape == (
+        len(batch["label"]), model.attention_heads,
+        batch["fragment"].shape[1],
+    )
+    torch.testing.assert_close(
+        attention_heads.sum(dim=-1),
+        torch.ones_like(attention_heads.sum(dim=-1)))
+
+
+def test_residual_trace_encoder_preserves_raw_intensity_summaries():
+    encoder = ResidualTraceEncoder(
+        hidden_dim=4, n_blocks=1, dropout=0.0).eval()
+    values = torch.zeros(2, 5, 4)
+    values[0, 0] = torch.tensor([0.0, 0.2, 0.8, 1.0])
+    scan_mask = torch.tensor([
+        [False, True, True, False],
+        [False, False, False, False],
+    ])
+
+    encoded = encoder(values, scan_mask)
+
+    torch.testing.assert_close(
+        encoded[:, -2:], torch.tensor([[0.5, 0.8], [0.0, 0.0]]))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+def test_xic_v3_cuda_deterministic_forward_backward_smoke(tmp_path,
+                                                          monkeypatch):
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    configure_torch(31, deterministic=True)
+    source = _write_training_signals(tmp_path)
+    batch = collate_xic([XICDataset(source, [0])[0]])
+    cuda_batch = {
+        key: value.cuda() if torch.is_tensor(value) else value
+        for key, value in batch.items()
+    }
+    model = _strong_model().cuda().train()
+
+    loss = torch.nn.functional.binary_cross_entropy_with_logits(
+        model(cuda_batch), cuda_batch["label"])
+    loss.backward()
+
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert torch.isfinite(loss)
+    assert all(
+        parameter.grad is None or torch.isfinite(parameter.grad).all()
+        for parameter in model.parameters())
+
+
+def test_xic_v3_all_masked_fragment_set_is_finite_and_invariant(tmp_path):
+    source = _write_training_signals(tmp_path)
+    record = XICDataset(source, [0])[0]
+    record["fragment_mask"][:] = False
+    first = collate_xic([record])
+    second = deepcopy(first)
+    second["fragment"][:] = 1e6
+    second["fragment_ion_type"][:] = 2
+    second["fragment_charge"][:] = 8
+    model = _strong_model().eval()
+
+    with torch.no_grad():
+        first_logit, first_attention = model(first, return_attention=True)
+        second_logit, second_attention = model(
+            second, return_attention=True)
+
+    assert torch.isfinite(first_logit).all()
+    assert first_attention.sum().item() == 0.0
+    assert second_attention.sum().item() == 0.0
+    torch.testing.assert_close(
+        first_logit, second_logit, rtol=0.0, atol=1e-7)
+
+
+def test_xic_v3_reports_attention_head_collapse_diagnostics(tmp_path):
+    source = _write_training_signals(tmp_path)
+    dataset = XICDataset(source, [0, 1])
+
+    diagnostics = attention_head_diagnostics(
+        _strong_model(), dataset, batch_size=2, device="cpu")
+
+    assert diagnostics["n_heads"] == 2
+    assert diagnostics["n_samples_with_multiple_fragments"] == 2
+    assert 0.0 <= diagnostics["mean_pairwise_cosine_similarity"] <= 1.0
+    assert 0.0 <= diagnostics["fraction_pairwise_cosine_ge_0_99"] <= 1.0
+    assert diagnostics["mean_effective_fragments_per_head"] >= 1.0
 
 
 def test_masked_fragment_magnitude_cannot_change_scale_or_model_logit(tmp_path):
@@ -226,6 +421,8 @@ def test_xic_training_and_dataset_bound_checkpoint_roundtrip(tmp_path):
     assert model.architecture() == fitted.model.architecture()
     assert payload["metadata"]["metric_semantics"] \
         == "error_identification_positive_v1"
+    assert payload["model_implementation"]["model_type"] \
+        == "xic_fusion_attention_v2"
     assert scores.shape == (2,)
     assert np.isfinite(scores).all()
 
@@ -247,10 +444,97 @@ def test_xic_training_and_dataset_bound_checkpoint_roundtrip(tmp_path):
     original_model = checkpoint_module.model_implementation_contract
     monkeypatch.setattr(
         checkpoint_module, "model_implementation_contract",
-        lambda: {**original_model(), "sha256": "future-model"})
+        lambda model_type: {
+            **original_model(model_type), "sha256": "future-model",
+        })
     with pytest.raises(ValueError, match="different Phase 2 model"):
         load_checkpoint(checkpoint, source=source)
     monkeypatch.undo()
+
+
+def test_xic_v3_training_and_checkpoint_roundtrip(tmp_path):
+    source = _write_training_signals(tmp_path)
+    config = {
+        "model": _strong_model().architecture(),
+        "training": {
+            "device": "cpu", "deterministic": True,
+            "torch_num_threads": 1, "epochs": 1, "batch_size": 2,
+            "inference_batch_size": 2, "learning_rate": 0.001,
+            "weight_decay": 0.0, "gradient_clip_norm": 5.0,
+            "patience": 1, "min_delta": 0.0,
+            "class_weighting": "none", "num_workers": 0,
+        },
+    }
+    fitted = fit_xic_model(
+        source, [0, 1, 2, 3], [4, 5, 6, 7], config,
+        validation_score=lambda labels, trust: float(
+            np.mean(trust[np.asarray(labels) == 1])
+            - np.mean(trust[np.asarray(labels) == 0])),
+        seed=23)
+    checkpoint = tmp_path / "model-v3.pt"
+    save_checkpoint(checkpoint, fitted, dataset_identity={
+        "signal_checksums_sha256": source.complete["checksums_sha256"],
+    }, metadata={
+        "metric_semantics": "error_identification_positive_v1",
+    })
+
+    restored, payload = load_checkpoint(
+        checkpoint, source=source, device="cpu")
+    scores = predict_indices(
+        checkpoint, source, [0, 3], device="cpu", batch_size=2)
+
+    assert isinstance(restored, XICPairInteractionNetwork)
+    assert payload["architecture"] == fitted.model.architecture()
+    assert scores.shape == (2,)
+    assert np.isfinite(scores).all()
+
+
+def test_published_v2_checkpoint_implementation_remains_allowlisted(tmp_path):
+    source = _write_training_signals(tmp_path)
+    checkpoint = tmp_path / "published-v2.pt"
+    model = _model()
+    with torch.no_grad():
+        for index, parameter in enumerate(model.parameters()):
+            parameter.fill_((index + 1) * 0.001)
+    fitted = SimpleNamespace(
+        model=model, history=[], best_epoch=1,
+        best_validation_score=0.5)
+    save_checkpoint(checkpoint, fitted, dataset_identity={
+        "signal_checksums_sha256": source.complete["checksums_sha256"],
+    }, metadata={
+        "metric_semantics": "error_identification_positive_v1",
+    })
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    payload["model_implementation"] = {
+        "schema": "phase2_xic_model_implementation_v1",
+        "sha256": (
+            "ce4814ddead969e87da4b3996a19474bb5b85d1a405575d441f649b7bb197aca"
+        ),
+    }
+    torch.save(payload, checkpoint)
+
+    restored, _ = load_checkpoint(
+        checkpoint, source=source, device="cpu")
+    trust = predict_indices(
+        checkpoint, source, [0, 3], device="cpu", batch_size=2)
+
+    assert isinstance(restored, XICFusionNetwork)
+    np.testing.assert_allclose(
+        trust, [0.5065788626670837, 0.5065788626670837],
+        rtol=0.0, atol=1e-8)
+
+
+def test_model_implementation_hash_is_isolated_by_architecture(monkeypatch):
+    before = model_implementation_sha256("xic_fusion_attention_v2")
+    v3_factory, _v3_parts = xic_model_module._MODEL_REGISTRY[
+        "xic_pair_interaction_v3"]
+    monkeypatch.setitem(
+        xic_model_module._MODEL_REGISTRY,
+        "xic_pair_interaction_v3", (v3_factory, (v3_factory,)))
+
+    after = model_implementation_sha256("xic_fusion_attention_v2")
+
+    assert after == before
 
 
 def test_xic_protocol_requires_exact_full_frozen_assignments(
@@ -366,6 +650,26 @@ def test_phase2_preflight_rejects_model_adapter_channel_mismatch(tmp_path):
 
     with pytest.raises(ValueError, match="differ from the XIC adapter"):
         experiment_module._validate_model_input_shape(protocol, config)
+
+
+def test_strong_xic_config_is_a_separate_supported_model_arm():
+    path = Path(__file__).parents[1] / (
+        "tools/deep_trainer/phase2/config/xic_pair_interaction.yaml")
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    experiment_module._validate_config(config)
+    model = model_from_architecture(config["model"])
+
+    assert isinstance(model, XICPairInteractionNetwork)
+    assert model.architecture() == config["model"]
+    assert 150_000 <= n_trainable_parameters(model) <= 250_000
+    assert config["training"]["device"] == "cuda"
+    assert config["training"]["class_weighting"] == "none"
+
+    invalid = deepcopy(config)
+    invalid["model"]["fragment_channels"] = 9
+    with pytest.raises(ValueError, match="paired five-feature fragment"):
+        experiment_module._validate_config(invalid)
 
 
 def test_phase2_preflight_requires_all_reported_working_points():
