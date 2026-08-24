@@ -30,6 +30,9 @@ training:
   # Fail loudly instead of silently repeating the 36-hour CPU baseline.
   device: cuda
   deterministic: true
+  # RTX-class CUDA GPUs use FP16 temporal convolutions with dynamic loss
+  # scaling; evaluation still emits ordinary trust scores.
+  mixed_precision: true
   torch_num_threads: 0
   num_workers: 4
   epochs: 50

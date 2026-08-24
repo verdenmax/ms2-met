@@ -351,6 +351,8 @@ def _fit_one_pool(protocol, model_name: str, test: pd.DataFrame,
     inference_batch_size = int(
         config["training"].get("inference_batch_size", 256))
     num_workers = int(config["training"].get("num_workers", 0))
+    mixed_precision = bool(
+        config["training"].get("mixed_precision", False))
     dataset_identity = dict(protocol.validation["build_contract"])
 
     for fold in range(n_folds):
@@ -374,13 +376,16 @@ def _fit_one_pool(protocol, model_name: str, test: pd.DataFrame,
             include_predicted_intensity=include_prediction)
         oof_scores = predict_trust(
             fitted.model, oof_dataset, batch_size=inference_batch_size,
-            device=fitted.device, num_workers=num_workers)
+            device=fitted.device, num_workers=num_workers,
+            mixed_precision=mixed_precision)
         head_diagnostics = attention_head_diagnostics(
             fitted.model, oof_dataset, batch_size=inference_batch_size,
-            device=fitted.device, num_workers=num_workers)
+            device=fitted.device, num_workers=num_workers,
+            mixed_precision=mixed_precision)
         test_scores = predict_trust(
             fitted.model, test_dataset, batch_size=inference_batch_size,
-            device=fitted.device, num_workers=num_workers)
+            device=fitted.device, num_workers=num_workers,
+            mixed_precision=mixed_precision)
         oof[outer_test] = oof_scores
         member_test_scores.append(test_scores)
 

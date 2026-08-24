@@ -266,6 +266,13 @@ AdamW 更新；也可单独执行：
 make smoke-deep-xic-cuda
 ```
 
+增强配置还启用 CUDA FP16 mixed precision 和动态 loss scaling。v3 只对
+`fragment_mask=true` 的 fragment pair 执行残差时序卷积；padding 与仅供审计的
+不可用 fragment 不再消耗卷积计算，但 attention 输出仍 scatter 回原来的 fragment
+位置，因此 checkpoint 输入和解释接口不变。每个 epoch 日志会分别记录
+`train_seconds`、`data_wait_seconds`、`data_wait_fraction`、`validation_seconds` 和
+`train_rows_per_second`，用于区分 DataLoader 饥饿与模型计算瓶颈。
+
 每个训练成员都会打印并保存 `runtime_device` trace。CUDA 运行记录设备编号、
 GPU 名称、compute capability、显存大小和 PyTorch CUDA runtime；CPU 运行会明确
 输出一行 `WARNING`，并在 checkpoint 与 fold summary 中留下相同记录。

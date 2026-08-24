@@ -36,10 +36,13 @@ def _synthetic_batch() -> dict:
         [True, True, True, False],
         [True, False, False, False],
     ])
+    flattened_fragment = fragment.reshape(
+        batch_size, fragments, 10, trace_length)
     return {
         "precursor": precursor.reshape(batch_size, 20, trace_length),
-        "fragment": fragment.reshape(
-            batch_size, fragments, 10, trace_length),
+        "fragment": flattened_fragment,
+        "fragment_packed": flattened_fragment[mask],
+        "fragment_packed_index": mask.nonzero(as_tuple=False),
         "fragment_mask": mask,
         "fragment_ion_type": torch.tensor([
             [1, 2, 1, 0], [2, 0, 0, 0],
@@ -58,23 +61,31 @@ def run_cuda_smoke(config_path: str | Path) -> dict:
     device = resolve_device("cuda")
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
     model = model_from_architecture(dict(config["model"])).to(device).train()
+    mixed_precision = bool(
+        config.get("training", {}).get("mixed_precision", False))
     batch = {
         key: value.to(device) if torch.is_tensor(value) else value
         for key, value in _synthetic_batch().items()
     }
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    scaler = torch.amp.GradScaler("cuda", enabled=mixed_precision)
     optimizer.zero_grad(set_to_none=True)
-    logits = model(batch)
-    loss = torch.nn.functional.binary_cross_entropy_with_logits(
-        logits, batch["label"])
-    loss.backward()
-    optimizer.step()
+    with torch.autocast(
+            device_type="cuda", dtype=torch.float16,
+            enabled=mixed_precision):
+        logits = model(batch)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            logits, batch["label"])
+    scaler.scale(loss).backward()
+    scaler.step(optimizer)
+    scaler.update()
     if not torch.isfinite(loss) or not torch.isfinite(logits).all():
         raise RuntimeError("CUDA XIC smoke test produced non-finite values")
     return {
         "model_type": model.architecture()["type"],
         "device": str(device),
         "parameters": n_trainable_parameters(model),
+        "mixed_precision": mixed_precision,
         "loss": float(loss.detach().cpu()),
     }
 
@@ -87,7 +98,9 @@ def main() -> None:
     print(
         "CUDA XIC smoke passed: "
         f"model={report['model_type']} device={report['device']} "
-        f"parameters={report['parameters']} loss={report['loss']:.6f}")
+        f"parameters={report['parameters']} "
+        f"mixed_precision={report['mixed_precision']} "
+        f"loss={report['loss']:.6f}")
 
 
 if __name__ == "__main__":

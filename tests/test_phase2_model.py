@@ -234,6 +234,11 @@ def test_xic_v3_pair_interaction_forward_preserves_model_interface(tmp_path):
     batch = collate_xic([dataset[0], dataset[1]])
     model = _strong_model()
 
+    assert len(batch["fragment_packed"]) == int(
+        batch["fragment_mask"].sum())
+    assert batch["fragment_packed_index"].shape == (
+        len(batch["fragment_packed"]), 2)
+
     logits, attention = model(batch, return_attention=True)
 
     assert logits.shape == (2,)
@@ -255,6 +260,30 @@ def test_xic_v3_pair_interaction_forward_preserves_model_interface(tmp_path):
     torch.testing.assert_close(
         attention_heads.sum(dim=-1),
         torch.ones_like(attention_heads.sum(dim=-1)))
+
+
+def test_xic_v3_packed_fragment_encoding_matches_dense_reference(tmp_path):
+    source = _write_training_signals(tmp_path)
+    records = [XICDataset(source, [0])[0], XICDataset(source, [1])[0]]
+    records[1]["fragment_mask"][:] = False
+    packed_batch = collate_xic(records)
+    dense_batch = deepcopy(packed_batch)
+    batch_size, n_fragments, channels, trace_length = (
+        dense_batch["fragment"].shape)
+    dense_batch["fragment_packed"] = dense_batch["fragment"].reshape(
+        batch_size * n_fragments, channels, trace_length)
+    dense_batch["fragment_packed_index"] = torch.cartesian_prod(
+        torch.arange(batch_size), torch.arange(n_fragments))
+    model = _strong_model().eval()
+
+    with torch.no_grad():
+        packed_logits, packed_attention = model(
+            packed_batch, return_attention=True)
+        dense_logits, dense_attention = model(
+            dense_batch, return_attention=True)
+
+    torch.testing.assert_close(packed_logits, dense_logits)
+    torch.testing.assert_close(packed_attention, dense_attention)
 
 
 def test_residual_trace_encoder_preserves_raw_intensity_summaries():
@@ -430,6 +459,13 @@ def test_xic_training_and_dataset_bound_checkpoint_roundtrip(
     assert sum(
         "training will run without GPU acceleration" in record.message
         for record in caplog.records) == 1
+    assert set([
+        "train_seconds", "data_wait_seconds", "validation_seconds",
+        "train_rows_per_second", "data_wait_fraction",
+    ]).issubset(fitted.history[0])
+    assert any(
+        "data_wait_fraction=" in record.message
+        for record in caplog.records)
     assert scores.shape == (2,)
     assert np.isfinite(scores).all()
 

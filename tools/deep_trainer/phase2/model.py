@@ -144,6 +144,8 @@ class XICFusionNetwork(XICModel):
         self.include_predicted_intensity = bool(include_predicted_intensity)
 
     def _validate_indices(self, batch: dict) -> None:
+        if batch.get("_embedding_indices_validated", False):
+            return
         if torch.any(batch["fragment_ion_type"] > 2):
             raise ValueError("fragment ion type is outside the embedding schema")
         if torch.any(batch["fragment_charge"] > self.max_fragment_charge):
@@ -457,10 +459,40 @@ class XICPairInteractionNetwork(XICModel):
         return encoded.reshape(batch_size, n_groups, -1)
 
     def _validate_indices(self, batch: dict) -> None:
+        if batch.get("_embedding_indices_validated", False):
+            return
         if torch.any(batch["fragment_ion_type"] > 2):
             raise ValueError("fragment ion type is outside the embedding schema")
         if torch.any(batch["fragment_charge"] > self.max_fragment_charge):
             raise ValueError("fragment charge exceeds configured maximum")
+
+    def _encode_eligible_fragments(
+        self,
+        fragments: torch.Tensor,
+        packed: torch.Tensor,
+        packed_index: torch.Tensor,
+    ) -> torch.Tensor:
+        """Encode real fragment pairs without computing padded/masked rows."""
+        batch_size, n_fragments, _channels, _trace_length = fragments.shape
+        output_shape = (
+            batch_size, n_fragments, 2,
+            self.fragment_trace_encoder.output_dim,
+        )
+        if packed.shape[0] == 0:
+            return fragments.new_zeros(output_shape)
+        eligible = self._encode_groups(
+            packed,
+            n_groups=2,
+            encoder=self.fragment_trace_encoder,
+        )
+        # ``index_put`` retains the gradient route from every eligible trace
+        # while leaving padding and audit-only fragments as exact zeros.  All
+        # downstream fragment modules already apply the same mask, so this is
+        # numerically equivalent to encoding every padded row and discarding
+        # the result later.
+        encoded = eligible.new_zeros(output_shape)
+        return encoded.index_put(
+            (packed_index[:, 0], packed_index[:, 1]), eligible)
 
     def forward(self, batch: dict, *, return_attention: bool = False,
                 return_attention_heads: bool = False):
@@ -478,12 +510,12 @@ class XICPairInteractionNetwork(XICModel):
         ], dim=-1))
 
         fragments = batch["fragment"]
-        batch_size, n_fragments, channels, trace_length = fragments.shape
-        fragment_groups = self._encode_groups(
-            fragments.reshape(
-                batch_size * n_fragments, channels, trace_length),
-            n_groups=2, encoder=self.fragment_trace_encoder,
-        ).reshape(batch_size, n_fragments, 2, -1)
+        mask = batch["fragment_mask"].to(dtype=torch.bool)
+        fragment_groups = self._encode_eligible_fragments(
+            fragments,
+            batch["fragment_packed"],
+            batch["fragment_packed_index"],
+        )
         fragment_parts = [
             self._pair_features(
                 fragment_groups[:, :, 0], fragment_groups[:, :, 1]),
@@ -495,7 +527,6 @@ class XICPairInteractionNetwork(XICModel):
                 raise ValueError(
                     "prediction-enabled XIC model requires prediction inputs")
             fragment_parts.append(batch["fragment_prediction"])
-        mask = batch["fragment_mask"].to(dtype=torch.bool)
         fragment_values = self.fragment_projection(
             torch.cat(fragment_parts, dim=-1))
         fragment_values = fragment_values * mask.unsqueeze(-1).to(

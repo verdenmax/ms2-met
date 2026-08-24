@@ -208,6 +208,13 @@ def collate_xic(records: Sequence[dict]) -> dict:
         "precursor": torch.from_numpy(np.stack([
             record["precursor"] for record in records])),
         "fragment": torch.from_numpy(fragment),
+        # Pack only model-eligible fragments once on the CPU.  The v3 model
+        # scatters their encodings back to padded positions for an unchanged
+        # attention interface, while avoiding convolution over both padding
+        # and audit-only fragment rows on every epoch.
+        "fragment_packed": torch.from_numpy(fragment[fragment_mask]),
+        "fragment_packed_index": torch.from_numpy(
+            np.argwhere(fragment_mask).astype("i8", copy=False)),
         "fragment_mask": torch.from_numpy(fragment_mask),
         "fragment_ion_type": torch.from_numpy(ion_type),
         "fragment_charge": torch.from_numpy(charge),

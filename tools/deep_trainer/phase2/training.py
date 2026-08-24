@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import logging
 import random
+import time
 
 import numpy as np
 import torch
@@ -33,12 +34,21 @@ def _model_from_config(config: dict) -> XICModel:
 
 
 def _move_batch(batch: dict, device: torch.device, *,
-                non_blocking: bool = False) -> dict:
-    return {
+                non_blocking: bool = False,
+                model: XICModel | None = None) -> dict:
+    # Validate embedding indices while tensors are still on the CPU.  Doing
+    # the same Python ``if torch.any(cuda_tensor)`` checks inside every model
+    # forward forces two device synchronizations per batch.
+    if model is not None:
+        model._validate_indices(batch)
+    moved = {
         key: value.to(device, non_blocking=non_blocking)
         if torch.is_tensor(value) else value
         for key, value in batch.items()
     }
+    if model is not None:
+        moved["_embedding_indices_validated"] = True
+    return moved
 
 
 def _seed_worker(_worker_id: int) -> None:
@@ -109,6 +119,7 @@ def predict_trust(
     batch_size: int,
     device: str | torch.device,
     num_workers: int = 0,
+    mixed_precision: bool = False,
 ) -> np.ndarray:
     """Return ``P(correct identification)`` in dataset index order."""
     resolved = torch.device(device)
@@ -116,17 +127,39 @@ def predict_trust(
     loader = _loader(
         dataset, batch_size=int(batch_size), seed=0, shuffle=False,
         num_workers=int(num_workers), pin_memory=use_pinned_memory)
-    outputs = []
-    model.eval()
-    with torch.no_grad():
-        for batch in loader:
-            logits = model(_move_batch(
-                batch, resolved, non_blocking=use_pinned_memory))
-            outputs.append(torch.sigmoid(logits).cpu().numpy())
-    result = np.concatenate(outputs).astype("f8") if outputs else np.array([])
+    result = _predict_batches(
+        model, loader, device=resolved,
+        mixed_precision=bool(mixed_precision))
     if len(result) != len(dataset) or not np.isfinite(result).all():
         raise ValueError("XIC model produced incomplete/non-finite trust scores")
     return result
+
+
+def _predict_batches(
+    model: XICModel,
+    loader: DataLoader,
+    *,
+    device: torch.device,
+    mixed_precision: bool,
+) -> np.ndarray:
+    """Predict one reusable loader with a single final device sync."""
+    outputs = []
+    use_pinned_memory = device.type == "cuda"
+    use_mixed_precision = bool(mixed_precision) and device.type == "cuda"
+    model.eval()
+    with torch.no_grad():
+        for batch in loader:
+            moved = _move_batch(
+                batch, device, non_blocking=use_pinned_memory, model=model)
+            with torch.autocast(
+                    device_type=device.type, dtype=torch.float16,
+                    enabled=use_mixed_precision):
+                logits = model(moved)
+            outputs.append(torch.sigmoid(logits.float()))
+    return (
+        torch.cat(outputs).cpu().numpy().astype("f8")
+        if outputs else np.array([])
+    )
 
 
 def attention_head_diagnostics(
@@ -136,6 +169,7 @@ def attention_head_diagnostics(
     batch_size: int,
     device: str | torch.device,
     num_workers: int = 0,
+    mixed_precision: bool = False,
 ) -> dict:
     """Measure multi-head collapse without assigning semantics to a head."""
     n_heads = int(getattr(model, "attention_heads", 1))
@@ -155,31 +189,41 @@ def attention_head_diagnostics(
     similarities: list[float] = []
     effective_fragments: list[float] = []
     n_samples = 0
+    use_mixed_precision = bool(mixed_precision) and resolved.type == "cuda"
     model.eval()
     with torch.no_grad():
         for batch in loader:
             moved = _move_batch(
-                batch, resolved, non_blocking=use_pinned_memory)
-            _logits, heads = model(
-                moved, return_attention_heads=True)
+                batch, resolved, non_blocking=use_pinned_memory, model=model)
+            with torch.autocast(
+                    device_type=resolved.type, dtype=torch.float16,
+                    enabled=use_mixed_precision):
+                _logits, heads = model(
+                    moved, return_attention_heads=True)
+            heads = heads.float()
             mask = moved["fragment_mask"].to(dtype=torch.bool)
-            for row in range(len(mask)):
-                valid = mask[row]
-                if int(valid.sum()) < 2:
-                    continue
-                n_samples += 1
-                weights = heads[row, :, valid]
-                normalized = weights / torch.linalg.vector_norm(
-                    weights, dim=-1, keepdim=True).clamp_min(1e-12)
-                cosine = normalized @ normalized.transpose(0, 1)
-                pair_mask = torch.triu(torch.ones_like(
-                    cosine, dtype=torch.bool), diagonal=1)
-                similarities.extend(
-                    cosine[pair_mask].detach().cpu().tolist())
-                entropy = -torch.sum(
-                    weights * torch.log(weights.clamp_min(1e-12)), dim=-1)
-                effective_fragments.extend(
-                    torch.exp(entropy).detach().cpu().tolist())
+            eligible_rows = mask.sum(dim=1) >= 2
+            n_eligible_rows = int(eligible_rows.sum().item())
+            n_samples += n_eligible_rows
+            if n_eligible_rows == 0:
+                continue
+            # Attention already stores exact zeros outside ``mask``.  Keeping
+            # those zeros lets us evaluate the whole batch at once instead of
+            # synchronizing CUDA separately for every OOF sample.
+            weights = heads[eligible_rows]
+            normalized = weights / torch.linalg.vector_norm(
+                weights, dim=-1, keepdim=True).clamp_min(1e-12)
+            cosine = torch.einsum(
+                "bhf,bkf->bhk", normalized, normalized)
+            pair_mask = torch.triu(torch.ones(
+                n_heads, n_heads, dtype=torch.bool,
+                device=cosine.device), diagonal=1)
+            similarities.extend(
+                cosine[:, pair_mask].reshape(-1).detach().cpu().tolist())
+            entropy = -torch.sum(
+                weights * torch.log(weights.clamp_min(1e-12)), dim=-1)
+            effective_fragments.extend(
+                torch.exp(entropy).reshape(-1).detach().cpu().tolist())
     mean_similarity = (
         float(np.mean(similarities)) if similarities else None)
     return {
@@ -237,7 +281,8 @@ def fit_xic_model(
     loss_function = nn.BCEWithLogitsLoss(reduction="none")
     class_weights = _class_weights(
         train_labels, training.get("class_weighting", "none"))
-    weights_by_source = {
+    uniform_class_weights = bool(np.all(class_weights == 1.0))
+    weights_by_source = {} if uniform_class_weights else {
         int(source_index): float(weight)
         for source_index, weight in zip(train.indices, class_weights)
     }
@@ -249,6 +294,10 @@ def fit_xic_model(
     min_delta = float(training.get("min_delta", 1e-4))
     gradient_clip = float(training.get("gradient_clip_norm", 5.0))
     num_workers = int(training.get("num_workers", 0))
+    mixed_precision_value = training.get("mixed_precision", False)
+    if not isinstance(mixed_precision_value, bool):
+        raise ValueError("mixed_precision must be a boolean")
+    mixed_precision = mixed_precision_value
     if min(epochs, batch_size, inference_batch_size, patience) < 1:
         raise ValueError(
             "epochs, batch sizes, and patience must be positive")
@@ -257,56 +306,105 @@ def fit_xic_model(
 
     logging.info(
         "Phase2 fit model=%s device=%s train=%d valid=%d batch_size=%d "
-        "num_workers=%d",
+        "num_workers=%d mixed_precision=%s",
         model.architecture()["type"], device, len(train), len(valid),
-        batch_size, num_workers)
+        batch_size, num_workers, mixed_precision and device.type == "cuda")
     loader = _loader(
         train, batch_size=batch_size, seed=seed, shuffle=True,
+        num_workers=num_workers, pin_memory=device.type == "cuda")
+    valid_loader = _loader(
+        valid, batch_size=inference_batch_size, seed=0, shuffle=False,
         num_workers=num_workers, pin_memory=device.type == "cuda")
     best_score = -float("inf")
     best_epoch = 0
     best_state = None
     no_improvement = 0
     history = []
+    use_mixed_precision = mixed_precision and device.type == "cuda"
+    device_trace["mixed_precision"] = use_mixed_precision
+    scaler = torch.amp.GradScaler("cuda", enabled=use_mixed_precision)
     valid_labels = source.manifest.iloc[
         valid.indices]["label"].to_numpy(dtype=int)
     for epoch in range(1, epochs + 1):
         model.train()
         if hasattr(loader.batch_sampler, "set_epoch"):
             loader.batch_sampler.set_epoch(epoch)
-        total_loss = 0.0
+        total_loss = torch.zeros((), dtype=torch.float32, device=device)
         total_rows = 0
-        for batch in loader:
-            source_indices = batch["source_index"].numpy()
-            weights = torch.tensor([
-                weights_by_source[int(index)] for index in source_indices
-            ], dtype=torch.float32, device=device)
+        data_wait_seconds = 0.0
+        train_started = time.perf_counter()
+        iterator = iter(loader)
+        while True:
+            wait_started = time.perf_counter()
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+            data_wait_seconds += time.perf_counter() - wait_started
+            batch_rows = len(batch["label"])
+            source_indices = (
+                None if uniform_class_weights
+                else batch["source_index"].numpy()
+            )
             batch = _move_batch(
-                batch, device, non_blocking=device.type == "cuda")
+                batch, device, non_blocking=device.type == "cuda", model=model)
             optimizer.zero_grad(set_to_none=True)
-            loss = (
-                loss_function(model(batch), batch["label"]) * weights
-            ).mean()
-            loss.backward()
+            with torch.autocast(
+                    device_type=device.type, dtype=torch.float16,
+                    enabled=use_mixed_precision):
+                losses = loss_function(model(batch), batch["label"])
+                if uniform_class_weights:
+                    loss = losses.mean()
+                else:
+                    weights = torch.tensor([
+                        weights_by_source[int(index)]
+                        for index in source_indices  # type: ignore[union-attr]
+                    ], dtype=torch.float32, device=device)
+                    loss = (losses * weights).mean()
+            scaler.scale(loss).backward()
             if gradient_clip > 0:
+                scaler.unscale_(optimizer)
                 nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
-            optimizer.step()
-            total_loss += float(loss.detach().cpu()) * len(source_indices)
-            total_rows += len(source_indices)
+            scaler.step(optimizer)
+            scaler.update()
+            # Keep the epoch reduction on-device.  Calling ``.cpu()`` here
+            # synchronizes CUDA once per batch and leaves the GPU idle between
+            # thousands of small temporal-convolution steps.
+            total_loss.add_(loss.detach().float() * batch_rows)
+            total_rows += batch_rows
 
-        trust = predict_trust(
-            model, valid, batch_size=inference_batch_size, device=device,
-            num_workers=num_workers)
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        train_seconds = time.perf_counter() - train_started
+
+        validation_started = time.perf_counter()
+        trust = _predict_batches(
+            model, valid_loader, device=device,
+            mixed_precision=use_mixed_precision)
+        if len(trust) != len(valid) or not np.isfinite(trust).all():
+            raise ValueError(
+                "XIC model produced incomplete/non-finite validation scores")
+        validation_seconds = time.perf_counter() - validation_started
         score = float(validation_score(valid_labels, trust))
         row = {
             "epoch": epoch,
-            "train_loss": total_loss / total_rows,
+            "train_loss": float(total_loss.item()) / total_rows,
             "validation_score": score,
+            "train_seconds": train_seconds,
+            "data_wait_seconds": data_wait_seconds,
+            "validation_seconds": validation_seconds,
+            "train_rows_per_second": total_rows / train_seconds,
+            "data_wait_fraction": data_wait_seconds / train_seconds,
         }
         history.append(row)
         logging.info(
-            "Phase2 epoch=%d train_loss=%.6f validation_roc_auc=%.6f",
-            epoch, row["train_loss"], score)
+            "Phase2 epoch=%d train_loss=%.6f validation_roc_auc=%.6f "
+            "train_seconds=%.1f data_wait_seconds=%.1f "
+            "data_wait_fraction=%.3f validation_seconds=%.1f "
+            "train_rows_per_second=%.1f",
+            epoch, row["train_loss"], score, train_seconds,
+            data_wait_seconds, row["data_wait_fraction"],
+            validation_seconds, row["train_rows_per_second"])
         if np.isfinite(score) and score > best_score + min_delta:
             best_score = score
             best_epoch = epoch
