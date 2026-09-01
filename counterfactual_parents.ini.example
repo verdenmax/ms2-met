@@ -1,0 +1,30 @@
+[counterfactual_parents]
+# Select one predeclared raw split. The tool never infers a split from paths.
+dataset_split = label_dev_train
+labeling = silac
+
+# Custom PSM JSON produced by tools/extract_common.py. It may contain several
+# raws and label types; only uniquely matched positive rows in dataset_split
+# can become parents.
+input_psms = ./datasets/all_label_psms.json
+
+# CSV/TSV with sequence, charge, raw_title (or raw_title1), and an explicit
+# heavy-confirmation column. The tool consumes this verdict but deliberately
+# does not derive it from Pearson/intensity thresholds.
+confirmation_table = ./datasets/all_label_heavy_confirmation.csv
+confirmation_column = heavy_confirmed
+# Required opaque/versioned name describing how the verdict was produced.
+confirmation_rule = precursor_and_fragment_confirmation_v1
+
+# CSV/TSV with exactly one row per raw and columns raw_title,dataset_split.
+raw_split_table = ./datasets/raw_split_manifest.csv
+
+# Parent eligibility for the current counterfactual v1 scientific scope.
+min_length = 7
+max_length = 40
+require_tryptic_c_terminus = true
+exclude_modified = true
+
+output_psms = ./datasets/label_dev_train_prepared_parents.json
+output_manifest = ./datasets/label_dev_train_prepared_parents.tsv
+output_audit = ./datasets/label_dev_train_prepared_parents.audit.json

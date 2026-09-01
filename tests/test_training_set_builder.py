@@ -13,10 +13,63 @@ from tools.training_set_builder import (
     SOURCE_MARKOV,
     SOURCE_POSITIVE,
     SOURCE_SHUFFLE,
+    _deduplicate_training,
+    _join_silver_manifest,
     _validate_manifest_labeling,
     assemble_training_set,
     generate_queries,
 )
+
+
+def test_silver_manifest_prefers_query_id_and_preserves_distinct_hypotheses():
+    silver = pd.DataFrame([
+        {"query_id": "Q1", "sequence": "PEPTIDEK", "charge": 2,
+         "raw_title1": "raw", "negative_source": "stale"},
+        {"query_id": "Q2", "sequence": "PEPTIDEK", "charge": 2,
+         "raw_title1": "raw", "negative_source": "stale"},
+    ])
+    manifest = pd.DataFrame([
+        {"query_id": "Q1", "parent_id": "P1", "sequence": "PEPTIDEK",
+         "charge": 2, "generator": "g1", "negative_source": "g1",
+         "labeling": "silac"},
+        {"query_id": "Q2", "parent_id": "P2", "sequence": "PEPTIDEK",
+         "charge": 2, "generator": "g2", "negative_source": "g2",
+         "labeling": "silac"},
+    ])
+    required = (
+        "query_id", "parent_id", "sequence", "charge",
+        "generator", "negative_source", "labeling",
+    )
+
+    joined, keys = _join_silver_manifest(silver, manifest, required)
+    for column in ("parent_id", "generator", "negative_source", "labeling"):
+        manifest_column = f"{column}_manifest"
+        if manifest_column in joined:
+            joined[column] = joined[manifest_column]
+    joined["label"] = 0
+    joined["label_type"] = "negative"
+
+    deduplicated = _deduplicate_training(joined)
+    assert keys == ["query_id"]
+    assert set(joined["parent_id"]) == {"P1", "P2"}
+    assert set(deduplicated["query_id"]) == {"Q1", "Q2"}
+
+
+def test_silver_query_id_join_rejects_sequence_mismatch():
+    silver = pd.DataFrame([
+        {"query_id": "Q1", "sequence": "WRONGPEP", "charge": 2},
+    ])
+    manifest = pd.DataFrame([
+        {"query_id": "Q1", "parent_id": "P1", "sequence": "PEPTIDEK",
+         "charge": 2, "generator": "g", "negative_source": "g",
+         "labeling": "silac"},
+    ])
+    required = (
+        "query_id", "parent_id", "sequence", "charge",
+        "generator", "negative_source", "labeling",
+    )
+    with pytest.raises(ValueError, match="sequence mismatch"):
+        _join_silver_manifest(silver, manifest, required)
 
 
 def _write_fasta(path):

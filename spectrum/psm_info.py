@@ -62,6 +62,8 @@ class PSMInfo:
         pair_id: str | None = None,
         candidate_family_id: str | None = None,
         peptide_group_id: str | None = None,
+        heavy_confirmed: bool | None = None,
+        dataset_split: str | None = None,
     ):
 
         self._sequence = sequence
@@ -80,6 +82,8 @@ class PSMInfo:
         self._pair_id = pair_id
         self._candidate_family_id = candidate_family_id
         self._peptide_group_id = peptide_group_id
+        self._heavy_confirmed = heavy_confirmed
+        self._dataset_split = dataset_split
 
     def to_dict(self):
         """将对象转为 JSON 兼容的字典"""
@@ -101,7 +105,8 @@ class PSMInfo:
             d["label_type"] = self._label_type
         for name in (
                 "query_id", "parent_id", "group_id", "pair_id",
-                "candidate_family_id", "peptide_group_id"):
+                "candidate_family_id", "peptide_group_id",
+                "heavy_confirmed", "dataset_split"):
             value = getattr(self, f"_{name}")
             if value is not None:
                 d[name] = value
@@ -128,6 +133,8 @@ class PSMInfo:
             pair_id=data.get("pair_id"),
             candidate_family_id=data.get("candidate_family_id"),
             peptide_group_id=data.get("peptide_group_id"),
+            heavy_confirmed=data.get("heavy_confirmed"),
+            dataset_split=data.get("dataset_split"),
         )
 
     def __repr__(self):

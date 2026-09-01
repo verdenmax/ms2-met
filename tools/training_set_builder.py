@@ -1085,13 +1085,86 @@ def _deduplicate_training(df: pd.DataFrame) -> pd.DataFrame:
         SOURCE_GOLD: 1,
         SOURCE_SHUFFLE: 2,
         SOURCE_MARKOV: 3,
+        "synthetic_composition_shuffle": 4,
+        "synthetic_kr_position_shuffle": 5,
+        "synthetic_local_mass_gap": 6,
     }
     work["_source_priority"] = work["negative_source"].map(
         priority).fillna(99)
+    dedup_keys = keys
+    if "query_id" in work.columns:
+        query_ids = work["query_id"].astype("string").str.strip()
+        has_query = query_ids.fillna("").ne("")
+        base_identity = work[keys].astype("string").fillna("").agg(
+            "\x1f".join, axis=1)
+        work["_dedup_identity"] = (
+            "base:" + base_identity)
+        work.loc[has_query, "_dedup_identity"] = (
+            "query:" + query_ids[has_query])
+        dedup_keys = ["_dedup_identity"]
     work = (work.sort_values("_source_priority")
-            .drop_duplicates(keys, keep="first")
-            .drop(columns="_source_priority"))
+            .drop_duplicates(dedup_keys, keep="first")
+            .drop(columns=["_source_priority", "_dedup_identity"],
+                  errors="ignore"))
     return work.reset_index(drop=True)
+
+
+def _join_silver_manifest(
+    silver_raw: pd.DataFrame,
+    manifest: pd.DataFrame,
+    required_manifest: Sequence[str],
+) -> tuple[pd.DataFrame, list[str]]:
+    """Attach authoritative provenance, preferring stable query identity.
+
+    External-search Silver tables created from a FASTA may not preserve the
+    manifest query ID, so the legacy ``sequence+charge`` join remains a
+    supported fallback. Counterfactual PSM extraction does preserve query_id;
+    using it prevents two identical candidate sequences from different
+    parent/raw hypotheses being conflated.
+    """
+    use_query_id = (
+        "query_id" in silver_raw.columns
+        and silver_raw["query_id"].astype("string").str.strip()
+        .fillna("").ne("").any()
+    )
+    join_keys = ["query_id"] if use_query_id else ["sequence", "charge"]
+    payload_columns = list(required_manifest) + [
+        column for column in (
+            "generator_seed", "group_id", "candidate_family_id",
+            "peptide_group_id", "dataset_split",
+        )
+        if column in manifest.columns
+    ]
+    payload_columns = list(dict.fromkeys(payload_columns))
+    silver = silver_raw.merge(
+        manifest[payload_columns],
+        on=join_keys,
+        how="inner",
+        suffixes=("", "_manifest"),
+        validate="many_to_one",
+    )
+    if use_query_id:
+        for column in ("sequence", "charge"):
+            manifest_column = f"{column}_manifest"
+            if manifest_column not in silver:
+                continue
+            if column == "charge":
+                left = pd.to_numeric(silver[column], errors="coerce")
+                right = pd.to_numeric(
+                    silver[manifest_column], errors="coerce")
+            else:
+                left = silver[column].astype("string").fillna("")
+                right = silver[manifest_column].astype("string").fillna("")
+            mismatch = left.ne(right)
+            if bool(mismatch.any()):
+                examples = silver.loc[
+                    mismatch, ["query_id", column, manifest_column]
+                ].head(5).to_dict("records")
+                raise ValueError(
+                    f"silver feature/manifest {column} mismatch for query_id: "
+                    f"{examples}")
+            silver.drop(columns=manifest_column, inplace=True)
+    return silver, join_keys
 
 
 def assemble_training_set(cfg: AssemblyConfig) -> dict:
@@ -1127,18 +1200,13 @@ def assemble_training_set(cfg: AssemblyConfig) -> dict:
                         (manifest, "query manifest")):
         if not {"sequence", "charge"} <= set(frame.columns):
             raise ValueError(f"{name} requires sequence and charge")
-    silver = silver_raw.merge(
-        manifest[list(required_manifest)
-                 + [c for c in ("generator_seed",)
-                    if c in manifest.columns]],
-        on=["sequence", "charge"],
-        how="inner",
-        suffixes=("", "_manifest"),
-        validate="many_to_one",
-    )
+    silver, silver_join_keys = _join_silver_manifest(
+        silver_raw, manifest, required_manifest)
     # The manifest is authoritative for provenance.
-    for column in ("query_id", "parent_id", "generator",
-                   "negative_source", "generator_seed", "labeling"):
+    for column in (
+            "query_id", "parent_id", "group_id", "candidate_family_id",
+            "peptide_group_id", "dataset_split", "generator",
+            "negative_source", "generator_seed", "labeling"):
         manifest_col = f"{column}_manifest"
         if manifest_col in silver:
             silver[column] = silver[manifest_col]
@@ -1184,6 +1252,7 @@ def assemble_training_set(cfg: AssemblyConfig) -> dict:
         "silver_join": {
             "input": int(len(silver_raw)),
             "matched_manifest": int(len(silver)),
+            "keys": silver_join_keys,
         },
         "silver_signal_filter": signal_report,
         "gold_domain_filter": gold_domain_report,

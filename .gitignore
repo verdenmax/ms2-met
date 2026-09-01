@@ -45,6 +45,7 @@ workspace/
 *.tsv
 *.json
 !extract_common_config.ini.example
+!config/counterfactual/*.csv
 !tests/**/*.json
 !tests/**/*.csv
 !tests/**/*.tsv
@@ -76,6 +77,8 @@ ms2*.log
 # ---------------- User-specific configs (commit *.example instead) ----------------
 # 锚定 /：只匹配项目根的 config.ini，runs/baseline_*/config.ini 由上方白名单管理
 /config.ini
+/counterfactual_negatives.ini
+/counterfactual_parents.ini
 /extract_*.ini
 !extract_common_config.ini.example
 # Neg-FDR variants are tracked (they're derived from the gitignored

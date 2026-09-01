@@ -15,7 +15,8 @@ from constant.keys import ConfigKeys
 
 RELATIONSHIP_FIELDS = (
     "query_id", "parent_id", "group_id", "pair_id",
-    "candidate_family_id", "peptide_group_id",
+    "candidate_family_id", "peptide_group_id", "heavy_confirmed",
+    "dataset_split",
 )
 
 

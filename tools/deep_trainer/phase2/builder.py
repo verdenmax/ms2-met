@@ -241,6 +241,7 @@ def _source_row_metadata(row, psm: PSMInfo) -> dict:
         "precursor_mz", "rt", "raw_title1", "label_type", "q_value",
         "protein_names", "leakage_group_id", "group_id", "pair_id",
         "query_id", "parent_id", "candidate_family_id", "peptide_group_id",
+        "heavy_confirmed", "dataset_split",
     )
     metadata = {
         column: row[column] for column in keep

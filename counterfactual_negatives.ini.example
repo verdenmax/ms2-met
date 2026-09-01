@@ -1,0 +1,48 @@
+[counterfactual]
+# IMPORTANT: split raws before running this tool. This name is required and
+# is copied into every provenance row; it is not inferred from file paths.
+dataset_split = label_dev_train
+
+# Prepared output from `python -m tools.counterfactual_parents --config ...`.
+# The generator verifies heavy_confirmed=true, matching dataset_split, the
+# canonical peptide_group_id, and the PSM dataset sidecar. Do not point this
+# directly at an unreviewed extract_common result.
+parents = ./datasets/label_dev_train_prepared_parents.json
+require_prepared_parents = true
+target_fasta = /path/to/target_proteome.fasta
+contaminant_fasta =
+labeling = silac
+
+# Candidate sources. local_denovo is currently a local mass-gap proposal:
+# it enumerates a different short residue string with compatible total mass,
+# but does not yet use observed fragment anchors. Real light/heavy feature
+# extraction and later hardness mining decide which proposals are useful.
+composition_shuffle_per_parent = 2
+kr_position_shuffle_per_parent = 2
+local_denovo_per_parent = 2
+seed = 42
+max_attempts_per_source = 500
+
+# Search-plausibility and distinguishability gates.
+min_length = 7
+max_length = 40
+precursor_mass_tolerance_ppm = 20
+fragment_mass_tolerance_da = 0.02
+min_sequence_difference = 2
+min_changed_fragment_positions = 2
+require_positive_label = true
+require_tryptic_c_terminus = true
+exclude_modified = true
+
+# Local mass-gap proposal. Length >4 is intentionally rejected because the
+# exact residue-string mass index grows exponentially.
+local_min_segment_length = 2
+local_max_segment_length = 4
+local_min_shared_fragment_fraction = 0.5
+
+# Include parent positives so this single custom-JSON input can pass through
+# the ordinary feature_type=0 extraction together with its negative children.
+include_parent_positives = true
+output_psms = ./datasets/label_dev_train_counterfactual_psms.json
+output_manifest = ./datasets/label_dev_train_counterfactual_manifest.tsv
+output_audit = ./datasets/label_dev_train_counterfactual.audit.json

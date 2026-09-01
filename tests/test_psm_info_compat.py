@@ -55,7 +55,8 @@ def test_psminfo_to_dict_includes_new_fields_when_set():
 def test_psminfo_relationship_metadata_roundtrip():
     psm = _make_basic_psm(
         query_id="Q1", parent_id="P1", group_id="G1",
-        pair_id="PAIR1", candidate_family_id="F1", peptide_group_id="PG1")
+        pair_id="PAIR1", candidate_family_id="F1", peptide_group_id="PG1",
+        heavy_confirmed=True, dataset_split="label_train")
     restored = PSMInfo.from_dict(psm.to_dict())
     assert restored._query_id == "Q1"
     assert restored._parent_id == "P1"
@@ -63,6 +64,8 @@ def test_psminfo_relationship_metadata_roundtrip():
     assert restored._pair_id == "PAIR1"
     assert restored._candidate_family_id == "F1"
     assert restored._peptide_group_id == "PG1"
+    assert restored._heavy_confirmed is True
+    assert restored._dataset_split == "label_train"
 
 
 def test_psminfo_from_dict_old_json_no_new_fields():

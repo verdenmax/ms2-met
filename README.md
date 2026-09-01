@@ -87,7 +87,36 @@ cp training_set_builder.ini.example training_set_builder.ini
 python -m tools.training_set_builder generate --config training_set_builder.ini
 # search generated FASTA in TRAIN raws, then extract ordinary features.csv
 python -m tools.training_set_builder assemble --config training_set_builder.ini
+
+# 7 · 从真实轻重标正例构造 counterfactual negative PSM（无需再次搜索）
+# 先用显式 heavy-confirmation 表和 raw split manifest 准备 parent；
+# 第一版仅支持无修饰 SILAC。
+cp counterfactual_parents.ini.example counterfactual_parents.ini
+python -m tools.counterfactual_parents --config counterfactual_parents.ini
+cp counterfactual_negatives.ini.example counterfactual_negatives.ini
+python -m tools.counterfactual_negatives --config counterfactual_negatives.ini
+# 将 output_psms 作为 search_engine_type=0、feature_type=0 的输入，运行
+# 普通 ms2-met 特征提取。Q 继承 parent 的 observed precursor/RT，但其
+# light fragments 和 heavy shift 都由 Q 自己的序列计算。
 ```
+
+仓库内另有已填入 2Da 路径的可复现 pilot 配置，固定 Rep1/Rep2 为
+`label_dev_train`，并把 Rep3 的全部窗口保留为 `immutable_real_test`。先从
+`config/counterfactual/2da_heavy_confirmation.csv.example` 创建并人工审阅
+`config/counterfactual/2da_heavy_confirmation.csv`；不要把搜索结果中的
+`label_type=positive` 直接批量写成 `heavy_confirmed=1`。随后可分步或一键运行：
+
+```bash
+make counterfactual-2da-parents
+make counterfactual-2da-negatives
+make counterfactual-2da-features
+# 或：make counterfactual-2da
+```
+
+默认共享数据根位于 `/home/verden/share/`。如挂载位置不同，需要同步修改
+Make 变量和 `config/counterfactual/2da_label_dev_train.*.ini` 中的对应路径。
+v1 特征配置故意不启用 target speclib：错误候选 Q 已从 target FASTA 排除，
+谱库预测是否缺失本身会成为不希望出现的 generator shortcut。
 
 正式的 MS1/MS2 消融使用同一 eligibility 共同队列、按 `sequence`
 分组的 5 折 CV，以及注册表中的固定特征组。先在 2da 上预跑，再运行三种

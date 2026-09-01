@@ -50,9 +50,15 @@ def test_single_flow_persists_candidate_family_metadata():
     psm = _psm("FAMILY_PEP", "negative")
     psm._parent_id = "P1"
     psm._candidate_family_id = "F1"
+    psm._peptide_group_id = "PG1"
+    psm._heavy_confirmed = True
+    psm._dataset_split = "label_train"
     row = _make_result_row_single(psm, features={"feat1": 1.0})
     assert row["parent_id"] == "P1"
     assert row["candidate_family_id"] == "F1"
+    assert row["peptide_group_id"] == "PG1"
+    assert row["heavy_confirmed"] is True
+    assert row["dataset_split"] == "label_train"
 
 
 def test_single_flow_dict_used_by_process_batch_single():
