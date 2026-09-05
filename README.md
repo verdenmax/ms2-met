@@ -113,6 +113,15 @@ make counterfactual-2da-features
 # 或：make counterfactual-2da
 ```
 
+负例阶段默认使用 8 个进程，并按 parent 分块并行；每个 parent 的随机种子
+独立，因此单进程和多进程生成的 PSM、manifest 及行顺序完全相同。仓库内
+2Da 配置默认 `max_parents = 5000`，这是一次可审计的稳定哈希 pilot 抽样，
+最多生成 5000 条 parent 正例和 30000 条候选负例。确认流程后，将
+`config/counterfactual/2da_label_dev_train.negatives.ini` 中的
+`max_parents` 改为 `0` 即处理全部 parent；该改动会改变数据集规模，不能
+与仅修改 `workers` 混为一谈。进度、速度和 ETA 会输出到终端，最终 worker
+数、抽样规则及实际数量也会写入 audit JSON。
+
 数据路径只在上述现有风格的配置中维护，Makefile 不再重复列出 raw 或
 FASTA。当前 raw split 与 2Da `config.ini` 一致，包含 9 个 PFB；若需要按
 replicate 留出测试集，应另建实验配置，不在这个基线配置中隐式划分。

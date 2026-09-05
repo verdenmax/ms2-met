@@ -23,6 +23,13 @@ local_denovo_per_parent = 2
 seed = 42
 max_attempts_per_source = 500
 
+# Runtime controls. Multiprocessing preserves the exact candidate rows/order.
+# max_parents is a deterministic pilot sample and therefore changes dataset
+# size; use 0 to process every prepared parent.
+workers = 8
+worker_chunk_size = 128
+max_parents = 0
+
 # Search-plausibility and distinguishability gates.
 min_length = 7
 max_length = 40

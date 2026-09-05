@@ -187,7 +187,7 @@ help:
 	@echo ""
 	@echo "  Counterfactual 2Da pilot（沿用 2Da config.ini 的质谱配置）："
 	@echo "  make counterfactual-2da-parents    从已过滤 JSON positive 准备 parent"
-	@echo "  make counterfactual-2da-negatives  生成三类 wrong-sequence 候选"
+	@echo "  make counterfactual-2da-negatives  8 进程生成三类候选（默认 5000 parent pilot）"
 	@echo "  make counterfactual-2da-features   提取普通 light/heavy 特征"
 	@echo "  make counterfactual-2da            顺序执行以上三步"
 	@echo ""

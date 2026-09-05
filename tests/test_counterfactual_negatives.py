@@ -13,12 +13,14 @@ from spectrum.psm_info import PSMInfo
 from tools.counterfactual_negatives import (
     BUILD_SCHEMA,
     LOCAL_PROPOSAL_SCHEMA,
+    PARENT_SAMPLING_SCHEMA,
     SOURCE_COMPOSITION_SHUFFLE,
     SOURCE_KR_POSITION_SHUFFLE,
     SOURCE_LOCAL_MASS_GAP,
     CounterfactualConfig,
     CounterfactualJob,
     _precursor_mz,
+    _sample_parents,
     build_counterfactual_negatives,
     run_job,
 )
@@ -108,6 +110,50 @@ def test_builds_deterministic_grouped_hypotheses_from_three_sources():
     assert (first.manifest["n_changed_fragment_positions"] >= 2).all()
     assert (first.manifest["candidate_observed_mass_error_ppm"].abs()
             <= cfg.precursor_mass_tolerance_ppm).all()
+
+
+def test_parallel_generation_exactly_matches_serial_rows_and_order():
+    parents = [_parent(raw=f"raw{index}") for index in range(4)]
+    cfg = _all_source_config()
+    target = _target(parents[0]._sequence)
+
+    serial = build_counterfactual_negatives(
+        parents, target, cfg, workers=1, worker_chunk_size=1)
+    parallel = build_counterfactual_negatives(
+        parents, target, cfg, workers=2, worker_chunk_size=1)
+
+    assert [psm.to_dict() for psm in parallel.psms] == [
+        psm.to_dict() for psm in serial.psms
+    ]
+    pd.testing.assert_frame_equal(parallel.manifest, serial.manifest)
+    assert parallel.audit["counts"] == serial.audit["counts"]
+    assert parallel.audit["failures"] == serial.audit["failures"]
+    assert serial.audit["execution"]["effective_workers"] == 1
+    assert parallel.audit["execution"]["effective_workers"] == 2
+
+
+def test_pilot_parent_sampling_is_stable_across_input_order():
+    parents = [_parent(raw=f"raw{index}") for index in range(10)]
+
+    selected, audit = _sample_parents(parents, max_parents=4, seed=17)
+    reversed_selected, _ = _sample_parents(
+        list(reversed(parents)), max_parents=4, seed=17)
+
+    assert {psm._raw_title for psm in selected} == {
+        psm._raw_title for psm in reversed_selected
+    }
+    assert [psm._raw_title for psm in selected] == sorted(
+        (psm._raw_title for psm in selected),
+        key=lambda raw: int(raw.removeprefix("raw")),
+    )
+    assert audit == {
+        "schema": PARENT_SAMPLING_SCHEMA,
+        "available_parents": 10,
+        "selected_parents": 4,
+        "max_parents": 4,
+        "seed": 17,
+        "applied": True,
+    }
 
 
 def test_local_mass_gap_is_high_overlap_but_has_distinguishing_fragments():
@@ -251,6 +297,8 @@ def test_run_job_writes_extractable_psm_json_manifest_and_audit(tmp_path):
     assert payload[1]["label_type"] == "negative"
     assert manifest.iloc[0]["query_id"] == payload[1]["query_id"]
     assert audit["counts"]["negative_children"] == 1
+    assert audit["parent_sampling"]["selected_parents"] == 1
+    assert audit["execution"]["effective_workers"] == 1
     assert on_disk_audit["outputs"]["psms"] == str(output_psms)
     sidecar = validate_manifest(str(output_psms), "silac", require=True)
     assert sidecar["dataset"]["counts_by_label_type"] == {

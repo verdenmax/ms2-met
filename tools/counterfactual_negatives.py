@@ -22,11 +22,15 @@ from __future__ import annotations
 import argparse
 import bisect
 import configparser
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 import random
+import sys
+import time
 from collections import Counter
 from dataclasses import dataclass
 from itertools import product
@@ -62,6 +66,7 @@ SOURCE_LOCAL_MASS_GAP = "synthetic_local_mass_gap"
 
 BUILD_SCHEMA = "counterfactual_negative_build_v1"
 LOCAL_PROPOSAL_SCHEMA = "local_mass_gap_v1"
+PARENT_SAMPLING_SCHEMA = "stable_parent_sha256_rank_v1"
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,9 @@ class CounterfactualJob:
     output_audit: str
     build: CounterfactualConfig
     contaminant_fasta: str | None = None
+    workers: int = 1
+    worker_chunk_size: int = 128
+    max_parents: int | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +129,13 @@ class _Proposal:
     local_end: int | None = None
     local_original: str | None = None
     local_replacement: str | None = None
+
+
+@dataclass(frozen=True)
+class _ParentGenerationResult:
+    children: tuple[PSMInfo, ...]
+    manifest_rows: tuple[dict, ...]
+    failures: dict[str, int]
 
 
 def _stable_id(*parts: object, prefix: str) -> str:
@@ -501,30 +516,22 @@ def _validate_config(cfg: CounterfactualConfig) -> None:
             "local_min_segment_length cannot exceed local_max_segment_length")
 
 
-def build_counterfactual_negatives(
-    parents: Sequence[PSMInfo],
-    target: TargetIndex,
-    cfg: CounterfactualConfig,
-    contaminant: TargetIndex | None = None,
-) -> CounterfactualBuildResult:
-    """Generate deterministic child hypotheses and their provenance.
+def _validate_runtime_options(
+    workers: int,
+    worker_chunk_size: int,
+    max_parents: int | None = None,
+) -> None:
+    if workers < 1:
+        raise ValueError("workers must be >= 1")
+    if worker_chunk_size < 1:
+        raise ValueError("worker_chunk_size must be >= 1")
+    if max_parents is not None and max_parents < 1:
+        raise ValueError("max_parents must be >= 1 or 0/unset for all parents")
 
-    The caller must pass a raw/peptide-pre-split parent collection.  Children
-    always receive ``label_type='negative'`` (stored label 0 downstream), and
-    share their parent's stable ``group_id`` for leak-free splitting.
-    """
-    _validate_config(cfg)
-    source_counts = {
-        SOURCE_COMPOSITION_SHUFFLE: cfg.composition_shuffle_per_parent,
-        SOURCE_KR_POSITION_SHUFFLE: cfg.kr_position_shuffle_per_parent,
-        SOURCE_LOCAL_MASS_GAP: cfg.local_denovo_per_parent,
-    }
-    mass_gap_index = None
-    if cfg.local_denovo_per_parent:
-        mass_gap_index = _MassGapIndex(range(
-            cfg.local_min_segment_length,
-            cfg.local_max_segment_length + 1))
 
+def _select_eligible_parents(
+    parents: Sequence[PSMInfo], cfg: CounterfactualConfig,
+) -> tuple[list[PSMInfo], Counter]:
     failures: Counter = Counter()
     eligible: list[PSMInfo] = []
     seen_parents: set[tuple[str, int, str]] = set()
@@ -542,6 +549,274 @@ def build_counterfactual_negatives(
             continue
         seen_parents.add(key)
         eligible.append(parent)
+    return eligible, failures
+
+
+def _source_counts(cfg: CounterfactualConfig) -> dict[str, int]:
+    return {
+        SOURCE_COMPOSITION_SHUFFLE: cfg.composition_shuffle_per_parent,
+        SOURCE_KR_POSITION_SHUFFLE: cfg.kr_position_shuffle_per_parent,
+        SOURCE_LOCAL_MASS_GAP: cfg.local_denovo_per_parent,
+    }
+
+
+def _build_mass_gap_index(
+    cfg: CounterfactualConfig,
+) -> _MassGapIndex | None:
+    if not cfg.local_denovo_per_parent:
+        return None
+    return _MassGapIndex(range(
+        cfg.local_min_segment_length,
+        cfg.local_max_segment_length + 1,
+    ))
+
+
+def _generate_for_parent(
+    parent: PSMInfo,
+    target: TargetIndex,
+    contaminant: TargetIndex | None,
+    cfg: CounterfactualConfig,
+    mass_gap_index: _MassGapIndex | None,
+) -> _ParentGenerationResult:
+    """Generate one family without depending on process-global ordering."""
+    parent_sequence = str(parent._sequence).upper()
+    parent_id = _stable_id(
+        parent_sequence, int(parent._charge), prefix="P")
+    seed_payload = (
+        f"{cfg.seed}:{parent_id}:{parent._raw_title}".encode("utf-8"))
+    parent_seed = int(hashlib.sha1(seed_payload).hexdigest()[:8], 16)
+    rng = random.Random(parent_seed)
+    generated: set[str] = set()
+    children: list[PSMInfo] = []
+    manifest_rows: list[dict] = []
+    failures: Counter = Counter()
+
+    for source, wanted in _source_counts(cfg).items():
+        made = 0
+        for _ in range(cfg.max_attempts_per_source):
+            if made >= wanted:
+                break
+            proposal = _proposal_for_source(
+                source, parent_sequence, rng, mass_gap_index, cfg)
+            if proposal is None:
+                failures[f"{source}:no_proposal"] += 1
+                continue
+            metadata, reason = _proposal_validity(
+                proposal, parent, target, contaminant, generated, cfg)
+            if reason is not None:
+                failures[f"{source}:{reason}"] += 1
+                continue
+            assert metadata is not None
+
+            query_id = _stable_id(
+                parent_id, parent._raw_title, source,
+                proposal.sequence, parent._charge,
+                prefix="Q",
+            )
+            child = PSMInfo(
+                sequence=proposal.sequence,
+                charge=int(parent._charge),
+                modify=[],
+                rt=parent._rt,
+                precursor_mz=parent._precursor_mz,
+                raw_title=str(parent._raw_title),
+                protein_names="SYNTHETIC_COUNTERFACTUAL",
+                label_type="negative",
+                query_id=query_id,
+                parent_id=parent_id,
+                group_id=parent_id,
+                candidate_family_id=parent_id,
+                peptide_group_id=parent._peptide_group_id,
+                dataset_split=cfg.dataset_split,
+            )
+            children.append(child)
+            generated.add(proposal.sequence)
+            manifest_rows.append({
+                "query_id": query_id,
+                "parent_id": parent_id,
+                "group_id": parent_id,
+                "candidate_family_id": parent_id,
+                "peptide_group_id": parent._peptide_group_id,
+                "dataset_split": cfg.dataset_split,
+                "generator": source,
+                "negative_source": source,
+                "negative_confidence": "silver",
+                "generator_seed": parent_seed,
+                "labeling": canonical_labeling_name(cfg.labeling),
+                "sequence": proposal.sequence,
+                "charge": int(parent._charge),
+                "raw_title": str(parent._raw_title),
+                "rt": float(parent._rt),
+                "precursor_mz": float(parent._precursor_mz),
+                "parent_sequence": parent_sequence,
+                "local_proposal_schema": (
+                    LOCAL_PROPOSAL_SCHEMA
+                    if source == SOURCE_LOCAL_MASS_GAP else None),
+                "local_uses_observed_fragment_anchors": False,
+                "local_start": proposal.local_start,
+                "local_end": proposal.local_end,
+                "local_original": proposal.local_original,
+                "local_replacement": proposal.local_replacement,
+                **metadata,
+            })
+            made += 1
+        if made < wanted:
+            failures[f"{source}:shortfall"] += wanted - made
+
+    return _ParentGenerationResult(
+        children=tuple(children),
+        manifest_rows=tuple(manifest_rows),
+        failures={
+            str(key): int(value) for key, value in failures.items()
+        },
+    )
+
+
+def _generate_parent_chunk(
+    parents: Sequence[PSMInfo],
+    target: TargetIndex,
+    contaminant: TargetIndex | None,
+    cfg: CounterfactualConfig,
+    mass_gap_index: _MassGapIndex | None,
+) -> tuple[_ParentGenerationResult, ...]:
+    return tuple(
+        _generate_for_parent(
+            parent, target, contaminant, cfg, mass_gap_index)
+        for parent in parents
+    )
+
+
+_WORKER_TARGET: TargetIndex | None = None
+_WORKER_CONTAMINANT: TargetIndex | None = None
+_WORKER_CONFIG: CounterfactualConfig | None = None
+_WORKER_MASS_GAP_INDEX: _MassGapIndex | None = None
+
+
+def _initialize_generation_worker(
+    target: TargetIndex,
+    contaminant: TargetIndex | None,
+    cfg: CounterfactualConfig,
+) -> None:
+    global _WORKER_TARGET
+    global _WORKER_CONTAMINANT
+    global _WORKER_CONFIG
+    global _WORKER_MASS_GAP_INDEX
+    _WORKER_TARGET = target
+    _WORKER_CONTAMINANT = contaminant
+    _WORKER_CONFIG = cfg
+    _WORKER_MASS_GAP_INDEX = _build_mass_gap_index(cfg)
+
+
+def _worker_generate_chunk(
+    item: tuple[int, tuple[PSMInfo, ...]],
+) -> tuple[int, tuple[_ParentGenerationResult, ...]]:
+    chunk_index, parents = item
+    if _WORKER_TARGET is None or _WORKER_CONFIG is None:
+        raise RuntimeError("counterfactual worker was not initialized")
+    return chunk_index, _generate_parent_chunk(
+        parents,
+        _WORKER_TARGET,
+        _WORKER_CONTAMINANT,
+        _WORKER_CONFIG,
+        _WORKER_MASS_GAP_INDEX,
+    )
+
+
+def _show_progress(
+    completed: int,
+    total: int,
+    started_at: float,
+) -> None:
+    elapsed = max(time.monotonic() - started_at, 1e-9)
+    rate = completed / elapsed
+    remaining = (total - completed) / rate if rate else float("inf")
+    print(
+        "counterfactual negatives: "
+        f"{completed}/{total} parents ({completed / total:.1%}), "
+        f"{rate:.1f} parent/s, ETA {remaining / 60:.1f} min",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _generate_for_eligible_parents(
+    eligible: Sequence[PSMInfo],
+    target: TargetIndex,
+    contaminant: TargetIndex | None,
+    cfg: CounterfactualConfig,
+    workers: int,
+    worker_chunk_size: int,
+    progress: bool,
+) -> tuple[list[_ParentGenerationResult], int]:
+    if workers == 1 or len(eligible) == 1:
+        mass_gap_index = _build_mass_gap_index(cfg)
+        results: list[_ParentGenerationResult] = []
+        started_at = time.monotonic()
+        for index, parent in enumerate(eligible, start=1):
+            results.append(_generate_for_parent(
+                parent, target, contaminant, cfg, mass_gap_index))
+            if progress and (
+                    index == len(eligible)
+                    or index % worker_chunk_size == 0):
+                _show_progress(index, len(eligible), started_at)
+        return results, 1
+
+    chunks = [
+        (chunk_index, tuple(eligible[start:start + worker_chunk_size]))
+        for chunk_index, start in enumerate(
+            range(0, len(eligible), worker_chunk_size))
+    ]
+    effective_workers = min(workers, len(chunks))
+    # Avoid forking a process that may already host BLAS/pytest threads.
+    context = multiprocessing.get_context("spawn")
+    completed_parents = 0
+    started_at = time.monotonic()
+    by_chunk: dict[int, tuple[_ParentGenerationResult, ...]] = {}
+    with ProcessPoolExecutor(
+        max_workers=effective_workers,
+        mp_context=context,
+        initializer=_initialize_generation_worker,
+        initargs=(target, contaminant, cfg),
+    ) as executor:
+        futures = {
+            executor.submit(_worker_generate_chunk, chunk): len(chunk[1])
+            for chunk in chunks
+        }
+        for future in as_completed(futures):
+            chunk_index, chunk_results = future.result()
+            by_chunk[chunk_index] = chunk_results
+            completed_parents += futures[future]
+            if progress:
+                _show_progress(
+                    completed_parents, len(eligible), started_at)
+
+    results = [
+        result
+        for chunk_index in range(len(chunks))
+        for result in by_chunk[chunk_index]
+    ]
+    return results, effective_workers
+
+
+def build_counterfactual_negatives(
+    parents: Sequence[PSMInfo],
+    target: TargetIndex,
+    cfg: CounterfactualConfig,
+    contaminant: TargetIndex | None = None,
+    *,
+    workers: int = 1,
+    worker_chunk_size: int = 128,
+    progress: bool = False,
+) -> CounterfactualBuildResult:
+    """Generate deterministic child hypotheses and their provenance.
+
+    The caller must pass a raw/peptide-pre-split parent collection.  Children
+    always receive ``label_type='negative'`` (stored label 0 downstream), and
+    share their parent's stable ``group_id`` for leak-free splitting.
+    """
+    _validate_config(cfg)
+    _validate_runtime_options(workers, worker_chunk_size)
+    eligible, failures = _select_eligible_parents(parents, cfg)
 
     if not eligible:
         raise ValueError("no eligible positive parents remained")
@@ -554,87 +829,19 @@ def build_counterfactual_negatives(
                 str(parent._sequence).upper(), int(parent._charge), prefix="P")
             output_psms.append(_clone_parent(parent, parent_id))
 
-    for parent in eligible:
-        parent_sequence = str(parent._sequence).upper()
-        parent_id = _stable_id(
-            parent_sequence, int(parent._charge), prefix="P")
-        seed_payload = (
-            f"{cfg.seed}:{parent_id}:{parent._raw_title}".encode("utf-8"))
-        parent_seed = int(hashlib.sha1(seed_payload).hexdigest()[:8], 16)
-        rng = random.Random(parent_seed)
-        generated: set[str] = set()
-
-        for source, wanted in source_counts.items():
-            made = 0
-            for _ in range(cfg.max_attempts_per_source):
-                if made >= wanted:
-                    break
-                proposal = _proposal_for_source(
-                    source, parent_sequence, rng, mass_gap_index, cfg)
-                if proposal is None:
-                    failures[f"{source}:no_proposal"] += 1
-                    continue
-                metadata, reason = _proposal_validity(
-                    proposal, parent, target, contaminant, generated, cfg)
-                if reason is not None:
-                    failures[f"{source}:{reason}"] += 1
-                    continue
-                assert metadata is not None
-
-                query_id = _stable_id(
-                    parent_id, parent._raw_title, source,
-                    proposal.sequence, parent._charge,
-                    prefix="Q",
-                )
-                child = PSMInfo(
-                    sequence=proposal.sequence,
-                    charge=int(parent._charge),
-                    modify=[],
-                    rt=parent._rt,
-                    precursor_mz=parent._precursor_mz,
-                    raw_title=str(parent._raw_title),
-                    protein_names="SYNTHETIC_COUNTERFACTUAL",
-                    label_type="negative",
-                    query_id=query_id,
-                    parent_id=parent_id,
-                    group_id=parent_id,
-                    candidate_family_id=parent_id,
-                    peptide_group_id=parent._peptide_group_id,
-                    dataset_split=cfg.dataset_split,
-                )
-                output_psms.append(child)
-                generated.add(proposal.sequence)
-                manifest_rows.append({
-                    "query_id": query_id,
-                    "parent_id": parent_id,
-                    "group_id": parent_id,
-                    "candidate_family_id": parent_id,
-                    "peptide_group_id": parent._peptide_group_id,
-                    "dataset_split": cfg.dataset_split,
-                    "generator": source,
-                    "negative_source": source,
-                    "negative_confidence": "silver",
-                    "generator_seed": parent_seed,
-                    "labeling": canonical_labeling_name(cfg.labeling),
-                    "sequence": proposal.sequence,
-                    "charge": int(parent._charge),
-                    "raw_title": str(parent._raw_title),
-                    "rt": float(parent._rt),
-                    "precursor_mz": float(parent._precursor_mz),
-                    "parent_sequence": parent_sequence,
-                    "local_proposal_schema": (
-                        LOCAL_PROPOSAL_SCHEMA
-                        if source == SOURCE_LOCAL_MASS_GAP else None),
-                    "local_uses_observed_fragment_anchors": False,
-                    "local_start": proposal.local_start,
-                    "local_end": proposal.local_end,
-                    "local_original": proposal.local_original,
-                    "local_replacement": proposal.local_replacement,
-                    **metadata,
-                })
-                made += 1
-            if made < wanted:
-                failures[f"{source}:shortfall"] += wanted - made
+    parent_results, effective_workers = _generate_for_eligible_parents(
+        eligible,
+        target,
+        contaminant,
+        cfg,
+        workers,
+        worker_chunk_size,
+        progress,
+    )
+    for parent_result in parent_results:
+        output_psms.extend(parent_result.children)
+        manifest_rows.extend(parent_result.manifest_rows)
+        failures.update(parent_result.failures)
 
     if not manifest_rows:
         raise ValueError("counterfactual generation produced zero valid children")
@@ -674,6 +881,12 @@ def build_counterfactual_negatives(
         "failures": {
             str(key): int(value) for key, value in sorted(failures.items())
         },
+        "execution": {
+            "requested_workers": workers,
+            "effective_workers": effective_workers,
+            "worker_chunk_size": worker_chunk_size,
+            "parallel": effective_workers > 1,
+        },
         "split_contract": (
             "input parents must already be split by raw before generation; "
             "parent and children share group_id and peptide_group_id"),
@@ -699,6 +912,41 @@ def _ensure_parent(path: str) -> None:
     parent = os.path.dirname(os.path.abspath(path))
     if parent:
         os.makedirs(parent, exist_ok=True)
+
+
+def _sample_parents(
+    parents: Sequence[PSMInfo],
+    max_parents: int | None,
+    seed: int,
+) -> tuple[list[PSMInfo], dict]:
+    """Select a reproducible pilot subset, then restore source row order."""
+    _validate_runtime_options(1, 1, max_parents)
+    selected_indices = list(range(len(parents)))
+    applied = max_parents is not None and max_parents < len(parents)
+    if applied:
+        ranked: list[tuple[str, str, int]] = []
+        for index, parent in enumerate(parents):
+            identity = "\x1f".join((
+                str(parent._sequence).strip().upper(),
+                str(int(parent._charge)),
+                str(parent._raw_title),
+            ))
+            digest = hashlib.sha256(
+                f"{seed}\x1f{identity}".encode("utf-8")).hexdigest()
+            ranked.append((digest, identity, index))
+        selected_indices = sorted(
+            item[2] for item in sorted(ranked)[:max_parents])
+
+    selected = [parents[index] for index in selected_indices]
+    audit = {
+        "schema": PARENT_SAMPLING_SCHEMA,
+        "available_parents": len(parents),
+        "selected_parents": len(selected),
+        "max_parents": max_parents,
+        "seed": seed,
+        "applied": applied,
+    }
+    return selected, audit
 
 
 def load_job(path: str) -> CounterfactualJob:
@@ -747,6 +995,11 @@ def load_job(path: str) -> CounterfactualJob:
         require_prepared_parents=section.getboolean(
             "require_prepared_parents", fallback=True),
     )
+    max_parents_value = section.getint("max_parents", fallback=0)
+    max_parents = max_parents_value or None
+    workers = section.getint("workers", fallback=1)
+    worker_chunk_size = section.getint("worker_chunk_size", fallback=128)
+    _validate_runtime_options(workers, worker_chunk_size, max_parents)
     return CounterfactualJob(
         parents=os.path.expanduser(section["parents"]),
         target_fasta=os.path.expanduser(section["target_fasta"]),
@@ -757,20 +1010,36 @@ def load_job(path: str) -> CounterfactualJob:
         output_manifest=os.path.expanduser(section["output_manifest"]),
         output_audit=os.path.expanduser(section["output_audit"]),
         build=build,
+        workers=workers,
+        worker_chunk_size=worker_chunk_size,
+        max_parents=max_parents,
     )
 
 
 def run_job(job: CounterfactualJob, *, source_config_path: str | None) -> dict:
+    _validate_runtime_options(
+        job.workers, job.worker_chunk_size, job.max_parents)
     validate_manifest(
         job.parents, job.build.labeling,
         require=job.build.require_prepared_parents)
-    parents = _load_parent_psms(job.parents)
+    available_parents = _load_parent_psms(job.parents)
+    parents, sampling_audit = _sample_parents(
+        available_parents, job.max_parents, job.build.seed)
     target = load_target_fasta(job.target_fasta)
     contaminant = (
         load_target_fasta(job.contaminant_fasta, log_label="contaminant FASTA")
         if job.contaminant_fasta else None)
+    started_at = time.monotonic()
     result = build_counterfactual_negatives(
-        parents, target, job.build, contaminant=contaminant)
+        parents,
+        target,
+        job.build,
+        contaminant=contaminant,
+        workers=job.workers,
+        worker_chunk_size=job.worker_chunk_size,
+        progress=True,
+    )
+    elapsed_seconds = time.monotonic() - started_at
 
     for path in (job.output_psms, job.output_manifest, job.output_audit):
         _ensure_parent(path)
@@ -784,6 +1053,11 @@ def run_job(job: CounterfactualJob, *, source_config_path: str | None) -> dict:
         source_config_path=source_config_path)
     result.manifest.to_csv(job.output_manifest, sep="\t", index=False)
     audit = dict(result.audit)
+    audit["parent_sampling"] = sampling_audit
+    audit["execution"] = {
+        **result.audit["execution"],
+        "elapsed_seconds": elapsed_seconds,
+    }
     audit["outputs"] = {
         "psms": job.output_psms,
         "manifest": job.output_manifest,

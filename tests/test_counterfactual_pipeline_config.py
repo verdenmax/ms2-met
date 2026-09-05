@@ -26,6 +26,9 @@ def test_2da_counterfactual_configs_have_consistent_stage_handoffs():
     assert negative.output_psms == feature["input"]["light_result_file"]
     assert parent.prepare.dataset_split == "label_dev_train"
     assert negative.build.dataset_split == "label_dev_train"
+    assert negative.workers == 8
+    assert negative.worker_chunk_size == 128
+    assert negative.max_parents == 5000
     assert negative.target_fasta == str(
         Path.home()
         / "share/2026_06_07_kongweisa_guangshan_puku"

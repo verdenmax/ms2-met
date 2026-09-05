@@ -139,6 +139,21 @@ cutoff, or mine a negative.
 module interface. It returns PSM rows, a provenance manifest, and an audit;
 file I/O is a CLI adapter.
 
+Candidate generation is parallelized only at the parent-family boundary.
+Each family has an identity-derived random seed, and completed worker chunks
+are reassembled in source-parent order, so worker count does not change PSM
+rows, manifest rows, or ordering. `workers` and `worker_chunk_size` are runtime
+controls in the CLI job rather than scientific generator parameters.
+
+`max_parents` is different: it changes the experimental dataset. A positive
+value selects parents by `stable_parent_sha256_rank_v1` using the experiment
+seed, independently of input row order, then restores source order before
+generation. Zero or an omitted value means all parents. The audit records the
+available and selected counts, cap, seed, sampling schema, requested/effective
+worker counts, chunk size, and generation elapsed time. The checked-in 2Da
+recipe uses 5,000 parents as a pilot; a full run must explicitly set the cap
+to zero.
+
 Replicate support is intentionally deferred. Once phase 1 improves immutable
 real-entrapment evaluation, partner-coordinate resolution becomes a real seam
 with two adapters:
