@@ -12,6 +12,7 @@ from spectrum.psm_identity import (
 )
 from spectrum.psm_info import PSMInfo
 from tools.counterfactual_parents import (
+    PARENT_TRUTH_RULE,
     PREPARATION_SCHEMA,
     ParentPreparationConfig,
     ParentPreparationJob,
@@ -37,17 +38,9 @@ def _psm(sequence="PEPTIDEK", *, charge=2, raw="raw_train",
 def _cfg(**overrides):
     values = dict(
         dataset_split="label_train",
-        confirmation_rule="manual_pair_review_v1",
     )
     values.update(overrides)
     return ParentPreparationConfig(**values)
-
-
-def _confirmations(rows):
-    return pd.DataFrame(rows, columns=[
-        "sequence", "charge", "raw_title1", "label_type",
-        "heavy_confirmed",
-    ])
 
 
 def _splits():
@@ -57,29 +50,23 @@ def _splits():
     ])
 
 
-def test_prepares_only_confirmed_in_split_and_groups_across_charge_and_li():
+def test_prepares_filtered_positives_in_split_and_groups_across_charge_and_li():
     train_i = _psm("PEPTIDEK", charge=2)
     train_l = _psm("PEPTLDEK", charge=3)
-    unconfirmed = _psm("MELTPEPK", charge=2)
+    modified = _psm("MELTPEPK", charge=2, modify=[(2, 35)])
     outside = _psm("PEPTIDEK", charge=2, raw="raw_dev")
     negative = _psm("NEGATIVEK", label_type="negative")
-    confirmations = _confirmations([
-        ["PEPTIDEK", 2, "raw_train", "positive", 1],
-        ["PEPTLDEK", 3, "raw_train", "positive", "confirmed"],
-        ["MELTPEPK", 2, "raw_train", "positive", 0],
-        ["PEPTIDEK", 2, "raw_dev", "positive", True],
-    ])
 
     result = prepare_counterfactual_parents(
-        [outside, negative, train_l, unconfirmed, train_i],
-        confirmations, _splits(), _cfg())
+        [outside, negative, train_l, modified, train_i],
+        _splits(), _cfg())
 
     assert result.audit["schema"] == PREPARATION_SCHEMA
     assert result.audit["peptide_group_id_schema"] == PEPTIDE_GROUP_ID_SCHEMA
     assert result.audit["counts"]["prepared_parents"] == 2
     assert result.audit["counts"]["peptide_groups"] == 1
     assert result.audit["failures"] == {
-        "not_heavy_confirmed": 1,
+        "modified": 1,
         "not_positive": 1,
         "outside_dataset_split": 1,
     }
@@ -89,40 +76,33 @@ def test_prepares_only_confirmed_in_split_and_groups_across_charge_and_li():
     assert all(psm._heavy_confirmed is True for psm in result.psms)
     assert all(psm._dataset_split == "label_train" for psm in result.psms)
     assert set(result.manifest["heavy_confirmed"]) == {1}
-    assert set(result.manifest["confirmation_rule"]) == {
-        "manual_pair_review_v1"}
+    assert set(result.manifest["parent_truth_rule"]) == {PARENT_TRUTH_RULE}
+    assert result.audit["parent_truth"] == {
+        "source": "input_psms.label_type",
+        "accepted_value": "positive",
+        "rule": PARENT_TRUTH_RULE,
+        "upstream_filtered_json_is_authoritative": True,
+    }
 
 
-def test_requires_complete_raw_mapping_and_unique_confirmation_identity():
+def test_requires_complete_raw_mapping_and_unique_positive_identity():
     parent = _psm()
-    confirmation = _confirmations([
-        ["PEPTIDEK", 2, "raw_train", "positive", 1],
-    ])
     with pytest.raises(ValueError, match="missing from raw split"):
         prepare_counterfactual_parents(
-            [parent], confirmation,
+            [parent],
             pd.DataFrame([{
                 "raw_title": "other_raw", "dataset_split": "label_train"}]),
             _cfg())
 
-    duplicate = pd.concat([confirmation, confirmation], ignore_index=True)
-    with pytest.raises(ValueError, match="duplicate parent identity"):
+    with pytest.raises(ValueError, match="duplicate eligible positive parent"):
         prepare_counterfactual_parents(
-            [parent], duplicate, _splits(), _cfg())
+            [parent, parent], _splits(), _cfg())
 
 
-def test_does_not_derive_confirmation_or_allow_unversioned_rule():
-    parent = _psm()
-    confirmation = _confirmations([
-        ["PEPTIDEK", 2, "raw_train", "positive", 0],
-    ])
-    with pytest.raises(ValueError, match="no eligible heavy-confirmed"):
+def test_rejects_input_without_an_eligible_positive():
+    with pytest.raises(ValueError, match="no eligible positive"):
         prepare_counterfactual_parents(
-            [parent], confirmation, _splits(), _cfg())
-    with pytest.raises(ValueError, match="confirmation_rule"):
-        prepare_counterfactual_parents(
-            [parent], confirmation, _splits(),
-            _cfg(confirmation_rule=""))
+            [_psm(label_type="negative")], _splits(), _cfg())
 
 
 def test_cli_adapter_writes_prepared_json_manifest_and_audit(tmp_path):
@@ -131,10 +111,6 @@ def test_cli_adapter_writes_prepared_json_manifest_and_audit(tmp_path):
     input_psms.write_text(
         json.dumps([parent.to_dict()]), encoding="utf-8")
     write_manifest(str(input_psms), [parent], HeavyType.SILAC)
-    confirmation_path = tmp_path / "confirm.csv"
-    _confirmations([
-        ["PEPTIDEK", 2, "raw_train", "positive", 1],
-    ]).to_csv(confirmation_path, index=False)
     split_path = tmp_path / "splits.csv"
     _splits().to_csv(split_path, index=False)
     output_psms = tmp_path / "prepared.json"
@@ -143,12 +119,10 @@ def test_cli_adapter_writes_prepared_json_manifest_and_audit(tmp_path):
     config_path = tmp_path / "prepare.ini"
     config_path.write_text(
         "[counterfactual_parents]\n"
-        "dataset_split=label_train\n"
-        "confirmation_rule=manual_pair_review_v1\n",
+        "dataset_split=label_train\n",
         encoding="utf-8")
     job = ParentPreparationJob(
         input_psms=str(input_psms),
-        confirmation_table=str(confirmation_path),
         raw_split_table=str(split_path),
         output_psms=str(output_psms),
         output_manifest=str(output_manifest),
@@ -166,8 +140,10 @@ def test_cli_adapter_writes_prepared_json_manifest_and_audit(tmp_path):
     assert payload[0]["peptide_group_id"] == peptide_group_id("PEPTIDEK")
     assert manifest.iloc[0]["peptide_group_id"] == peptide_group_id(
         "PEPTIDEK")
+    assert manifest.iloc[0]["parent_truth_rule"] == PARENT_TRUTH_RULE
     assert audit["counts"]["prepared_parents"] == 1
-    assert on_disk_audit["inputs"]["confirmation_table"]["sha256"]
+    assert on_disk_audit["inputs"]["psms"]["sha256"]
+    assert "confirmation_table" not in on_disk_audit["inputs"]
     sidecar = validate_manifest(
         str(output_psms), HeavyType.SILAC, require=True)
     assert sidecar["dataset"]["counts_by_label_type"] == {"positive": 1}

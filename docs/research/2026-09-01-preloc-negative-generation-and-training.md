@@ -303,11 +303,11 @@ LightGBM，只在 sampling/mining 中使用 family。若真实 heldout 上稳定
 ### 5.3 第三优先：加强 parent 真值，而不是只扩 generator
 
 pReLoc 用三搜索引擎共识构造高置信 reference。本仓库现已增加
-[`tools.counterfactual_parents`](../../tools/counterfactual_parents.py)，在大规模生成前用显式
-confirmation table 和 raw split manifest 准备 parent。工具不自行从特征阈值推导真值，并在 PSM、manifest
-和 audit 中携带或验证：
+[`tools.counterfactual_parents`](../../tools/counterfactual_parents.py)。本数据的 JSON 已经过前置过滤，
+因此 `label_type=positive` 是权威 parent 真值；准备模块不再要求调用者用第二张 confirmation table
+重复声明同一事实。模块结合 raw split manifest，并在 PSM、manifest 和 audit 中携带或验证：
 
-- `heavy_confirmed` 与判定规则版本；
+- `filtered_input_label_type_positive_v1` 真值规则和 prepared-parent 标记；
 - raw/split provenance；
 - parent light/heavy evidence eligibility；
 - 可选的多引擎/谱库共识，但这些 upstream scores 只用于 parent selection，不作为 child model feature。
@@ -389,8 +389,8 @@ sequence/charge family，也会把同一 sequence/charge 跨 raw 绑定在一起
 
 ## 7. 建议的下一阶段实验顺序
 
-1. **准备受控 parent。** 用显式确认表和 raw split manifest 运行 `tools.counterfactual_parents`，检查
-   `heavy_confirmed`、规则版本、input fingerprint 和 `peptide_group_id` audit。
+1. **准备受控 parent。** 对上游过滤 JSON 和 raw split manifest 运行 `tools.counterfactual_parents`，检查
+   `label_type=positive` 真值规则、input fingerprint 和 `peptide_group_id` audit。
 2. **跑 v1 基线。** 在真实 SILAC train raw 生成三类 Q，提取普通 `feature_type=0` light/heavy 特征；
    不改模型，验证各 source 的产量、物理 gate、source shortcut 和真实 entrapment 增益。
 3. **实现 `synthetic_local_observed_anchor_v2`。** 先用 light fragment/XIC anchors 枚举局部 Q，再用 Q-specific

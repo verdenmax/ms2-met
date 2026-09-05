@@ -89,8 +89,8 @@ python -m tools.training_set_builder generate --config training_set_builder.ini
 python -m tools.training_set_builder assemble --config training_set_builder.ini
 
 # 7 · 从真实轻重标正例构造 counterfactual negative PSM（无需再次搜索）
-# 先用显式 heavy-confirmation 表和 raw split manifest 准备 parent；
-# 第一版仅支持无修饰 SILAC。
+# 上游过滤后 JSON 的 label_type=positive 是 parent 真值；准备阶段只执行
+# raw split、去重、序列合法性和 provenance 审计。第一版仅支持无修饰 SILAC。
 cp counterfactual_parents.ini.example counterfactual_parents.ini
 python -m tools.counterfactual_parents --config counterfactual_parents.ini
 cp counterfactual_negatives.ini.example counterfactual_negatives.ini
@@ -103,10 +103,8 @@ python -m tools.counterfactual_negatives --config counterfactual_negatives.ini
 仓库内另有 2Da 可复现 pilot 配置。质谱部分使用标准运行目录
 `runs/counterfactual_2da_label_dev_train/config.ini`，其 raw、提取参数和
 speclib 均沿用 `runs/baseline_2da_clean/config.ini`，只替换输入 PSM JSON 和
-输出 features 路径；FASTA 路径沿用 `extract_2da_pfind_diann.ini`。先从
-`config/counterfactual/2da_heavy_confirmation.csv.example` 创建并人工审阅
-`config/counterfactual/2da_heavy_confirmation.csv`；不要把搜索结果中的
-`label_type=positive` 直接批量写成 `heavy_confirmed=1`。随后可分步或一键运行：
+输出 features 路径；FASTA 路径沿用 `extract_2da_pfind_diann.ini`。无需创建
+额外的 heavy-confirmation CSV，可直接分步或一键运行：
 
 ```bash
 make counterfactual-2da-parents

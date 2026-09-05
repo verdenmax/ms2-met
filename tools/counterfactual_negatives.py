@@ -646,9 +646,10 @@ def build_counterfactual_negatives(
         "labeling": canonical_labeling_name(cfg.labeling),
         "scope": {
             "modified_peptides": "excluded",
-            "parent_confirmation": (
-                "prepared_parent_contract_v1: heavy_confirmed=true, matching "
-                "dataset_split, and canonical peptide_group_id required"
+            "parent_truth": (
+                "prepared_parent_contract_v2: upstream-filtered "
+                "label_type=positive, matching dataset_split, and canonical "
+                "peptide_group_id required"
                 if cfg.require_prepared_parents else
                 "explicit exploratory bypass; prepared parent contract not "
                 "required"),

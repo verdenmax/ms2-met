@@ -21,12 +21,14 @@ Feature CSV storage remains `label=1` for correct identifications and
   the existing single-raw (`feature_type=0`) workflow.
 - Hardness is assigned only after real feature extraction.
 
-`tools.counterfactual_parents` consumes an explicit confirmation table and a
-complete raw-to-split manifest. It does not derive confirmation from signal
-thresholds. Prepared JSON rows carry `heavy_confirmed=true`, `dataset_split`,
-and a canonical `peptide_group_id`; their manifest and audit record the
-versioned confirmation rule and input fingerprints. The negative generator
-requires and validates this contract by default.
+The upstream-filtered custom JSON is the authoritative parent truth source:
+its `label_type=positive` rows are accepted as real light/heavy positives.
+`tools.counterfactual_parents` therefore consumes that JSON plus a complete
+raw-to-split manifest, without requiring callers to restate the same verdict
+in a second confirmation table. Prepared rows carry an internal preparation
+marker, `dataset_split`, and a canonical `peptide_group_id`; the manifest and
+audit record `filtered_input_label_type_positive_v1` and input fingerprints.
+The negative generator requires and validates this prepared-parent contract.
 
 The repository's first executable 2Da pilot uses
 `config/counterfactual/2da_label_dev_train.parents.ini`,
@@ -36,8 +38,7 @@ inherits the nine raw paths, extraction settings, and speclib settings from
 `runs/baseline_2da_clean/config.ini`; only the input PSM JSON and output feature
 path change. Target and contaminant paths use the same values as
 `extract_2da_pfind_diann.ini`. `make counterfactual-2da` owns the three-stage
-hand-off without duplicating those paths. Its reviewed heavy-confirmation CSV
-is a required untracked truth input and has no automatic producer.
+hand-off without duplicating those paths or requiring another truth CSV.
 
 Given a parent PSM `P`, a wrong hypothesis `Q` inherits `P`'s observed raw,
 precursor m/z, RT, and charge. The sequence is replaced by `Q`; therefore

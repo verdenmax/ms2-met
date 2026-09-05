@@ -1,10 +1,10 @@
-"""Prepare audited, heavy-confirmed parents for counterfactual generation.
+"""Prepare audited positive parents for counterfactual generation.
 
-The public interface is ``prepare_counterfactual_parents``.  It deliberately
-does not derive a heavy-confirmation rule from signal features: callers supply
-an explicit confirmation table and a versioned rule name.  The module owns
-identity matching, raw-split enforcement, parent eligibility, peptide-family
-identity, provenance, and audit output.
+The input JSON is the authoritative output of the upstream identification and
+filtering workflow.  Its ``label_type=positive`` rows are therefore the parent
+truth source; this module does not ask callers to restate that truth in a
+second table.  The module owns raw-split enforcement, parent eligibility,
+peptide-family identity, provenance, and audit output.
 """
 
 from __future__ import annotations
@@ -36,10 +36,9 @@ from spectrum.psm_identity import (
 from spectrum.psm_info import PSMInfo
 
 
-PREPARATION_SCHEMA = "counterfactual_parent_preparation_v1"
+PREPARATION_SCHEMA = "counterfactual_parent_preparation_v2"
+PARENT_TRUTH_RULE = "filtered_input_label_type_positive_v1"
 AA_SET = frozenset("ACDEFGHIKLMNPQRSTVWY")
-_TRUE_VALUES = frozenset({"1", "true", "yes", "confirmed"})
-_FALSE_VALUES = frozenset({"0", "false", "no", "unconfirmed"})
 
 
 @dataclass(frozen=True)
@@ -47,8 +46,6 @@ class ParentPreparationConfig:
     """Scientific selection contract independent of input/output paths."""
 
     dataset_split: str
-    confirmation_rule: str
-    confirmation_column: str = "heavy_confirmed"
     labeling: HeavyType = HeavyType.SILAC
     min_length: int = 7
     max_length: int = 40
@@ -61,7 +58,6 @@ class ParentPreparationJob:
     """File adapter configuration for one preparation run."""
 
     input_psms: str
-    confirmation_table: str
     raw_split_table: str
     output_psms: str
     output_manifest: str
@@ -81,10 +77,6 @@ class ParentPreparationResult:
 def _validate_config(cfg: ParentPreparationConfig) -> None:
     if not str(cfg.dataset_split).strip():
         raise ValueError("dataset_split is required")
-    if not str(cfg.confirmation_rule).strip():
-        raise ValueError("confirmation_rule is required")
-    if not str(cfg.confirmation_column).strip():
-        raise ValueError("confirmation_column is required")
     if cfg.labeling != HeavyType.SILAC:
         raise ValueError(
             "counterfactual parent preparation currently supports SILAC only")
@@ -101,63 +93,6 @@ def _table_raw_column(frame: pd.DataFrame) -> str:
             return column
     raise ValueError(
         "table requires one raw column: raw_title, raw_title1, Run, or run")
-
-
-def _parse_confirmation(value) -> bool:
-    if pd.isna(value):
-        raise ValueError("missing value")
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        if float(value) == 1.0:
-            return True
-        if float(value) == 0.0:
-            return False
-    text = str(value).strip().lower()
-    if text in _TRUE_VALUES:
-        return True
-    if text in _FALSE_VALUES:
-        return False
-    raise ValueError(f"unsupported value {value!r}")
-
-
-def _confirmation_index(
-    frame: pd.DataFrame,
-    confirmation_column: str,
-) -> dict[tuple[str, int, str], dict]:
-    required = {"sequence", "charge", confirmation_column}
-    missing = sorted(required - set(frame.columns))
-    if missing:
-        raise ValueError(f"confirmation table missing columns: {missing}")
-    raw_column = _table_raw_column(frame)
-    index: dict[tuple[str, int, str], dict] = {}
-    invalid = []
-    for row_index, row in frame.iterrows():
-        try:
-            sequence = str(row["sequence"]).strip().upper()
-            charge = int(row["charge"])
-            raw_title = str(row[raw_column]).strip()
-            if not sequence or charge <= 0 or not raw_title:
-                raise ValueError("empty/invalid identity")
-            confirmed = _parse_confirmation(row[confirmation_column])
-        except (TypeError, ValueError) as exc:
-            invalid.append({"row": int(row_index), "reason": str(exc)})
-            continue
-        key = (sequence, charge, raw_title)
-        if key in index:
-            raise ValueError(
-                "confirmation table has duplicate parent identity "
-                f"{key!r}; one authoritative row is required")
-        index[key] = {
-            "confirmed": confirmed,
-            "label_type": row.get("label_type"),
-            "row_index": int(row_index),
-        }
-    if invalid:
-        raise ValueError(
-            "confirmation table has invalid rows: "
-            f"{invalid[:5]}")
-    return index
 
 
 def _raw_split_index(frame: pd.DataFrame) -> dict[str, str]:
@@ -235,14 +170,11 @@ def _clone_prepared_parent(
 
 def prepare_counterfactual_parents(
     psms: Sequence[PSMInfo],
-    confirmations: pd.DataFrame,
     raw_splits: pd.DataFrame,
     cfg: ParentPreparationConfig,
 ) -> ParentPreparationResult:
     """Return parents that satisfy truth, split, and family contracts."""
     _validate_config(cfg)
-    confirmation_index = _confirmation_index(
-        confirmations, cfg.confirmation_column)
     raw_split_index = _raw_split_index(raw_splits)
 
     input_raws = {str(psm._raw_title).strip() for psm in psms}
@@ -252,18 +184,8 @@ def prepare_counterfactual_parents(
             "input PSM raws are missing from raw split table: "
             f"{unmapped_raws[:10]}")
 
-    positive_keys = [_parent_key(psm) for psm in psms
-                     if psm._label_type == "positive"]
-    duplicate_positive_keys = sorted(
-        key for key, count in Counter(positive_keys).items() if count > 1)
-    if duplicate_positive_keys:
-        raise ValueError(
-            "input PSM JSON has duplicate positive parent identities: "
-            f"{duplicate_positive_keys[:5]}")
-
     failures: Counter = Counter()
-    selected: list[tuple[PSMInfo, int]] = []
-    used_confirmation_rows: set[int] = set()
+    selected: list[PSMInfo] = []
     for psm in psms:
         reason = _eligibility_reason(psm, cfg)
         if reason is not None:
@@ -274,35 +196,29 @@ def prepare_counterfactual_parents(
         if split != cfg.dataset_split:
             failures["outside_dataset_split"] += 1
             continue
-        confirmation = confirmation_index.get(key)
-        if confirmation is None:
-            failures["confirmation_missing"] += 1
-            continue
-        label_type = confirmation["label_type"]
-        if pd.notna(label_type) and str(label_type).strip() \
-                and str(label_type).strip() != "positive":
-            failures["confirmation_not_positive"] += 1
-            continue
-        if not confirmation["confirmed"]:
-            failures["not_heavy_confirmed"] += 1
-            continue
-        clone = _clone_prepared_parent(psm, cfg)
-        selected.append((clone, confirmation["row_index"]))
-        used_confirmation_rows.add(confirmation["row_index"])
+        selected.append(_clone_prepared_parent(psm, cfg))
+
+    selected_keys = [_parent_key(psm) for psm in selected]
+    duplicate_positive_keys = sorted(
+        key for key, count in Counter(selected_keys).items() if count > 1)
+    if duplicate_positive_keys:
+        raise ValueError(
+            "input PSM JSON has duplicate eligible positive parent "
+            f"identities: {duplicate_positive_keys[:5]}")
 
     if not selected:
-        raise ValueError("no eligible heavy-confirmed parents remained")
+        raise ValueError("no eligible positive parents remained")
     selected.sort(key=lambda item: (
-        item[0]._peptide_group_id,
-        item[0]._sequence,
-        int(item[0]._charge),
-        item[0]._raw_title,
-        float(item[0]._rt),
+        item._peptide_group_id,
+        item._sequence,
+        int(item._charge),
+        item._raw_title,
+        float(item._rt),
     ))
 
     manifest_rows = []
     prepared_psms = []
-    for psm, confirmation_row in selected:
+    for psm in selected:
         key = _parent_key(psm)
         observation_payload = "\x1f".join(map(str, key)).encode("utf-8")
         prepared_psms.append(psm)
@@ -319,27 +235,23 @@ def prepare_counterfactual_parents(
             "rt": float(psm._rt),
             "precursor_mz": float(psm._precursor_mz),
             "heavy_confirmed": 1,
-            "confirmation_column": cfg.confirmation_column,
-            "confirmation_rule": cfg.confirmation_rule,
-            "confirmation_row": confirmation_row,
+            "input_label_type": "positive",
+            "parent_truth_rule": PARENT_TRUTH_RULE,
         })
     manifest = pd.DataFrame(manifest_rows)
     audit = {
         "schema": PREPARATION_SCHEMA,
         "dataset_split": cfg.dataset_split,
         "labeling": canonical_labeling_name(cfg.labeling),
-        "confirmation": {
-            "column": cfg.confirmation_column,
-            "rule": cfg.confirmation_rule,
-            "derived_by_tool": False,
+        "parent_truth": {
+            "source": "input_psms.label_type",
+            "accepted_value": "positive",
+            "rule": PARENT_TRUTH_RULE,
+            "upstream_filtered_json_is_authoritative": True,
         },
         "peptide_group_id_schema": PEPTIDE_GROUP_ID_SCHEMA,
         "counts": {
             "input_psms": len(psms),
-            "confirmation_rows": len(confirmations),
-            "used_confirmation_rows": len(used_confirmation_rows),
-            "unused_confirmation_rows": (
-                len(confirmations) - len(used_confirmation_rows)),
             "prepared_parents": len(prepared_psms),
             "peptide_groups": manifest["peptide_group_id"].nunique(),
             "raws": manifest["raw_title"].nunique(),
@@ -398,9 +310,6 @@ def load_job(path: str) -> ParentPreparationJob:
     section = parser["counterfactual_parents"]
     cfg = ParentPreparationConfig(
         dataset_split=section["dataset_split"].strip(),
-        confirmation_rule=section["confirmation_rule"].strip(),
-        confirmation_column=section.get(
-            "confirmation_column", "heavy_confirmed").strip(),
         labeling=parse_heavy_type(section.get("labeling", "silac")),
         min_length=section.getint("min_length", fallback=7),
         max_length=section.getint("max_length", fallback=40),
@@ -411,8 +320,6 @@ def load_job(path: str) -> ParentPreparationJob:
     )
     return ParentPreparationJob(
         input_psms=os.path.expanduser(section["input_psms"]),
-        confirmation_table=os.path.expanduser(
-            section["confirmation_table"]),
         raw_split_table=os.path.expanduser(section["raw_split_table"]),
         output_psms=os.path.expanduser(section["output_psms"]),
         output_manifest=os.path.expanduser(section["output_manifest"]),
@@ -425,7 +332,6 @@ def run_job(job: ParentPreparationJob, *, source_config_path: str | None) -> dic
     cfg = job.prepare
     result = prepare_counterfactual_parents(
         _load_psms(job.input_psms, cfg.labeling),
-        _read_table(job.confirmation_table),
         _read_table(job.raw_split_table),
         cfg,
     )
@@ -442,7 +348,6 @@ def run_job(job: ParentPreparationJob, *, source_config_path: str | None) -> dic
     audit = dict(result.audit)
     audit["inputs"] = {
         "psms": _fingerprint(job.input_psms),
-        "confirmation_table": _fingerprint(job.confirmation_table),
         "raw_split_table": _fingerprint(job.raw_split_table),
     }
     audit["outputs"] = {
@@ -458,7 +363,7 @@ def run_job(job: ParentPreparationJob, *, source_config_path: str | None) -> dic
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Prepare heavy-confirmed counterfactual parent PSMs")
+        description="Prepare filtered positive counterfactual parent PSMs")
     parser.add_argument("--config", required=True)
     return parser
 
