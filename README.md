@@ -100,8 +100,10 @@ python -m tools.counterfactual_negatives --config counterfactual_negatives.ini
 # light fragments 和 heavy shift 都由 Q 自己的序列计算。
 ```
 
-仓库内另有已填入 2Da 路径的可复现 pilot 配置，固定 Rep1/Rep2 为
-`label_dev_train`，并把 Rep3 的全部窗口保留为 `immutable_real_test`。先从
+仓库内另有 2Da 可复现 pilot 配置。质谱部分使用标准运行目录
+`runs/counterfactual_2da_label_dev_train/config.ini`，其 raw、提取参数和
+speclib 均沿用 `runs/baseline_2da_clean/config.ini`，只替换输入 PSM JSON 和
+输出 features 路径；FASTA 路径沿用 `extract_2da_pfind_diann.ini`。先从
 `config/counterfactual/2da_heavy_confirmation.csv.example` 创建并人工审阅
 `config/counterfactual/2da_heavy_confirmation.csv`；不要把搜索结果中的
 `label_type=positive` 直接批量写成 `heavy_confirmed=1`。随后可分步或一键运行：
@@ -113,10 +115,9 @@ make counterfactual-2da-features
 # 或：make counterfactual-2da
 ```
 
-默认共享数据根位于 `/home/verden/share/`。如挂载位置不同，需要同步修改
-Make 变量和 `config/counterfactual/2da_label_dev_train.*.ini` 中的对应路径。
-v1 特征配置故意不启用 target speclib：错误候选 Q 已从 target FASTA 排除，
-谱库预测是否缺失本身会成为不希望出现的 generator shortcut。
+数据路径只在上述现有风格的配置中维护，Makefile 不再重复列出 raw 或
+FASTA。当前 raw split 与 2Da `config.ini` 一致，包含 9 个 PFB；若需要按
+replicate 留出测试集，应另建实验配置，不在这个基线配置中隐式划分。
 
 正式的 MS1/MS2 消融使用同一 eligibility 共同队列、按 `sequence`
 分组的 5 折 CV，以及注册表中的固定特征组。先在 2da 上预跑，再运行三种

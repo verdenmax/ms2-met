@@ -47,26 +47,13 @@ PHASE2_TRAIN_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic-model/combined
 PHASE2_STRONG_TRAIN_CONFIG ?= tools/deep_trainer/phase2/config/xic_pair_interaction.yaml
 PHASE2_STRONG_TRAIN_OUTPUT_ROOT ?= $(DEEP_OUTPUT_ROOT)/phase2-xic-model/strong-combined
 
-# Audited 2Da counterfactual pilot. The three configs form an explicit
-# hand-off: reviewed parents -> wrong-sequence hypotheses -> ordinary SILAC
-# feature extraction. Rep3 is reserved as immutable_real_test in the split
-# manifest and is therefore absent from the feature-extraction raw list.
+# Audited 2Da counterfactual pilot. Parent/negative adapters use the paths in
+# their configs; mass-spectrum inputs live in the ordinary run-directory
+# config.ini, matching every other feature-extraction target in this file.
 COUNTERFACTUAL_2DA_PARENT_CONFIG ?= config/counterfactual/2da_label_dev_train.parents.ini
 COUNTERFACTUAL_2DA_NEGATIVE_CONFIG ?= config/counterfactual/2da_label_dev_train.negatives.ini
-COUNTERFACTUAL_2DA_FEATURE_CONFIG ?= config/counterfactual/2da_label_dev_train.features.ini
-COUNTERFACTUAL_2DA_INPUT_PSMS ?= datasets/hela_2da_pfind_diann.json
-COUNTERFACTUAL_2DA_CONFIRMATION ?= config/counterfactual/2da_heavy_confirmation.csv
-COUNTERFACTUAL_2DA_RAW_SPLIT ?= config/counterfactual/2da_raw_split.csv
-COUNTERFACTUAL_2DA_TARGET_FASTA ?= /home/verden/share/2026_06_07_kongweisa_guangshan_puku/uniprotkb_proteome_UP000005640_2026_06_10.fasta
-COUNTERFACTUAL_2DA_CONTAMINANT_FASTA ?= /home/verden/share/2026_06_09_kongweisa_lcr_data/contaminant.fasta
-COUNTERFACTUAL_2DA_RAW_ROOT ?= /home/verden/share/2026_04_27_kongweisa_diann_ZHOUHUdataset/2th
-COUNTERFACTUAL_2DA_RAW_FILES = \
-	$(COUNTERFACTUAL_2DA_RAW_ROOT)/20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep1.pfb \
-	$(COUNTERFACTUAL_2DA_RAW_ROOT)/20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep1.pfb \
-	$(COUNTERFACTUAL_2DA_RAW_ROOT)/20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep1.pfb \
-	$(COUNTERFACTUAL_2DA_RAW_ROOT)/20190830_HF_ZHW_hela_SILAC_DDIA_500_550_2Da_Rep2.pfb \
-	$(COUNTERFACTUAL_2DA_RAW_ROOT)/20190830_HF_ZHW_hela_SILAC_DDIA_550_600_2Da_Rep2.pfb \
-	$(COUNTERFACTUAL_2DA_RAW_ROOT)/20190830_HF_ZHW_hela_SILAC_DDIA_600_650_2Da_Rep2.pfb
+COUNTERFACTUAL_2DA_DIR ?= runs/counterfactual_2da_label_dev_train
+COUNTERFACTUAL_2DA_FEATURE_CONFIG ?= $(COUNTERFACTUAL_2DA_DIR)/config.ini
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -198,12 +185,12 @@ help:
 	@echo "  make extract-5th     仅生成 5da 的 input JSON"
 	@echo "  make extract-normal  仅生成 normal 的 input JSON"
 	@echo ""
-	@echo "  Counterfactual 2Da pilot（Rep1/2 训练开发，Rep3 保留测试）："
+	@echo "  Counterfactual 2Da pilot（沿用 2Da config.ini 的质谱配置）："
 	@echo "  make counterfactual-2da-parents    准备经重标确认的 parent"
 	@echo "  make counterfactual-2da-negatives  生成三类 wrong-sequence 候选"
 	@echo "  make counterfactual-2da-features   提取普通 light/heavy 特征"
 	@echo "  make counterfactual-2da            顺序执行以上三步"
-	@echo "  首次运行先审阅并创建 $(COUNTERFACTUAL_2DA_CONFIRMATION)"
+	@echo "  首次运行先审阅并创建 config/counterfactual/2da_heavy_confirmation.csv"
 	@echo ""
 	@echo "  注：extract-* 仅在对应 extract_*.ini 存在时可用。"
 	@echo "      5th / normal 的 ini 默认未提供，features.csv 须外部生成。"
@@ -295,48 +282,22 @@ help:
 
 # ---------------- Counterfactual 2Da pilot ----------------
 
-$(COUNTERFACTUAL_2DA_TARGET_FASTA) $(COUNTERFACTUAL_2DA_CONTAMINANT_FASTA):
-	@echo "[error] missing configured FASTA input: $@" >&2
-	@echo "Mount the shared data path or override the matching Make variable and config path." >&2
-	@false
-
-$(COUNTERFACTUAL_2DA_RAW_FILES):
-	@echo "[error] missing configured 2Da PFB input: $@" >&2
-	@echo "Mount the shared data path or update COUNTERFACTUAL_2DA_RAW_ROOT and the feature config." >&2
-	@false
-
-counterfactual-2da-parents: \
-	$(COUNTERFACTUAL_2DA_PARENT_CONFIG) \
-	$(COUNTERFACTUAL_2DA_RAW_SPLIT)
-	@if [ ! -f "$(COUNTERFACTUAL_2DA_INPUT_PSMS)" ]; then \
-		echo "[error] missing frozen parent-input PSM snapshot: $(COUNTERFACTUAL_2DA_INPUT_PSMS)" >&2; \
-		echo "Generate and review it explicitly before parent preparation." >&2; \
-		exit 1; \
-	fi
-	@if [ ! -f "$(COUNTERFACTUAL_2DA_CONFIRMATION)" ]; then \
-		echo "[error] missing reviewed heavy-confirmation table: $(COUNTERFACTUAL_2DA_CONFIRMATION)" >&2; \
-		echo "Start from config/counterfactual/2da_heavy_confirmation.csv.example," >&2; \
-		echo "then record one explicit verdict per sequence/charge/raw identity." >&2; \
-		exit 1; \
-	fi
+counterfactual-2da-parents: $(COUNTERFACTUAL_2DA_PARENT_CONFIG)
 	$(call BANNER,counterfactual parents)
 	$(PY) -m tools.counterfactual_parents --config $(COUNTERFACTUAL_2DA_PARENT_CONFIG)
 
 counterfactual-2da-negatives: \
 	counterfactual-2da-parents \
-	$(COUNTERFACTUAL_2DA_NEGATIVE_CONFIG) \
-	$(COUNTERFACTUAL_2DA_TARGET_FASTA) \
-	$(COUNTERFACTUAL_2DA_CONTAMINANT_FASTA)
+	$(COUNTERFACTUAL_2DA_NEGATIVE_CONFIG)
 	$(call BANNER,counterfactual negatives)
 	$(PY) -m tools.counterfactual_negatives --config $(COUNTERFACTUAL_2DA_NEGATIVE_CONFIG)
 
 counterfactual-2da-features: \
 	counterfactual-2da-negatives \
-	$(COUNTERFACTUAL_2DA_FEATURE_CONFIG) \
-	$(COUNTERFACTUAL_2DA_RAW_FILES)
+	$(COUNTERFACTUAL_2DA_FEATURE_CONFIG)
 	$(call BANNER,counterfactual features)
 	$(PY) main.py --configpath $(COUNTERFACTUAL_2DA_FEATURE_CONFIG) \
-		--logpath runs/counterfactual_2da_label_dev_train/extract.log
+		--logpath $(COUNTERFACTUAL_2DA_DIR)/extract.log
 
 counterfactual-2da: counterfactual-2da-features
 

@@ -30,13 +30,14 @@ requires and validates this contract by default.
 
 The repository's first executable 2Da pilot uses
 `config/counterfactual/2da_label_dev_train.parents.ini`,
-`2da_label_dev_train.negatives.ini`, and
-`2da_label_dev_train.features.ini`. The versioned raw split keeps every window
-from Rep1/Rep2 in `label_dev_train` and every window from Rep3 in
-`immutable_real_test`; the latter is not present in the synthetic feature
-configuration. `make counterfactual-2da` owns the three-stage hand-off. Its
-reviewed heavy-confirmation CSV is a required untracked truth input and has no
-automatic Make producer.
+`2da_label_dev_train.negatives.ini`, and the standard run-directory config
+`runs/counterfactual_2da_label_dev_train/config.ini`. The mass-spectrum config
+inherits the nine raw paths, extraction settings, and speclib settings from
+`runs/baseline_2da_clean/config.ini`; only the input PSM JSON and output feature
+path change. Target and contaminant paths use the same values as
+`extract_2da_pfind_diann.ini`. `make counterfactual-2da` owns the three-stage
+hand-off without duplicating those paths. Its reviewed heavy-confirmation CSV
+is a required untracked truth input and has no automatic producer.
 
 Given a parent PSM `P`, a wrong hypothesis `Q` inherits `P`'s observed raw,
 precursor m/z, RT, and charge. The sequence is replaced by `Q`; therefore

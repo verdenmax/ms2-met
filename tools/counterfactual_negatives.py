@@ -747,13 +747,14 @@ def load_job(path: str) -> CounterfactualJob:
             "require_prepared_parents", fallback=True),
     )
     return CounterfactualJob(
-        parents=section["parents"],
-        target_fasta=section["target_fasta"],
+        parents=os.path.expanduser(section["parents"]),
+        target_fasta=os.path.expanduser(section["target_fasta"]),
         contaminant_fasta=(
-            section.get("contaminant_fasta", "").strip() or None),
-        output_psms=section["output_psms"],
-        output_manifest=section["output_manifest"],
-        output_audit=section["output_audit"],
+            os.path.expanduser(
+                section.get("contaminant_fasta", "").strip()) or None),
+        output_psms=os.path.expanduser(section["output_psms"]),
+        output_manifest=os.path.expanduser(section["output_manifest"]),
+        output_audit=os.path.expanduser(section["output_audit"]),
         build=build,
     )
 

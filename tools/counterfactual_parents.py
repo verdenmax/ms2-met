@@ -410,12 +410,13 @@ def load_job(path: str) -> ParentPreparationJob:
             "exclude_modified", fallback=True),
     )
     return ParentPreparationJob(
-        input_psms=section["input_psms"],
-        confirmation_table=section["confirmation_table"],
-        raw_split_table=section["raw_split_table"],
-        output_psms=section["output_psms"],
-        output_manifest=section["output_manifest"],
-        output_audit=section["output_audit"],
+        input_psms=os.path.expanduser(section["input_psms"]),
+        confirmation_table=os.path.expanduser(
+            section["confirmation_table"]),
+        raw_split_table=os.path.expanduser(section["raw_split_table"]),
+        output_psms=os.path.expanduser(section["output_psms"]),
+        output_manifest=os.path.expanduser(section["output_manifest"]),
+        output_audit=os.path.expanduser(section["output_audit"]),
         prepare=cfg,
     )
 
