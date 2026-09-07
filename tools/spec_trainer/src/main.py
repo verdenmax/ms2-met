@@ -34,6 +34,7 @@ from feature_cols import (
     resolve_feature_cols as _resolve_feature_cols,
 )
 from cv_core import (METRIC_SEMANTICS_VERSION, as_error_detection)
+from sample_groups import synthetic_rows
 
 
 def load_data(file_paths, feature_cols, target_col):
@@ -49,6 +50,10 @@ def load_data(file_paths, feature_cols, target_col):
     # 将所有文件 concat 到一个 df 中
     # 获得 feature 列 和 target 列
     df = pd.concat(dfs, ignore_index=True)
+    if synthetic_rows(df).any():
+        raise ValueError(
+            "synthetic training requires the family-aware cv_train.py entry; "
+            "main.py uses row-level splits")
     X = df[feature_cols]
     y = df[target_col]
     return X, y

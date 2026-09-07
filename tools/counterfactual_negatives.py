@@ -342,6 +342,7 @@ def _clone_parent(parent: PSMInfo, parent_id: str) -> PSMInfo:
     clone._parent_id = parent_id
     clone._group_id = parent_id
     clone._candidate_family_id = parent_id
+    clone._negative_source = "gold_positive"
     return clone
 
 
@@ -391,7 +392,7 @@ def _proposal_validity(
     parent_sequence = str(parent._sequence).upper()
     if not sequence or not set(sequence) <= AA_SET:
         return None, "nonstandard_sequence"
-    if sequence in generated:
+    if li_normalize_sequence(sequence) in generated:
         return None, "duplicate"
     sequence_difference = _sequence_difference(sequence, parent_sequence)
     if sequence_difference < cfg.min_sequence_difference:
@@ -628,9 +629,10 @@ def _generate_for_parent(
                 candidate_family_id=parent_id,
                 peptide_group_id=parent._peptide_group_id,
                 dataset_split=cfg.dataset_split,
+                negative_source=source,
             )
             children.append(child)
-            generated.add(proposal.sequence)
+            generated.add(li_normalize_sequence(proposal.sequence))
             manifest_rows.append({
                 "query_id": query_id,
                 "parent_id": parent_id,
@@ -852,6 +854,7 @@ def build_counterfactual_negatives(
         "dataset_split": cfg.dataset_split,
         "labeling": canonical_labeling_name(cfg.labeling),
         "scope": {
+            "candidate_deduplication": "parent_observation_li_sequence_v1",
             "modified_peptides": "excluded",
             "parent_truth": (
                 "prepared_parent_contract_v2: upstream-filtered "

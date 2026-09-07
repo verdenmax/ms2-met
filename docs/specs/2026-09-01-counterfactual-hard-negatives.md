@@ -34,11 +34,18 @@ The repository's first executable 2Da pilot uses
 `config/counterfactual/2da_label_dev_train.parents.ini`,
 `2da_label_dev_train.negatives.ini`, and the standard run-directory config
 `runs/counterfactual_2da_label_dev_train/config.ini`. The mass-spectrum config
-inherits the nine raw paths, extraction settings, and speclib settings from
-`runs/baseline_2da_clean/config.ini`; only the input PSM JSON and output feature
-path change. Target and contaminant paths use the same values as
+inherits the nine raw paths and extraction settings from
+`runs/baseline_2da_clean/config.ini`; the input PSM JSON and output feature
+path change. The original prediction library is disabled because it does not
+provide predictions for novel candidates. Target and contaminant paths use the same values as
 `extract_2da_pfind_diann.ini`. `make counterfactual-2da` owns the three-stage
 hand-off without duplicating those paths or requiring another truth CSV.
+`make counterfactual-2da-train` consumes the existing feature snapshot using
+`config/counterfactual/2da_label_dev_train.cv.yaml`. This development-only CV
+uses `ms1_ms2_no_prediction` and the prediction-independent `evidence_observed`
+cohort. Source-specific counts and prediction coverage are audited. Predictions
+may be used in another experiment only when every training row has coverage;
+`has_lib_pred` itself is never a synthetic-training model input.
 
 Given a parent PSM `P`, a wrong hypothesis `Q` inherits `P`'s observed raw,
 precursor m/z, RT, and charge. The sequence is replaced by `Q`; therefore
@@ -115,7 +122,8 @@ Validity is established before feature extraction:
 - its theoretical precursor agrees with the inherited observed precursor
   within the configured tolerance;
 - it retains enough theoretically distinguishable fragment positions;
-- it is unique within its parent family.
+- it is unique after L/I normalization within its parent observation; different
+  raw observations are retained.
 
 The current target index does not compute full L2/L3 proteome-neighbour scans;
 the audit states the actual exclusion scope as
@@ -202,6 +210,22 @@ folds through different charge states; `candidate_family_id` continues to
 identify the narrower parent-hypothesis family. Formal training must select
 `peptide_group_id` (or a connected grouping that contains it) as its split
 group.
+
+The ordinary CV entry now applies the same connected-family implementation as
+the fixed-negative-pool experiment, before cohort filtering. Connections
+include L/I-normalized sequences and all available family IDs, even when a
+configuration specifies only `sequence`. Direct OOF-training calls reject
+groups that separate a connected family. Generated query rows must carry a
+parent ID; counterfactual rows additionally require the canonical peptide
+group. Split metadata remains outside the features and is retained in OOF CSVs.
+
+Assembly of counterfactual feature rows uses query ID and validates raw, RT,
+and precursor m/z against the manifest. Coordinate comparison allows float32
+serialization rounding, not search/extraction tolerance. Changing a parent's
+coordinates requires feature re-extraction even if its query IDs are stable.
+Every row used in a configured raw-heldout check must have a valid raw identity;
+missing provenance is an error. The audit also reports L/I-normalized peptide
+overlap separately from raw overlap.
 
 Only after an observed-anchor source improves real heldout errors should
 training compare pairwise margins, family-softmax/listwise ranking, or an

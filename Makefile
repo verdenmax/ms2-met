@@ -54,6 +54,7 @@ COUNTERFACTUAL_2DA_PARENT_CONFIG ?= config/counterfactual/2da_label_dev_train.pa
 COUNTERFACTUAL_2DA_NEGATIVE_CONFIG ?= config/counterfactual/2da_label_dev_train.negatives.ini
 COUNTERFACTUAL_2DA_DIR ?= runs/counterfactual_2da_label_dev_train
 COUNTERFACTUAL_2DA_FEATURE_CONFIG ?= $(COUNTERFACTUAL_2DA_DIR)/config.ini
+COUNTERFACTUAL_2DA_TRAIN_CONFIG ?= config/counterfactual/2da_label_dev_train.cv.yaml
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -299,6 +300,13 @@ counterfactual-2da-features: \
 		--logpath $(COUNTERFACTUAL_2DA_DIR)/extract.log
 
 counterfactual-2da: counterfactual-2da-features
+
+.PHONY: counterfactual-2da-train
+# Train an existing feature snapshot; do not regenerate a dataset implicitly.
+counterfactual-2da-train: $(COUNTERFACTUAL_2DA_TRAIN_CONFIG)
+	$(PY) tools/spec_trainer/src/cv_train.py --config $(COUNTERFACTUAL_2DA_TRAIN_CONFIG) \
+		--name counterfactual_2da_label_dev_train \
+		--logpath $(COUNTERFACTUAL_2DA_DIR)/train.log
 
 
 # ---------- 2th ----------

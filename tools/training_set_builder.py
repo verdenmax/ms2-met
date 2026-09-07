@@ -54,6 +54,7 @@ from spectrum.psm_info import (
     get_heavy_increase_mass,
     has_label_site,
 )
+from spectrum.psm_identity import li_normalize_sequence
 
 
 logger = logging.getLogger(__name__)
@@ -352,7 +353,7 @@ def _valid_synthetic(
         return False
     if not candidate or not set(candidate) <= AA_ALPHABET:
         return False
-    if candidate in generated:
+    if li_normalize_sequence(candidate) in generated:
         return False
     if _sequence_difference(candidate, parent) < 2:
         return False
@@ -564,7 +565,7 @@ def generate_queries(cfg: QueryBuildConfig) -> dict:
                         failures["markov:shift_bin"] += 1
                         continue
 
-                generated.add(candidate)
+                generated.add(li_normalize_sequence(candidate))
                 query_id = _stable_id(
                     parent["parent_id"], generator, candidate, charge,
                     prefix="Q")
@@ -634,10 +635,37 @@ def _ensure_parent(path: str) -> None:
 
 
 def _raw_column(df: pd.DataFrame) -> str | None:
-    for column in ("raw_title1", "raw_title", "Run"):
+    for column in ("raw_title1", "raw_title", "Run", "run"):
         if column in df:
             return column
     return None
+
+
+def _raw_identities(frame: pd.DataFrame, name: str) -> pd.Series:
+    """Resolve raw aliases per row and reject absent or conflicting provenance."""
+    columns = [c for c in ("raw_title1", "raw_title", "Run", "run")
+               if c in frame]
+    if not columns:
+        raise ValueError(f"{name} have no raw-title column")
+    result = pd.Series(pd.NA, index=frame.index, dtype="string")
+    for column in columns:
+        values = frame[column].astype("string").str.strip()
+        values = values.mask(values.str.lower().isin(
+            ("", "nan", "none", "null", "<na>")))
+        # Raw titles in the extraction pipeline are filename stems. Recognize
+        # source paths too, including Windows paths, without stripping dots
+        # from a legitimate raw title that has no acquisition-file suffix.
+        values = (values.str.replace("\\", "/", regex=False)
+                  .str.rsplit("/", n=1).str[-1]
+                  .str.replace(r"(?i)\.(raw|pfb|mzml|mzxml)$", "", regex=True))
+        values = values.mask(values.eq(""))
+        conflict = result.notna() & values.notna() & result.ne(values)
+        if conflict.any():
+            raise ValueError(f"{name} have conflicting raw-title aliases")
+        result = result.fillna(values)
+    if result.isna().any():
+        raise ValueError(f"{name} have missing or blank raw-title values")
+    return result
 
 
 def _check_heldout_disjoint(
@@ -651,24 +679,38 @@ def _check_heldout_disjoint(
                 "immutable heldout_features are required; set "
                 "require_heldout=false only for an explicit exploratory run")
         return {"checked": False, "reason": "not configured"}
-    held_col = _raw_column(heldout)
-    if held_col is None:
-        raise ValueError("heldout features have no raw-title column")
-    held_raws = set(heldout[held_col].dropna().astype(str))
+    held_raws = set(_raw_identities(heldout, "heldout features"))
     train_raws: set[str] = set()
-    for frame in train_frames:
-        col = _raw_column(frame)
-        if col is not None:
-            train_raws.update(frame[col].dropna().astype(str))
+    for index, frame in enumerate(train_frames):
+        if not frame.empty:
+            train_raws.update(_raw_identities(
+                frame, f"training features [{index}]"))
     overlap = sorted(train_raws & held_raws)
     if overlap:
         raise ValueError(
             f"raw leakage between training and immutable heldout: "
             f"{overlap[:10]}")
+    def peptides(frames):
+        return {li_normalize_sequence(value)
+                for frame in frames if "sequence" in frame
+                for value in frame["sequence"].dropna() if str(value).strip()}
+
+    train_peptides = peptides(train_frames)
+    held_peptides = peptides([heldout])
+    peptide_overlap = train_peptides & held_peptides
     return {
         "checked": True,
         "n_train_raws": len(train_raws),
         "n_heldout_raws": len(held_raws),
+        "sequence_overlap": {
+            "normalization": "uppercase_li_equivalent",
+            "n_train_sequences": len(train_peptides),
+            "n_heldout_sequences": len(held_peptides),
+            "n_overlapping_sequences": len(peptide_overlap),
+            "interpretation": (
+                "domain holdout with overlapping peptides"
+                if peptide_overlap else "no observed peptide overlap"),
+        },
     }
 
 
@@ -1075,11 +1117,13 @@ def _validate_manifest_labeling(
 
 
 def _deduplicate_training(df: pd.DataFrame) -> pd.DataFrame:
-    raw_col = _raw_column(df)
+    work = df.copy()
+    raw_col = _raw_column(work)
+    if raw_col:
+        work[raw_col] = _raw_identities(work, "training features")
     keys = ["sequence", "charge"]
     if raw_col:
         keys.append(raw_col)
-    work = df.copy()
     priority = {
         SOURCE_POSITIVE: 0,
         SOURCE_GOLD: 1,
@@ -1127,6 +1171,52 @@ def _join_silver_manifest(
         and silver_raw["query_id"].astype("string").str.strip()
         .fillna("").ne("").any()
     )
+    observed_context = (
+        _raw_column(manifest) is not None or "rt" in manifest
+        or any(manifest[column].astype("string").str.startswith(
+            "synthetic_", na=False).any()
+            for column in ("generator", "negative_source") if column in manifest)
+    )
+    if observed_context:
+        if not use_query_id:
+            raise ValueError("counterfactual features require query_id")
+        for frame, name in ((manifest, "counterfactual manifest"),
+                            (silver_raw, "counterfactual features")):
+            missing = {"rt", "precursor_mz"} - set(frame)
+            if missing:
+                raise ValueError(f"{name} missing coordinates: {sorted(missing)}")
+        manifest = manifest.copy()
+        silver_raw = silver_raw.copy()
+        manifest["__manifest_raw"] = _raw_identities(
+            manifest, "counterfactual manifest")
+        silver_raw["__feature_raw"] = _raw_identities(
+            silver_raw, "counterfactual features")
+        manifest_ids = manifest["query_id"].astype("string").str.strip()
+        if manifest_ids.isna().any() or manifest_ids.eq("").any():
+            raise ValueError("counterfactual manifest has missing query_id")
+        feature_ids = silver_raw["query_id"].astype("string").str.strip()
+        child_rows = pd.Series(False, index=silver_raw.index)
+        if "negative_source" in silver_raw:
+            child_rows |= silver_raw["negative_source"].astype("string").str.startswith(
+                "synthetic_", na=False)
+        if "label" in silver_raw:
+            child_rows |= pd.to_numeric(silver_raw["label"], errors="coerce").eq(0)
+        if "label_type" in silver_raw:
+            child_rows |= silver_raw["label_type"].eq("negative")
+        known_parent = pd.Series(False, index=silver_raw.index)
+        if "label" in silver_raw:
+            known_parent |= pd.to_numeric(silver_raw["label"], errors="coerce").eq(1)
+        if "label_type" in silver_raw:
+            known_parent |= silver_raw["label_type"].eq("positive")
+        missing_id = feature_ids.isna() | feature_ids.eq("")
+        if ((child_rows | ~known_parent) & missing_id).any():
+            raise ValueError("counterfactual child features have missing query_id")
+        unknown = feature_ids.notna() & feature_ids.ne("") & ~feature_ids.isin(
+            manifest_ids)
+        if unknown.any():
+            raise ValueError("counterfactual features contain unknown query_id")
+        manifest["query_id"] = manifest_ids
+        silver_raw["query_id"] = feature_ids
     join_keys = ["query_id"] if use_query_id else ["sequence", "charge"]
     payload_columns = list(required_manifest) + [
         column for column in (
@@ -1135,6 +1225,8 @@ def _join_silver_manifest(
         )
         if column in manifest.columns
     ]
+    if observed_context:
+        payload_columns.extend(("rt", "precursor_mz", "__manifest_raw"))
     payload_columns = list(dict.fromkeys(payload_columns))
     silver = silver_raw.merge(
         manifest[payload_columns],
@@ -1155,7 +1247,7 @@ def _join_silver_manifest(
             else:
                 left = silver[column].astype("string").fillna("")
                 right = silver[manifest_column].astype("string").fillna("")
-            mismatch = left.ne(right)
+            mismatch = left.isna() | right.isna() | left.ne(right)
             if bool(mismatch.any()):
                 examples = silver.loc[
                     mismatch, ["query_id", column, manifest_column]
@@ -1164,6 +1256,24 @@ def _join_silver_manifest(
                     f"silver feature/manifest {column} mismatch for query_id: "
                     f"{examples}")
             silver.drop(columns=manifest_column, inplace=True)
+    if observed_context:
+        if silver["__feature_raw"].ne(silver["__manifest_raw"]).any():
+            raise ValueError("counterfactual feature/manifest raw mismatch")
+        for column in ("rt", "precursor_mz"):
+            left = pd.to_numeric(silver[column], errors="coerce").to_numpy(float)
+            right = pd.to_numeric(
+                silver[f"{column}_manifest"], errors="coerce").to_numpy(float)
+            # PSMInfo serializes coordinates through float32. Permit that
+            # rounding only, not an extraction/search mass or RT tolerance.
+            matches = (np.isfinite(left) & np.isfinite(right)
+                       & np.isclose(left, right, rtol=np.finfo(np.float32).eps,
+                                    atol=1e-6))
+            if not matches.all():
+                raise ValueError(
+                    f"counterfactual feature/manifest {column} mismatch; "
+                    "re-extract features from the current PSM coordinates")
+            silver.drop(columns=f"{column}_manifest", inplace=True)
+        silver.drop(columns=["__feature_raw", "__manifest_raw"], inplace=True)
     return silver, join_keys
 
 
@@ -1173,6 +1283,11 @@ def assemble_training_set(cfg: AssemblyConfig) -> dict:
     gold_raw = _read_many(cfg.gold_features)
     silver_raw = _read_many(cfg.silver_features)
     heldout = _read_many(cfg.heldout_features)
+    # Canonicalize before gold family IDs, distribution matching, or dedup;
+    # CSVs from different adapters may use different raw aliases per row.
+    for frame in (positives_raw, gold_raw, silver_raw, heldout):
+        if not frame.empty and _raw_column(frame) is not None:
+            frame["raw_title1"] = _raw_identities(frame, "input features")
 
     _validate_supported_modifications((
         ("positive features", positives_raw),

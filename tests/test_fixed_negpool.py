@@ -150,6 +150,45 @@ def test_validation_only_prepare_does_not_generate_assignments(tmp_path):
         "not_generated_consume_frozen_manifest"
 
 
+@pytest.mark.parametrize("combined", [False, True])
+def test_fixed_preparation_preserves_family_after_bridge_is_filtered(
+        tmp_path, combined):
+    import fixed_negpool
+
+    datasets = ("2da", "5da", "normal") if combined else ("2da",)
+    for dataset in datasets:
+        _write_pools(tmp_path, dataset=dataset)
+        for path in fixed_negpool.feature_paths(tmp_path, dataset).values():
+            frame = pd.read_csv(path)
+            for column in ("parent_id", "group_id", "query_id"):
+                frame[column] = pd.Series(pd.NA, index=frame.index, dtype="string")
+            frame["negative_source"] = "gold_real"
+            parents = frame.index[frame.label.eq(1)][:2]
+            children = frame.index[frame.label.eq(0)][:2]
+            for index, (parent, child) in enumerate(zip(parents, children), 1):
+                frame.loc[[parent, child], ["parent_id", "group_id"]] = f"P{index}"
+                frame.loc[parent, "sequence"] = "PEPTIDEK"
+                frame.loc[[parent, child], "charge"] = index + 1
+                frame.loc[child, "sequence"] = f"CHILD{index}K"
+                frame.loc[child, "query_id"] = f"Q{index}"
+                frame.loc[child, "negative_source"] = "silver_synthetic_shuffle"
+            # This parent is the only remaining sequence bridge for Q2.
+            frame.loc[parents[1], "q1a_valid"] = 0
+            frame.to_csv(path, index=False)
+
+    cfg = _cfg()
+    if combined:
+        prepared = fixed_negpool.prepare_combined_fixed_negpool(
+            tmp_path, cfg, generate_assignments=False)
+    else:
+        prepared = fixed_negpool.prepare_fixed_negpool(
+            fixed_negpool.feature_paths(tmp_path, "2da"), cfg,
+            generate_assignments=False)
+    children = prepared.frame.query_id.isin(["Q1", "Q2"])
+    assert children.sum() == 2 * len(datasets)
+    assert prepared.frame.loc[children, prepared.split_group_col].nunique() == 1
+
+
 def test_candidate_relationship_ids_form_connected_leakage_groups():
     import fixed_negpool
 

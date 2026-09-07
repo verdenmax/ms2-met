@@ -101,9 +101,10 @@ python -m tools.counterfactual_negatives --config counterfactual_negatives.ini
 ```
 
 仓库内另有 2Da 可复现 pilot 配置。质谱部分使用标准运行目录
-`runs/counterfactual_2da_label_dev_train/config.ini`，其 raw、提取参数和
-speclib 均沿用 `runs/baseline_2da_clean/config.ini`，只替换输入 PSM JSON 和
-输出 features 路径；FASTA 路径沿用 `extract_2da_pfind_diann.ini`。无需创建
+`runs/counterfactual_2da_label_dev_train/config.ini`，其 raw、提取参数
+沿用 `runs/baseline_2da_clean/config.ini`，替换输入 PSM JSON 和输出 features
+路径，并关闭原始预测谱库；新合成序列没有配套预测谱，不能让谱库覆盖率
+成为负例来源标志。FASTA 路径沿用 `extract_2da_pfind_diann.ini`。无需创建
 额外的 heavy-confirmation CSV，可直接分步或一键运行：
 
 ```bash
@@ -111,7 +112,21 @@ make counterfactual-2da-parents
 make counterfactual-2da-negatives
 make counterfactual-2da-features
 # 或：make counterfactual-2da
+# 对已生成的 features.csv 运行独立的开发集 CV：
+make counterfactual-2da-train
 ```
+
+训练使用 `config/counterfactual/2da_label_dev_train.cv.yaml`：
+`ms1_ms2_no_prediction` 特征集合配合 `evidence_observed` 队列，按来源记录
+筛选数量。CV 在筛选前连接序列、parent 和 peptide group，确保父子假设及
+同肽不同电荷不会跨折；直接传入不安全分组的训练调用会报错。
+如果未来为全部候选补齐预测谱，可以另开带预测特征的实验。当前结果是
+开发集 OOF 诊断；部署阈值和模型收益仍需独立真实 entrapment 测试集验证。
+
+同一 parent 观测内的候选按 L/I 等价性去重，跨 raw 观测保留。使用
+`training_set_builder assemble` 拼接 counterfactual 特征时，必须提供
+query ID 及与 manifest 一致的 raw、RT、m/z；更新 parent 坐标后需要重新
+提取特征。配置 heldout 后，每张非空输入表的每行都必须提供 raw 标识。
 
 负例阶段默认使用 8 个进程，并按 parent 分块并行；每个 parent 的随机种子
 独立，因此单进程和多进程生成的 PSM、manifest 及行顺序完全相同。仓库内

@@ -25,7 +25,10 @@ from cv_core import (METRIC_SEMANTICS_VERSION, average_proba, audit_labels,
                      evaluate_at_threshold, evaluate_oof, make_cv_splits,
                      threshold_at_fpr)
 from cohort import apply_training_cohort
-from feature_cols import resolve_configured_feature_cols
+from feature_cols import resolve_configured_feature_cols, validate_synthetic_features
+from sample_groups import (
+    RELATIONSHIP_COLUMNS, prepare_cv_groups, validate_cv_groups,
+)
 
 
 _SOURCE_FILE = "__source_file"
@@ -150,6 +153,7 @@ def _validate_frame(df, feature_cols, target_col, group_col=None):
         if np.isinf(df[column].to_numpy(dtype="f8", copy=False)).any()]
     if infinite:
         raise ValueError(f"model features contain infinite values: {infinite}")
+    validate_synthetic_features(df, feature_cols)
 
 
 def _missingness_audit(df, feature_cols, target_col):
@@ -191,10 +195,15 @@ def _missingness_audit(df, feature_cols, target_col):
 
 
 def _sequence_overlap(train_df, test_df, group_col):
-    if not group_col:
+    if not group_col or group_col not in train_df or group_col not in test_df:
         return None
-    train = set(train_df[group_col].astype(str))
-    test = set(test_df[group_col].astype(str))
+    def values(frame):
+        series = frame[group_col].dropna().astype(str).str.strip()
+        if group_col == "sequence":
+            series = series.str.upper().str.replace("I", "L", regex=False)
+        return set(series[series.ne("")])
+    train = values(train_df)
+    test = values(test_df)
     overlap = train.intersection(test)
     return {
         "group_col": group_col,
@@ -458,7 +467,8 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
     Returns (oof_proba, fold_metrics, model_paths), plus fold IDs when
     ``return_fold_ids=True``. lightgbm is imported lazily here.
     """
-    # df: unused here; kept for call-site symmetry (caller uses it for label audit)
+    validate_cv_groups(df, groups)
+    validate_synthetic_features(df, feature_cols)
     from models.model_manager import ModelManager
 
     n_folds = int(cfg["training"].get("cv_folds", 5))
@@ -580,13 +590,14 @@ def main(argv=None):
     target_col = cfg["data"]["target_col"]
     train_files = cfg["data"]["train_files"]
     raw_train_df = read_dataframe(train_files)
+    group_col, grouping_audit = prepare_cv_groups(
+        raw_train_df, cfg["data"].get("group_col"))
     df, train_cohort_audit = apply_training_cohort(
         raw_train_df, cfg["data"].get("cohort"), target_col=target_col)
     feature_cols = resolve_configured_feature_cols(
         cfg["data"], train_files, target_col)
     X = df[feature_cols]
     y = df[target_col]
-    group_col = cfg["data"].get("group_col")
     _validate_frame(df, feature_cols, target_col, group_col)
     groups = df[group_col] if group_col else None
     logging.info(
@@ -626,7 +637,8 @@ def main(argv=None):
         raw_test_df = read_dataframe(test_files)
         test_df, test_cohort_audit = apply_training_cohort(
             raw_test_df, cfg["data"].get("cohort"), target_col=target_col)
-        _validate_frame(test_df, feature_cols, target_col, group_col)
+        # External real PSMs need not carry training-only parent/family IDs.
+        _validate_frame(test_df, feature_cols, target_col)
         eval_df = test_df
         eval_y = test_df[target_col]
         ens_proba, member_retrospective, test_agg, cross_details = (
@@ -666,7 +678,7 @@ def main(argv=None):
             operating_points[key]["external_ensemble"] = locked
         test_missingness = _missingness_audit(
             test_df, feature_cols, target_col)
-        sequence_overlap = _sequence_overlap(df, test_df, group_col)
+        sequence_overlap = _sequence_overlap(df, test_df, "sequence")
         identity = [column for column in (
             _SOURCE_FILE, _SOURCE_ROW, "sequence", "charge", target_col,
             "label_type") if column in test_df]
@@ -743,6 +755,7 @@ def main(argv=None):
         "train_missingness": train_missingness,
         "test_missingness": test_missingness,
         "train_test_sequence_overlap": sequence_overlap,
+        "split_groups": grouping_audit,
     }
 
     audit_cfg = cfg.get("audit", {})
@@ -759,7 +772,9 @@ def main(argv=None):
 
     identity = [column for column in (
         _SOURCE_FILE, _SOURCE_ROW, "sequence", "charge", target_col,
-        "label_type") if column in df]
+        "label_type", "negative_source", *RELATIONSHIP_COLUMNS,
+        *([group_col] if group_col else [])) if column in df]
+    identity = list(dict.fromkeys(identity))
     oof_frame = df[identity].copy()
     oof_frame["oof_fold"] = oof_folds
     oof_frame["trust_score"] = oof

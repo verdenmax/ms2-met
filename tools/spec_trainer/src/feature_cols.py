@@ -9,21 +9,25 @@ import os
 import pandas as pd
 
 try:
+    from .sample_groups import synthetic_rows
     # Package import: ``tools.spec_trainer.src.feature_cols``.
     from .feature_groups import (
         FEATURE_GROUPS,
         METADATA_COLUMNS,
         REGISTERED_COLUMNS,
         TRAINING_EXCLUDED_COLUMNS,
+        MS2_PREDICTED_FEATURES,
         experiment_arm_features,
         resolve_experiment_arm,
     )
 except ImportError:  # Script entry points put this ``src`` directory on PATH.
+    from sample_groups import synthetic_rows
     from feature_groups import (
         FEATURE_GROUPS,
         METADATA_COLUMNS,
         REGISTERED_COLUMNS,
         TRAINING_EXCLUDED_COLUMNS,
+        MS2_PREDICTED_FEATURES,
         experiment_arm_features,
         resolve_experiment_arm,
     )
@@ -54,6 +58,32 @@ META_COLUMNS = METADATA_COLUMNS
 EXCLUDED_EXTRA = TRAINING_EXCLUDED_COLUMNS
 
 
+def validate_synthetic_features(frame, feature_cols):
+    """Do not let missing prediction coverage identify generated negatives."""
+    if not synthetic_rows(frame).any():
+        return
+    if "has_lib_pred" in feature_cols:
+        raise ValueError("has_lib_pred is not a model input for synthetic training")
+    predicted = set(feature_cols) & MS2_PREDICTED_FEATURES
+    if predicted and ("has_lib_pred" not in frame or not pd.to_numeric(
+            frame["has_lib_pred"], errors="coerce").eq(1).all()):
+        raise ValueError(
+            "synthetic training with predicted features requires prediction "
+            "coverage on every row; use ms1_ms2_no_prediction or predict all candidates")
+
+
+def _validate_csv_predictions(paths, feature_cols):
+    if not (set(feature_cols) & (MS2_PREDICTED_FEATURES | {"has_lib_pred"})):
+        return
+    for path in paths:
+        header = pd.read_csv(path, nrows=0).columns
+        columns = [c for c in ("query_id", "negative_source", "has_lib_pred")
+                   if c in header]
+        if "query_id" in columns or "negative_source" in columns:
+            validate_synthetic_features(
+                pd.read_csv(path, usecols=columns), feature_cols)
+
+
 def prefer_canonical_shift_feature(columns):
     """Drop deprecated feature aliases when canonical names exist."""
     result = list(columns)
@@ -80,11 +110,11 @@ def resolve_feature_cols(explicit, sample_csv_paths, target_col):
         the intersection is smaller than any individual file's column set
         (indicating schema drift). Order follows the first file's header.
     """
-    if explicit:
-        return list(explicit)
-
     if isinstance(sample_csv_paths, str):
         sample_csv_paths = [sample_csv_paths]
+    if explicit:
+        _validate_csv_predictions(sample_csv_paths, explicit)
+        return list(explicit)
 
     per_file_cols = []
     for path in sample_csv_paths:
@@ -118,6 +148,7 @@ def resolve_feature_cols(explicit, sample_csv_paths, target_col):
             f"EXCLUDED_EXTRA / target_col. Check yaml feature_cols or "
             f"add features to the CSV. (P2-7, Silent-I5)"
         )
+    _validate_csv_predictions(sample_csv_paths, result)
     return result
 
 
@@ -190,4 +221,5 @@ def resolve_configured_feature_cols(data_cfg, sample_csv_paths, target_col):
                 f"feature arm {arm!r} schema drift: missing={missing}, "
                 f"unexpected={unexpected}; regenerate a complete feature "
                 "snapshot or explicitly disable require_complete_arm")
+    _validate_csv_predictions(sample_csv_paths, result)
     return result

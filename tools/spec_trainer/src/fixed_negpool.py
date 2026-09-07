@@ -41,6 +41,11 @@ from cv_train import (_SOURCE_FILE, _SOURCE_ROW, _atomic_csv, _atomic_json,
                       _operating_targets, _validate_frame, assemble_oof,
                       evaluate_cross_test)
 from feature_cols import resolve_configured_feature_cols
+from sample_groups import (
+    RELATIONSHIP_COLUMNS,
+    assign_leakage_groups as _assign_leakage_groups,
+    prepare_cv_groups,
+)
 from sample_identity import (
     COMBINED_SAMPLE_ID_ALGORITHM,
     LOCAL_SAMPLE_ID_ALGORITHM,
@@ -66,16 +71,6 @@ _DATASET = "dataset"
 _SOURCE_SAMPLE_ID = "source_sample_id"
 _STRATUM = "dataset_tier_stratum"
 _LEAKAGE_GROUP = "leakage_group_id"
-RELATIONSHIP_COLUMNS = (
-    "query_id", "group_id", "pair_id", "candidate_family_id",
-    "peptide_group_id", "parent_id",
-)
-FAMILY_RELATIONSHIP_COLUMNS = (
-    "group_id", "candidate_family_id", "peptide_group_id", "parent_id",
-)
-ROOT_FAMILY_RELATIONSHIP_COLUMNS = (
-    "group_id", "candidate_family_id", "peptide_group_id",
-)
 
 
 @dataclass
@@ -98,180 +93,6 @@ def feature_paths(feature_root, dataset):
     return {
         pool: root / f"baseline_{dataset}_{pool}" / "features.csv"
         for pool in POOL_NAMES
-    }
-
-
-def _nonempty_relation_columns(frame):
-    available = []
-    for column in RELATIONSHIP_COLUMNS:
-        if column not in frame:
-            continue
-        values = frame[column].astype("string").str.strip()
-        if values.notna().any() and values.fillna("").ne("").any():
-            available.append(column)
-    return available
-
-
-def _assign_leakage_groups(frame, base_group_col):
-    """Group the connected components of sequence and candidate relations.
-
-    A synthetic negative may have a different sequence from its parent.  A
-    plain sequence split would therefore leak that family across partitions.
-    When upstream relationship IDs are available, unioning their tokens with
-    the sequence tokens makes every connected family one indivisible group.
-    """
-    if base_group_col not in frame:
-        raise ValueError(f"split group column {base_group_col!r} is missing")
-    if frame[base_group_col].isna().any():
-        raise ValueError(f"split group column {base_group_col!r} has nulls")
-    relation_columns = _nonempty_relation_columns(frame)
-    if not relation_columns:
-        return base_group_col, {
-            "mode": "sequence_only",
-            "base_group_col": base_group_col,
-            "relationship_columns_available": [],
-            "candidate_family_leakage_protected": False,
-            "limitation": (
-                "upstream feature rows do not contain pair/family IDs; only "
-                "same-sequence leakage is prevented"),
-        }
-
-    family_columns = [
-        column for column in FAMILY_RELATIONSHIP_COLUMNS
-        if column in relation_columns
-    ]
-    family_values = frame[family_columns].astype("string")
-    has_family_id = family_values.apply(
-        lambda column: column.str.strip().fillna("").ne(""))
-    row_has_family_id = (
-        has_family_id.any(axis=1)
-        if family_columns else pd.Series(False, index=frame.index)
-    )
-    complete_family_coverage = bool(row_has_family_id.all())
-
-    # query_id/pair_id are often row-unique identifiers.  They are useful
-    # graph tokens, but their mere presence cannot prove that a generated
-    # candidate is connected to its parent.  When query rows exist, require
-    # every declared parent token to occur on at least one other row in the
-    # family-ID namespace.
-    query_rows = (
-        frame["query_id"].astype("string").str.strip().fillna("").ne("")
-        if "query_id" in frame else pd.Series(False, index=frame.index)
-    )
-    root_columns = [
-        column for column in ROOT_FAMILY_RELATIONSHIP_COLUMNS
-        if column in family_columns
-    ]
-    root_token_rows = {}
-    for row_position, values in enumerate(
-            frame[root_columns].itertuples(index=False, name=None)):
-        if query_rows.iloc[row_position]:
-            continue
-        for value in values:
-            if pd.isna(value) or not str(value).strip():
-                continue
-            root_token_rows.setdefault(str(value).strip(), set()).add(
-                row_position)
-    unresolved_parent_rows = 0
-    if "parent_id" in frame:
-        parent_values = frame["parent_id"].astype("string").str.strip()
-        for row_position in np.flatnonzero(query_rows.to_numpy()):
-            value = parent_values.iloc[row_position]
-            if pd.isna(value) or not value:
-                unresolved_parent_rows += 1
-                continue
-            linked_rows = root_token_rows.get(str(value), set())
-            if not linked_rows:
-                unresolved_parent_rows += 1
-    elif query_rows.any():
-        unresolved_parent_rows = int(query_rows.sum())
-    complete_family_linkage = (
-        complete_family_coverage and unresolved_parent_rows == 0)
-    n_rows = len(frame)
-    parent = np.arange(n_rows, dtype=np.int64)
-    rank = np.zeros(n_rows, dtype=np.int8)
-
-    def find(index):
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return int(index)
-
-    def union(left, right):
-        left, right = find(left), find(right)
-        if left == right:
-            return
-        if rank[left] < rank[right]:
-            left, right = right, left
-        parent[right] = left
-        if rank[left] == rank[right]:
-            rank[left] += 1
-
-    first_seen = {}
-    token_columns = (base_group_col, *relation_columns)
-    for row_index, values in enumerate(
-            frame[list(token_columns)].itertuples(index=False, name=None)):
-        for column, value in zip(token_columns, values):
-            if pd.isna(value) or not str(value).strip():
-                continue
-            # Relationship IDs deliberately share one namespace.  For
-            # example, a parent row may expose ``group_id=P1`` while its
-            # generated child exposes ``parent_id=P1``; those two rows still
-            # belong to one indivisible candidate family.  Sequence remains
-            # namespaced so an accidental text collision with an opaque ID
-            # cannot join unrelated peptides.
-            if column == base_group_col:
-                namespace = "sequence"
-            elif column in {
-                    "group_id", "candidate_family_id", "peptide_group_id",
-                    "parent_id"}:
-                namespace = "candidate_family"
-            else:
-                namespace = column
-            token = f"{namespace}:{str(value).strip()}"
-            previous = first_seen.setdefault(token, row_index)
-            union(row_index, previous)
-
-    component_tokens = {}
-    for token, row_index in first_seen.items():
-        root = find(row_index)
-        current = component_tokens.get(root)
-        if current is None or token < current:
-            component_tokens[root] = token
-    identifiers = [
-        hashlib.sha256(
-            f"connected_candidate_family_v1|{component_tokens[find(i)]}"
-            .encode("utf-8")
-        ).hexdigest()
-        for i in range(n_rows)
-    ]
-    frame[_LEAKAGE_GROUP] = identifiers
-    group_sizes = pd.Series(identifiers).value_counts()
-    return _LEAKAGE_GROUP, {
-        "mode": (
-            "sequence_family_connected_components_v1"
-            if complete_family_linkage else
-            "sequence_family_connected_components_partial_ids_v1"),
-        "base_group_col": base_group_col,
-        "relationship_columns_available": relation_columns,
-        "family_relationship_columns_available": family_columns,
-        "root_family_columns_available": root_columns,
-        "relationship_ids_applied": True,
-        "n_rows_with_relationship_id": int(row_has_family_id.sum()),
-        "relationship_id_coverage_fraction": float(
-            row_has_family_id.mean()),
-        "n_query_rows": int(query_rows.sum()),
-        "n_unresolved_query_parent_rows": unresolved_parent_rows,
-        "candidate_family_leakage_protected": complete_family_linkage,
-        "limitation": (
-            None if complete_family_linkage else
-            "family-linking IDs are missing on some rows or a generated "
-            "query does not resolve to another row through its parent ID; "
-            "available relations are grouped, but global candidate-family "
-            "non-leakage cannot be claimed"),
-        "n_connected_groups": int(len(group_sizes)),
-        "n_multirow_groups": int((group_sizes > 1).sum()),
-        "max_group_rows": int(group_sizes.max()),
     }
 
 
@@ -621,6 +442,8 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
             _SOURCE_ROW: np.arange(len(master), dtype=np.int64),
         }),
     ], axis=1).copy()
+    split_group_col, grouping_audit = prepare_cv_groups(
+        master, group_col)
     cohort, cohort_audit = apply_training_cohort(
         master, cohort_name, target_col=target_col)
     # The wide feature table may arrive as many pandas blocks; consolidate it
@@ -628,8 +451,6 @@ def prepare_fixed_negpool(paths, cfg, *, test_fraction=0.20,
     cohort = cohort.copy()
     _validate_frame(cohort, feature_cols, target_col, group_col)
 
-    split_group_col, grouping_audit = _assign_leakage_groups(
-        cohort, group_col)
     if generate_assignments:
         seed = int(cfg["training"].get("cv_seed", 42))
         split, split_audit = _choose_fixed_test(
