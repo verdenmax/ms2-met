@@ -55,6 +55,10 @@ COUNTERFACTUAL_2DA_NEGATIVE_CONFIG ?= config/counterfactual/2da_label_dev_train.
 COUNTERFACTUAL_2DA_DIR ?= runs/counterfactual_2da_label_dev_train
 COUNTERFACTUAL_2DA_FEATURE_CONFIG ?= $(COUNTERFACTUAL_2DA_DIR)/config.ini
 COUNTERFACTUAL_2DA_TRAIN_CONFIG ?= config/counterfactual/2da_label_dev_train.cv.yaml
+COUNTERFACTUAL_2DA_GROUP_HOLDOUT_CONFIG ?= config/counterfactual/2da_group_holdout_experiment.yaml
+COUNTERFACTUAL_2DA_FEATURES ?= $(COUNTERFACTUAL_2DA_DIR)/features.csv
+COUNTERFACTUAL_2DA_ENTRAPMENT_FEATURES ?= $(FEATURE_ROOT)/baseline_2da_clean/features.csv
+COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT ?= $(CV_OUTPUT_ROOT)/counterfactual-2da-group-holdout
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -173,6 +177,8 @@ endef
 .PHONY: 2th-pos50 extract-2th-pos50 pos50-2da
 .PHONY: counterfactual-2da counterfactual-2da-parents
 .PHONY: counterfactual-2da-negatives counterfactual-2da-features
+.PHONY: counterfactual-2da-group-holdout
+.PHONY: counterfactual-2da-group-holdout-build counterfactual-2da-group-holdout-train
 
 help:
 	@echo "ms2-met Makefile — 三种数据集的特征提取流水线"
@@ -191,6 +197,9 @@ help:
 	@echo "  make counterfactual-2da-negatives  8 进程生成三类候选（默认 5000 parent pilot）"
 	@echo "  make counterfactual-2da-features   提取普通 light/heavy 特征"
 	@echo "  make counterfactual-2da            顺序执行以上三步"
+	@echo "  make counterfactual-2da-group-holdout       构建统一分组留出集并训练 M-C/M-K/M-L/M-All"
+	@echo "  make counterfactual-2da-group-holdout-build 仅冻结四套训练集与同一真实 entrapment 测试集"
+	@echo "  make counterfactual-2da-group-holdout-train 训练已经冻结的四套数据"
 	@echo ""
 	@echo "  注：extract-* 仅在对应 extract_*.ini 存在时可用。"
 	@echo "      5th / normal 的 ini 默认未提供，features.csv 须外部生成。"
@@ -307,6 +316,37 @@ counterfactual-2da-train: $(COUNTERFACTUAL_2DA_TRAIN_CONFIG)
 	$(PY) tools/spec_trainer/src/cv_train.py --config $(COUNTERFACTUAL_2DA_TRAIN_CONFIG) \
 		--name counterfactual_2da_label_dev_train \
 		--logpath $(COUNTERFACTUAL_2DA_DIR)/train.log
+
+# Freeze one peptide/family-held-out split before training. Entrapment errors
+# are always test-only; replicate/raw names never determine the split.
+counterfactual-2da-group-holdout-build: $(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_CONFIG)
+	$(call BANNER,counterfactual grouped holdout build)
+	$(PY) -m tools.counterfactual_group_holdout \
+		--config $(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_CONFIG) \
+		--counterfactual-features $(COUNTERFACTUAL_2DA_FEATURES) \
+		--entrapment-features $(COUNTERFACTUAL_2DA_ENTRAPMENT_FEATURES) \
+		--output-root $(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT)
+
+counterfactual-2da-group-holdout-train:
+	$(call BANNER,counterfactual grouped holdout train)
+	@test -f $(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT)/bundle_status.json || \
+		{ echo "missing complete bundle: $(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT)"; exit 1; }
+	@set -e; for variant in m_c m_k m_l m_all; do \
+		$(PY) tools/spec_trainer/src/cv_train.py \
+			--config $(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT)/configs/$$variant.yaml \
+			--name counterfactual_2da_group_holdout_$$variant \
+			--logpath $(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT)/training/$$variant/train.log \
+			$(CV_OVERWRITE_FLAG); \
+	done
+
+counterfactual-2da-group-holdout:
+	$(MAKE) counterfactual-2da-group-holdout-build \
+		COUNTERFACTUAL_2DA_FEATURES=$(COUNTERFACTUAL_2DA_FEATURES) \
+		COUNTERFACTUAL_2DA_ENTRAPMENT_FEATURES=$(COUNTERFACTUAL_2DA_ENTRAPMENT_FEATURES) \
+		COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT=$(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT)
+	$(MAKE) counterfactual-2da-group-holdout-train \
+		COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT=$(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT) \
+		CV_OVERWRITE=$(CV_OVERWRITE)
 
 
 # ---------- 2th ----------

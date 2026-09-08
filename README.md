@@ -123,6 +123,20 @@ make counterfactual-2da-train
 如果未来为全部候选补齐预测谱，可以另开带预测特征的实验。当前结果是
 开发集 OOF 诊断；部署阈值和模型收益仍需独立真实 entrapment 测试集验证。
 
+真实 entrapment 初版实验使用 counterfactual 与 2Da clean 错误的统一连通
+分组，冻结 M-C、M-K、M-L、M-All 四套训练表和同一个测试表：
+
+```bash
+make counterfactual-2da-group-holdout \
+  PY=/home/verden/.conda/envs/jianyan/bin/python \
+  COUNTERFACTUAL_2DA_FEATURES=/path/to/counterfactual/features.csv \
+  COUNTERFACTUAL_2DA_ENTRAPMENT_FEATURES=/path/to/baseline_2da_clean/features.csv \
+  COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT=/path/to/output
+```
+
+完整的划分规则、审计字段、输出文件和结果读取方式见
+[`docs/specs/2026-09-08-counterfactual-entrapment-group-holdout.md`](docs/specs/2026-09-08-counterfactual-entrapment-group-holdout.md)。
+
 同一 parent 观测内的候选按 L/I 等价性去重，跨 raw 观测保留。使用
 `training_set_builder assemble` 拼接 counterfactual 特征时，必须提供
 query ID 及与 manifest 一致的 raw、RT、m/z；更新 parent 坐标后需要重新
@@ -139,7 +153,8 @@ query ID 及与 manifest 一致的 raw、RT、m/z；更新 parent 坐标后需�
 
 数据路径只在上述现有风格的配置中维护，Makefile 不再重复列出 raw 或
 FASTA。当前 raw split 与 2Da `config.ini` 一致，包含 9 个 PFB；若需要按
-replicate 留出测试集，应另建实验配置，不在这个基线配置中隐式划分。
+训练/测试留出，必须按连接后的 peptide/candidate family 划分。Replicate
+只属于采集来源，不作为实验切分边界。
 
 正式的 MS1/MS2 消融使用同一 eligibility 共同队列、按 `sequence`
 分组的 5 折 CV，以及注册表中的固定特征组。先在 2da 上预跑，再运行三种

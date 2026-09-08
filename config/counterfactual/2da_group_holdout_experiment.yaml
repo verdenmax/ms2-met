@@ -1,0 +1,16 @@
+schema: counterfactual_entrapment_group_holdout_config_v1
+
+# Split connected peptide/candidate families after merging the synthetic table
+# with real 2Da entrapment errors. Replicate/raw names are deliberately absent
+# from the split rule.
+split:
+  holdout_fraction: 0.20
+  seed: 42
+
+# Group assignment is computed before this common eligibility cohort is
+# applied, so a filtered bridge row cannot hide a family relationship.
+cohort: evidence_observed
+
+# Resolved relative to this file. The builder copies the model/training choices
+# and pins data, group, feature-arm, test, and output paths for each variant.
+training_template: 2da_label_dev_train.cv.yaml

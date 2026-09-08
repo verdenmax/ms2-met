@@ -27,6 +27,8 @@ METADATA_COLUMNS = frozenset({
     "group_id", "pair_id", "candidate_family_id", "peptide_group_id",
     "generator", "generator_seed", "heavy_confirmed", "dataset_split",
     "leakage_group_id",
+    "experiment_sample_id", "experiment_origin", "experiment_source_row",
+    "experiment_split",
 })
 
 
