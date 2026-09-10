@@ -59,6 +59,9 @@ COUNTERFACTUAL_2DA_GROUP_HOLDOUT_CONFIG ?= config/counterfactual/2da_group_holdo
 COUNTERFACTUAL_2DA_FEATURES ?= $(COUNTERFACTUAL_2DA_DIR)/features.csv
 COUNTERFACTUAL_2DA_ENTRAPMENT_FEATURES ?= $(FEATURE_ROOT)/baseline_2da_clean/features.csv
 COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT ?= $(CV_OUTPUT_ROOT)/counterfactual-2da-group-holdout
+COUNTERFACTUAL_2DA_EFFECTIVENESS_CONFIG ?= config/counterfactual/2da_real_q01_effectiveness.yaml
+COUNTERFACTUAL_2DA_REAL_Q01_FEATURES ?= $(FEATURE_ROOT)/baseline_2da_clean/features.csv
+COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT ?= $(CV_OUTPUT_ROOT)/counterfactual-2da-real-q01-effectiveness
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -179,6 +182,8 @@ endef
 .PHONY: counterfactual-2da-negatives counterfactual-2da-features
 .PHONY: counterfactual-2da-group-holdout
 .PHONY: counterfactual-2da-group-holdout-build counterfactual-2da-group-holdout-train
+.PHONY: counterfactual-2da-effectiveness counterfactual-2da-effectiveness-build
+.PHONY: counterfactual-2da-effectiveness-train counterfactual-2da-effectiveness-summarize
 
 help:
 	@echo "ms2-met Makefile — 三种数据集的特征提取流水线"
@@ -200,6 +205,9 @@ help:
 	@echo "  make counterfactual-2da-group-holdout       构建统一分组留出集并训练 M-C/M-K/M-L/M-All"
 	@echo "  make counterfactual-2da-group-holdout-build 仅冻结四套训练集与同一真实 entrapment 测试集"
 	@echo "  make counterfactual-2da-group-holdout-train 训练已经冻结的四套数据"
+	@echo "  make counterfactual-2da-effectiveness       5 折真实 q01 测试：M-Real 对比加入 C/K/L/All"
+	@echo "  make counterfactual-2da-effectiveness-build 仅冻结 5 个外层 connected-group 折"
+	@echo "  make counterfactual-2da-effectiveness-train 训练 5 折 × 5 模型"
 	@echo ""
 	@echo "  注：extract-* 仅在对应 extract_*.ini 存在时可用。"
 	@echo "      5th / normal 的 ini 默认未提供，features.csv 须外部生成。"
@@ -347,6 +355,48 @@ counterfactual-2da-group-holdout:
 	$(MAKE) counterfactual-2da-group-holdout-train \
 		COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT=$(COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT) \
 		CV_OVERWRITE=$(CV_OVERWRITE)
+
+# Stronger incremental-utility experiment. Every real q<=1% correct/error row
+# is evaluated once in an outer fold whose connected family is absent from all
+# training inputs. cv_train owns inner grouped CV and locked OOF thresholds.
+counterfactual-2da-effectiveness-build: $(COUNTERFACTUAL_2DA_EFFECTIVENESS_CONFIG)
+	$(call BANNER,counterfactual effectiveness build)
+	$(PY) -m tools.counterfactual_effectiveness build \
+		--config $(COUNTERFACTUAL_2DA_EFFECTIVENESS_CONFIG) \
+		--counterfactual-features $(COUNTERFACTUAL_2DA_FEATURES) \
+		--real-features $(COUNTERFACTUAL_2DA_REAL_Q01_FEATURES) \
+		--output-root $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)
+
+counterfactual-2da-effectiveness-train:
+	$(call BANNER,counterfactual effectiveness train)
+	@test -f $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)/bundle_status.json || \
+		{ echo "missing prepared bundle: $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)"; exit 1; }
+	$(PY) -m tools.counterfactual_effectiveness verify \
+		--output-root $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)
+	@set -e; for config in $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)/configs/fold_*/*.yaml; do \
+		fold=$$(basename "$$(dirname "$$config")"); \
+		model=$$(basename "$$config" .yaml); \
+		$(PY) tools/spec_trainer/src/cv_train.py \
+			--config "$$config" \
+			--name counterfactual_2da_effectiveness_$${fold}_$${model} \
+			--logpath $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)/training/$$fold/$$model/train.log \
+			$(CV_OVERWRITE_FLAG); \
+	done
+
+counterfactual-2da-effectiveness-summarize:
+	$(PY) -m tools.counterfactual_effectiveness summarize \
+		--output-root $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)
+
+counterfactual-2da-effectiveness:
+	$(MAKE) counterfactual-2da-effectiveness-build \
+		COUNTERFACTUAL_2DA_FEATURES=$(COUNTERFACTUAL_2DA_FEATURES) \
+		COUNTERFACTUAL_2DA_REAL_Q01_FEATURES=$(COUNTERFACTUAL_2DA_REAL_Q01_FEATURES) \
+		COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT=$(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)
+	$(MAKE) counterfactual-2da-effectiveness-train \
+		COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT=$(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT) \
+		CV_OVERWRITE=$(CV_OVERWRITE)
+	$(MAKE) counterfactual-2da-effectiveness-summarize \
+		COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT=$(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)
 
 
 # ---------- 2th ----------

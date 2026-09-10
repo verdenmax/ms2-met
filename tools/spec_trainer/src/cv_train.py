@@ -21,14 +21,30 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from cv_core import (METRIC_SEMANTICS_VERSION, average_proba, audit_labels,
-                     evaluate_at_threshold, evaluate_oof, make_cv_splits,
-                     threshold_at_fpr)
-from cohort import apply_training_cohort
-from feature_cols import resolve_configured_feature_cols, validate_synthetic_features
-from sample_groups import (
-    RELATIONSHIP_COLUMNS, prepare_cv_groups, validate_cv_groups,
-)
+if __package__:
+    from .cv_core import (
+        METRIC_SEMANTICS_VERSION, average_proba, audit_labels,
+        evaluate_at_threshold, evaluate_oof, make_cv_splits, threshold_at_fpr,
+    )
+    from .cohort import apply_training_cohort
+    from .feature_cols import (
+        resolve_configured_feature_cols, validate_synthetic_features,
+    )
+    from .sample_groups import (
+        RELATIONSHIP_COLUMNS, prepare_cv_groups, validate_cv_groups,
+    )
+else:  # Direct script entry: src/ is placed on sys.path.
+    from cv_core import (
+        METRIC_SEMANTICS_VERSION, average_proba, audit_labels,
+        evaluate_at_threshold, evaluate_oof, make_cv_splits, threshold_at_fpr,
+    )
+    from cohort import apply_training_cohort
+    from feature_cols import (
+        resolve_configured_feature_cols, validate_synthetic_features,
+    )
+    from sample_groups import (
+        RELATIONSHIP_COLUMNS, prepare_cv_groups, validate_cv_groups,
+    )
 
 
 _SOURCE_FILE = "__source_file"
@@ -459,6 +475,63 @@ def _predefined_inner_split(tr_idx, te_idx, mask, n_rows, groups=None):
     return tr2, val
 
 
+def _configured_predefined_protocol(frame, data_cfg, n_folds):
+    """Read a reusable CV/early-stop protocol from metadata columns."""
+    fold_column = data_cfg.get("predefined_cv_fold_col")
+    configured_valid = data_cfg.get("predefined_inner_valid_cols")
+    if fold_column is None and configured_valid is None:
+        return None, None, {"mode": "generated_during_training"}
+    if not fold_column or not isinstance(configured_valid, dict):
+        raise ValueError(
+            "predefined protocol requires predefined_cv_fold_col and a "
+            "predefined_inner_valid_cols mapping")
+    if fold_column not in frame:
+        raise ValueError(f"predefined CV fold column is missing: {fold_column}")
+    fold_ids = pd.to_numeric(frame[fold_column], errors="coerce")
+    if fold_ids.isna().any() or not np.equal(fold_ids, fold_ids.astype(int)).all():
+        raise ValueError(f"predefined CV fold column must be integer: {fold_column}")
+
+    valid_columns = {}
+    for raw_fold, column in configured_valid.items():
+        try:
+            fold = int(raw_fold)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid predefined inner-valid fold key: {raw_fold!r}") from exc
+        if fold in valid_columns:
+            raise ValueError(f"duplicate predefined inner-valid fold: {fold}")
+        valid_columns[fold] = str(column)
+    expected = set(range(n_folds))
+    if set(valid_columns) != expected:
+        raise ValueError(
+            "predefined_inner_valid_cols must cover exactly folds "
+            f"{sorted(expected)}, got {sorted(valid_columns)}")
+
+    valid_masks = {}
+    for fold, column in valid_columns.items():
+        if column not in frame:
+            raise ValueError(
+                f"predefined inner-valid column is missing: {column}")
+        values = frame[column]
+        if values.dtype == bool:
+            mask = values.to_numpy(dtype=bool)
+        else:
+            normalized = values.astype("string").str.strip().str.lower()
+            mapped = normalized.map({
+                "true": True, "false": False, "1": True, "0": False,
+            })
+            if mapped.isna().any():
+                raise ValueError(
+                    f"predefined inner-valid column must be boolean: {column}")
+            mask = mapped.to_numpy(dtype=bool)
+        valid_masks[fold] = mask
+    return fold_ids.to_numpy(dtype=int), valid_masks, {
+        "mode": "predefined_group_protocol",
+        "cv_fold_col": fold_column,
+        "inner_valid_cols": valid_columns,
+    }
+
+
 def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
                  return_fold_ids=False, predefined_fold_ids=None,
                  predefined_inner_valid=None):
@@ -469,7 +542,10 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
     """
     validate_cv_groups(df, groups)
     validate_synthetic_features(df, feature_cols)
-    from models.model_manager import ModelManager
+    if __package__:
+        from .models.model_manager import ModelManager
+    else:  # Direct script entry.
+        from models.model_manager import ModelManager
 
     n_folds = int(cfg["training"].get("cv_folds", 5))
     seed = int(cfg["training"].get("cv_seed", 42))
@@ -590,8 +666,12 @@ def main(argv=None):
     target_col = cfg["data"]["target_col"]
     train_files = cfg["data"]["train_files"]
     raw_train_df = read_dataframe(train_files)
+    frozen_group_graph = cfg["data"].get("frozen_group_graph", False)
+    if not isinstance(frozen_group_graph, bool):
+        raise ValueError("data.frozen_group_graph must be boolean")
     group_col, grouping_audit = prepare_cv_groups(
-        raw_train_df, cfg["data"].get("group_col"))
+        raw_train_df, cfg["data"].get("group_col"),
+        frozen_group_graph=frozen_group_graph)
     df, train_cohort_audit = apply_training_cohort(
         raw_train_df, cfg["data"].get("cohort"), target_col=target_col)
     feature_cols = resolve_configured_feature_cols(
@@ -600,6 +680,9 @@ def main(argv=None):
     y = df[target_col]
     _validate_frame(df, feature_cols, target_col, group_col)
     groups = df[group_col] if group_col else None
+    predefined_fold_ids, predefined_inner_valid, predefined_protocol_audit = (
+        _configured_predefined_protocol(
+            df, cfg["data"], int(cfg["training"].get("cv_folds", 5))))
     logging.info(
         "training cohort %s: %s -> %s; arm=%s, n_features=%d",
         train_cohort_audit["name"], train_cohort_audit["before"],
@@ -608,7 +691,8 @@ def main(argv=None):
 
     oof, fold_metrics, model_paths, oof_folds = assemble_oof(
         df, X, y, groups, cfg, feature_cols, model_prefix,
-        return_fold_ids=True)
+        return_fold_ids=True, predefined_fold_ids=predefined_fold_ids,
+        predefined_inner_valid=predefined_inner_valid)
 
     target_fprs, primary_target_fpr = _operating_targets(cfg)
     operating_points = {}
@@ -681,7 +765,10 @@ def main(argv=None):
         sequence_overlap = _sequence_overlap(df, test_df, "sequence")
         identity = [column for column in (
             _SOURCE_FILE, _SOURCE_ROW, "sequence", "charge", target_col,
-            "label_type") if column in test_df]
+            "label_type", "negative_source", "experiment_sample_id",
+            "experiment_outer_fold", *RELATIONSHIP_COLUMNS)
+            if column in test_df]
+        identity = list(dict.fromkeys(identity))
         test_prediction_frame = test_df[identity].copy()
         test_prediction_frame["ensemble_trust_score"] = ens_proba
         test_prediction_frame["ensemble_error_score"] = 1.0 - ens_proba
@@ -756,6 +843,7 @@ def main(argv=None):
         "test_missingness": test_missingness,
         "train_test_sequence_overlap": sequence_overlap,
         "split_groups": grouping_audit,
+        "predefined_protocol": predefined_protocol_audit,
     }
 
     audit_cfg = cfg.get("audit", {})

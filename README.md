@@ -137,6 +137,24 @@ make counterfactual-2da-group-holdout \
 完整的划分规则、审计字段、输出文件和结果读取方式见
 [`docs/specs/2026-09-08-counterfactual-entrapment-group-holdout.md`](docs/specs/2026-09-08-counterfactual-entrapment-group-holdout.md)。
 
+要直接检验“加入人工构造负样本是否改善未见真实样本上的 entrapment 错误
+检测”，运行带 M-Real 对照的五折 nested effectiveness 实验：
+
+```bash
+make counterfactual-2da-effectiveness \
+  PY=/home/verden/.conda/envs/jianyan/bin/python \
+  COUNTERFACTUAL_2DA_FEATURES=/path/to/counterfactual/features.csv \
+  COUNTERFACTUAL_2DA_REAL_Q01_FEATURES=/path/to/baseline_2da_clean/features.csv \
+  COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT=/path/to/output
+```
+
+每个真实 q≤1% correct/entrapment 行只在一个外层测试折出现；同 peptide、
+不同 Rep 及其 counterfactual family 均不能进入对应训练集。M-Real、分别加入
+C/K/L 以及加入全部来源的五个模型共享相同测试行，正式 FPR 工作点使用训练侧
+冻结的 inner-OOF/早停分组、成员阈值和多数投票；四个比较的成功判断使用
+family-wise 校正。实验设计、预声明成功条件和输出说明见
+[`docs/specs/2026-09-08-counterfactual-real-q01-effectiveness.md`](docs/specs/2026-09-08-counterfactual-real-q01-effectiveness.md)。
+
 同一 parent 观测内的候选按 L/I 等价性去重，跨 raw 观测保留。使用
 `training_set_builder assemble` 拼接 counterfactual 特征时，必须提供
 query ID 及与 manifest 一致的 raw、RT、m/z；更新 parent 坐标后需要重新

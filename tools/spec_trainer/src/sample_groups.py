@@ -226,9 +226,38 @@ def _validate_candidate_metadata(frame):
             raise ValueError("counterfactual rows require peptide_group_id for CV")
 
 
-def prepare_cv_groups(frame, configured_group_col):
-    """Apply all family links before cohort filtering can remove a parent."""
+def prepare_cv_groups(frame, configured_group_col, *, frozen_group_graph=False):
+    """Apply family links or validate an explicitly frozen full-input graph."""
     _validate_candidate_metadata(frame)
+    if frozen_group_graph:
+        if configured_group_col != _LEAKAGE_GROUP:
+            raise ValueError(
+                "frozen_group_graph requires group_col='leakage_group_id'")
+        if configured_group_col not in frame:
+            raise ValueError("frozen leakage_group_id column is missing")
+        group_values = frame[configured_group_col].astype("string").str.strip()
+        if group_values.isna().any() or group_values.fillna("").eq("").any():
+            raise ValueError("frozen leakage_group_id values must be nonempty")
+        # Available relations must never connect two different frozen groups.
+        # A parent may legitimately be absent from this outer-training subset;
+        # its group was assigned from the complete graph before that holdout.
+        validate_cv_groups(frame, group_values)
+        group_sizes = group_values.value_counts()
+        relation_columns = nonempty_relation_columns(frame)
+        return configured_group_col, {
+            "mode": "frozen_full_input_connected_components_v1",
+            "base_group_col": configured_group_col,
+            "group_assignment_source": "precomputed_complete_input_graph",
+            "relationship_columns_available": relation_columns,
+            "relationship_ids_applied": bool(relation_columns),
+            "candidate_family_leakage_protected": True,
+            "validation": (
+                "available row relationships do not cross frozen groups"),
+            "limitation": None,
+            "n_connected_groups": int(len(group_sizes)),
+            "n_multirow_groups": int((group_sizes > 1).sum()),
+            "max_group_rows": int(group_sizes.max()),
+        }
     if not nonempty_relation_columns(frame) and configured_group_col is None:
         return None, {"mode": "configured_groups", "group_col": None}
     base = configured_group_col or "sequence"

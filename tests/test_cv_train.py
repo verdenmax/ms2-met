@@ -178,6 +178,24 @@ def test_predefined_inner_split_rejects_outer_overlap():
             np.array([False, True, True, False]), 4, groups=groups)
 
 
+def test_configured_predefined_protocol_reads_boolean_metadata():
+    import cv_train
+    frame = pd.DataFrame({
+        "fixed_fold": [0, 0, 1, 1],
+        "valid_0": ["false", "true", "false", "false"],
+        "valid_1": [False, False, True, False],
+    })
+    fold_ids, inner, audit = cv_train._configured_predefined_protocol(
+        frame, {
+            "predefined_cv_fold_col": "fixed_fold",
+            "predefined_inner_valid_cols": {0: "valid_0", 1: "valid_1"},
+        }, 2)
+    assert fold_ids.tolist() == [0, 0, 1, 1]
+    assert inner[0].tolist() == [False, True, False, False]
+    assert inner[1].tolist() == [False, False, True, False]
+    assert audit["mode"] == "predefined_group_protocol"
+
+
 @requires_lgb
 def test_main_writes_outputs(tmp_path):
     import cv_train, yaml
@@ -327,6 +345,9 @@ def test_main_cross_test_mode(tmp_path):
     import cv_train, yaml
     dfA = _toy_df(seed=0)                # 训练数据集 A
     dfB = _toy_df(n_groups=30, seed=7)  # 外部测试集 B：150 行（≠ A 的 200），规模不同才能区分评估目标
+    dfB["experiment_sample_id"] = [f"sample-{i}" for i in range(len(dfB))]
+    dfB["experiment_outer_fold"] = 3
+    dfB["leakage_group_id"] = "leak-" + dfB["sequence"]
     a = tmp_path / "a.csv"; dfA.to_csv(a, index=False)
     b = tmp_path / "b.csv"; dfB.to_csv(b, index=False)
     cfg = _toy_cfg(tmp_path)
@@ -358,6 +379,12 @@ def test_main_cross_test_mode(tmp_path):
     assert (tmp_path / "r.cv.suspects.csv").exists()
     assert (tmp_path / "r.cv.oof.csv").exists()
     assert (tmp_path / "r.cv.test_scores.csv").exists()
+    scores = pd.read_csv(tmp_path / "r.cv.test_scores.csv")
+    assert scores["experiment_sample_id"].tolist() == \
+        dfB["experiment_sample_id"].tolist()
+    assert set(scores["experiment_outer_fold"]) == {3}
+    assert scores["leakage_group_id"].tolist() == \
+        dfB["leakage_group_id"].tolist()
     assert res["experiment"]["test_missingness"]["by_class"]
     assert res["experiment"]["train_test_sequence_overlap"][
         "test_overlap_fraction"] == 1.0

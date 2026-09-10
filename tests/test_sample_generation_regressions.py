@@ -103,6 +103,29 @@ def test_cv_enforces_families_in_outer_and_inner_splits():
                      {}, ["all_p75"], "unused")
 
 
+def test_cv_accepts_validated_groups_frozen_from_the_complete_graph():
+    frame = _families()
+    group_col, _ = prepare_cv_groups(frame, "sequence")
+    retained = frame.loc[frame["label"].eq(0)].copy()
+    frozen_values = retained[group_col].copy()
+
+    returned, audit = prepare_cv_groups(
+        retained, group_col, frozen_group_graph=True)
+
+    assert returned == group_col
+    assert retained[group_col].equals(frozen_values)
+    assert audit["candidate_family_leakage_protected"] is True
+    assert audit["group_assignment_source"] == "precomputed_complete_input_graph"
+
+
+def test_cv_rejects_frozen_groups_crossed_by_an_available_relation():
+    frame = _families()
+    frame["leakage_group_id"] = [f"row-{i}" for i in range(len(frame))]
+    with pytest.raises(ValueError, match="split a peptide/candidate family"):
+        prepare_cv_groups(
+            frame, "leakage_group_id", frozen_group_graph=True)
+
+
 def test_cv_connects_charge_li_and_shared_child_sequences():
     frame = pd.DataFrame({
         "sequence": ["PEPTIDEK", "PEPTLDEK", "WRONGAAK", "WRONGAAK"],

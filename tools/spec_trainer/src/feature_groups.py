@@ -28,7 +28,11 @@ METADATA_COLUMNS = frozenset({
     "generator", "generator_seed", "heavy_confirmed", "dataset_split",
     "leakage_group_id",
     "experiment_sample_id", "experiment_origin", "experiment_source_row",
-    "experiment_split",
+    "experiment_split", "experiment_outer_fold", "experiment_role",
+    "experiment_selected_candidate", "experiment_orphan_synthetic",
+    "experiment_inner_fold", "experiment_inner_valid_fold_0",
+    "experiment_inner_valid_fold_1", "experiment_inner_valid_fold_2",
+    "experiment_inner_valid_fold_3", "experiment_inner_valid_fold_4",
 })
 
 

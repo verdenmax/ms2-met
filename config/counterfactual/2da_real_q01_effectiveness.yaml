@@ -1,0 +1,23 @@
+schema: counterfactual_real_q01_effectiveness_config_v1
+
+# The baseline clean input was searched/filtered at q<=1%. The builder checks
+# every stored q_value before accepting the table.
+real_qvalue_max: 0.01
+cohort: evidence_observed
+
+# Five fixed connected-family folds make every real row an unseen-family test
+# row once while retaining approximately 80% of groups for each training run.
+outer_evaluation:
+  folds: 5
+  seed: 42
+
+training_template: 2da_label_dev_train.cv.yaml
+
+analysis:
+  bootstrap_reps: 1000
+  bootstrap_seed: 20260908
+  # Four model comparisons each make a recall and an FPR one-sided claim.
+  familywise_alpha: 0.05
+  # Predeclared practical/statistical success criteria versus M-Real.
+  minimum_recall_gain: 0.03
+  max_fpr_increase: 0.01
