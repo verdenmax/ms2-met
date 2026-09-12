@@ -835,7 +835,12 @@ def _validate_training_result(root: Path, fold: int, model: str,
                     f"{result_path}")
 
 
-def _load_pooled_predictions(root: Path, outer_folds: int) -> pd.DataFrame:
+def _load_pooled_predictions(root: Path, outer_folds: int, *,
+                             models=None) -> pd.DataFrame:
+    """Validate and pool matching model outputs; optional arms reuse this contract."""
+    models = tuple(MODEL_SOURCES if models is None else models)
+    if not models or len(set(models)) != len(models):
+        raise ValueError("prediction model names must be nonempty and unique")
     fold_frames = []
     identity = [
         *_ROW_IDENTITY_COLUMNS, "negative_source", "sequence", "charge",
@@ -844,7 +849,7 @@ def _load_pooled_predictions(root: Path, outer_folds: int) -> pd.DataFrame:
         merged = None
         expected_ids = None
         expected_identity = None
-        for model in MODEL_SOURCES:
+        for model in models:
             path = _prediction_path(root, fold, model)
             if not path.is_file():
                 raise FileNotFoundError(f"missing trained test scores: {path}")

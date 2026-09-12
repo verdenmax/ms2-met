@@ -83,11 +83,15 @@ def match_peak_targets_ppm(
     intensity_arr: np.ndarray,
     target_mz: np.ndarray,
     mass_tol_ppm: np.float32,
-) -> tuple[np.ndarray, np.ndarray]:
+    *,
+    return_peak_indices: bool = False,
+) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, list[tuple[int, ...]]]:
     """Match many independent targets in one sorted centroid spectrum.
 
     Unlike :func:`match_peak_panel_ppm`, targets remain independent: an
     observed centroid may contribute to two overlapping fragment windows.
+    With ``return_peak_indices``, a third result contains the contributing
+    positive-intensity centroid indices in the ORIGINAL input spectrum.
     Searchsorted bounds avoid allocating a ``targets x peaks`` matrix and let
     a caller load each spectrum only once for a complete fragment panel.
     """
@@ -102,8 +106,10 @@ def match_peak_targets_ppm(
         raise ValueError("mz_arr and intensity_arr must have equal lengths")
     errors = np.full(len(targets), np.nan, dtype="f4")
     matched = np.zeros(len(targets), dtype="f4")
+    peak_indices = [() for _ in targets] if return_peak_indices else None
     if not len(targets) or not len(mz_values):
-        return errors, matched
+        return (errors, matched, peak_indices) if return_peak_indices else (errors, matched)
+    order = np.arange(len(mz_values))
     if len(mz_values) > 1 and np.any(mz_values[1:] < mz_values[:-1]):
         order = np.argsort(mz_values, kind="stable")
         mz_values = mz_values[order]
@@ -121,12 +127,15 @@ def match_peak_targets_ppm(
         ppm = (mz_values[start:stop] - targets[index]) \
             / targets[index] * 1e6
         total = float(np.sum(values))
+        if return_peak_indices:
+            peak_indices[index] = tuple(sorted(
+                int(i) for i in order[start:stop][values > 0]))
         matched[index] = total
         errors[index] = (
             np.average(ppm, weights=values)
             if total > 0 else np.mean(ppm)
         )
-    return errors, matched
+    return (errors, matched, peak_indices) if return_peak_indices else (errors, matched)
 
 
 def centroid_spectrum(

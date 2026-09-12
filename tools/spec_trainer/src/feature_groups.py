@@ -21,6 +21,7 @@ from typing import Iterable, Sequence
 METADATA_COLUMNS = frozenset({
     "sequence", "charge", "raw_title1", "raw_title2", "labeling",
     "isotope_model",
+    "fragment_structure_version", "fragment_structure_status",
     "protein_names", "label", "label_type",
     "precursor_mz", "sequence_len", "rt",
     "negative_source", "negative_confidence", "query_id", "parent_id",
@@ -59,6 +60,7 @@ ELIGIBILITY_FEATURES = frozenset({
     "q1a_valid",
     "has_lib_pred",
     "isotope_model_valid",
+    "fragment_structure_valid",
 })
 
 
@@ -192,12 +194,43 @@ MS2_PREDICTED_FEATURES = frozenset({
 })
 
 
+# Additive Q/D/S groups. Keep historical arms unchanged so experiments do not
+# accidentally change their baseline when extraction starts emitting these.
+MS2_CHARGE_FEATURES = frozenset({
+    'ms2_charge_paired_target_count', 'ms2_charge_paired_ion_count',
+    'ms2_charge_b_paired_ion_count', 'ms2_charge_y_paired_ion_count',
+    'ms2_charge_shifted_paired_ion_count', 'ms2_charge_paired_fraction',
+    'ms2_charge_pooled_only_fraction', 'ms2_charge_dominant_mismatch_fraction',
+    'ms2_charge_z1_pearson_median', 'ms2_charge_z2_pearson_median',
+    'ms2_charge_z1_log_lh_mad', 'ms2_charge_z2_log_lh_mad',
+    'ms2_charge_paired_effective_points_median',
+})
+MS2_DEDUP_FEATURES = frozenset({
+    'ms2_dedup_paired_trace_count', 'ms2_dedup_reused_target_fraction',
+    'ms2_dedup_reused_intensity_fraction',
+})
+MS2_STRUCTURE_FEATURES = frozenset({
+    'ms2_structure_main_trace_count', 'ms2_structure_main_trace_fraction',
+    'ms2_structure_main_shifted_trace_count', 'ms2_structure_main_cut_fraction',
+    'ms2_structure_main_b_run_fraction', 'ms2_structure_main_y_run_fraction',
+    'ms2_structure_main_complementary_cut_fraction',
+    'ms2_structure_main_longest_gap_fraction',
+    'ms2_structure_main_internal_kr_bracket_fraction',
+    'ms2_structure_main_anchor_offset_cycles',
+    'ms2_structure_outside_main_intensity_fraction',
+    'ms2_structure_main_ambiguous_cut_fraction',
+})
+
+
 FEATURE_GROUPS = {
     "eligibility": ELIGIBILITY_FEATURES,
     "context": CONTEXT_FEATURES,
     "ms1_observed": MS1_OBSERVED_FEATURES,
     "ms2_observed": MS2_OBSERVED_FEATURES,
     "ms2_predicted": MS2_PREDICTED_FEATURES,
+    "ms2_charge": MS2_CHARGE_FEATURES,
+    "ms2_dedup": MS2_DEDUP_FEATURES,
+    "ms2_structure": MS2_STRUCTURE_FEATURES,
 }
 
 
@@ -252,6 +285,13 @@ EXPERIMENT_ARMS = {
     "evidence_core": (),
     "full": ("context", "ms1_observed", "ms2_observed",
              "ms2_predicted"),
+    "ms1_ms2_charge": ("ms1_observed", "ms2_observed", "ms2_charge"),
+    "ms1_ms2_dedup": ("ms1_observed", "ms2_observed", "ms2_dedup"),
+    "ms1_ms2_structure": ("ms1_observed", "ms2_observed", "ms2_structure"),
+    "ms1_ms2_qds": ("ms1_observed", "ms2_observed", "ms2_charge",
+                    "ms2_dedup", "ms2_structure"),
+    "evidence_all_qds": ("ms1_observed", "ms2_observed", "ms2_predicted",
+                         "ms2_charge", "ms2_dedup", "ms2_structure"),
 }
 
 

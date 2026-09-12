@@ -62,6 +62,13 @@ COUNTERFACTUAL_2DA_GROUP_HOLDOUT_ROOT ?= $(CV_OUTPUT_ROOT)/counterfactual-2da-gr
 COUNTERFACTUAL_2DA_EFFECTIVENESS_CONFIG ?= config/counterfactual/2da_real_q01_effectiveness.yaml
 COUNTERFACTUAL_2DA_REAL_Q01_FEATURES ?= $(FEATURE_ROOT)/baseline_2da_clean/features.csv
 COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT ?= $(CV_OUTPUT_ROOT)/counterfactual-2da-real-q01-effectiveness
+FRAGMENT_STRUCTURE_CONFIG ?= $(FEATURE_ROOT)/baseline_2da_clean/config.ini
+FRAGMENT_STRUCTURE_OUTPUT ?= runs/baseline_2da_structure
+STRUCTURE_VALIDATION_FEATURES ?= $(FRAGMENT_STRUCTURE_OUTPUT)/features.csv
+STRUCTURE_VALIDATION_SOURCE_FEATURES ?= $(COUNTERFACTUAL_2DA_REAL_Q01_FEATURES)
+STRUCTURE_VALIDATION_MANIFEST ?= $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)/outer_fold_manifest.csv
+STRUCTURE_VALIDATION_CONFIG ?= config/fragment_structure_validation.yaml
+STRUCTURE_VALIDATION_ROOT ?= $(CV_OUTPUT_ROOT)/single-peptide-structure-validation
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -184,6 +191,39 @@ endef
 .PHONY: counterfactual-2da-group-holdout-build counterfactual-2da-group-holdout-train
 .PHONY: counterfactual-2da-effectiveness counterfactual-2da-effectiveness-build
 .PHONY: counterfactual-2da-effectiveness-train counterfactual-2da-effectiveness-summarize
+.PHONY: 2da-structure-features
+.PHONY: 2da-structure-validation 2da-structure-validation-build
+.PHONY: 2da-structure-validation-train 2da-structure-validation-summarize 2da-structure-validation-verify
+
+2da-structure-features:
+	$(PY) -m tools.extract_fragment_structure \
+		--config "$(FRAGMENT_STRUCTURE_CONFIG)" \
+		--output-dir "$(FRAGMENT_STRUCTURE_OUTPUT)"
+
+2da-structure-validation:
+	$(PY) -m tools.fragment_structure_validation run \
+		--features "$(STRUCTURE_VALIDATION_FEATURES)" \
+		--source-features "$(STRUCTURE_VALIDATION_SOURCE_FEATURES)" \
+		--manifest "$(STRUCTURE_VALIDATION_MANIFEST)" \
+		--config "$(STRUCTURE_VALIDATION_CONFIG)" \
+		--output-root "$(STRUCTURE_VALIDATION_ROOT)"
+
+2da-structure-validation-build:
+	$(PY) -m tools.fragment_structure_validation build \
+		--features "$(STRUCTURE_VALIDATION_FEATURES)" \
+		--source-features "$(STRUCTURE_VALIDATION_SOURCE_FEATURES)" \
+		--manifest "$(STRUCTURE_VALIDATION_MANIFEST)" \
+		--config "$(STRUCTURE_VALIDATION_CONFIG)" \
+		--output-root "$(STRUCTURE_VALIDATION_ROOT)"
+
+2da-structure-validation-train:
+	$(PY) -m tools.fragment_structure_validation train --output-root "$(STRUCTURE_VALIDATION_ROOT)"
+
+2da-structure-validation-summarize:
+	$(PY) -m tools.fragment_structure_validation summarize --output-root "$(STRUCTURE_VALIDATION_ROOT)"
+
+2da-structure-validation-verify:
+	$(PY) -m tools.fragment_structure_validation verify --output-root "$(STRUCTURE_VALIDATION_ROOT)"
 
 help:
 	@echo "ms2-met Makefile — 三种数据集的特征提取流水线"
@@ -192,6 +232,8 @@ help:
 	@echo "  make 5th             跑 5Da 数据集（runs/baseline_5da_clean/）"
 	@echo "  make normal          跑 Normal 数据集（runs/baseline_normal_clean/）"
 	@echo "  make all             顺序跑 2th / 5th / normal"
+	@echo "  make 2da-structure-features  全量提取旧特征＋逐电荷/去重/序列结构，输出到新目录"
+	@echo "  make 2da-structure-validation  沿用冻结分组：五组特征训练、阈值验证和配对比较（可续跑）"
 	@echo ""
 	@echo "  make extract-2th     仅生成 2da 的 input JSON"
 	@echo "  make extract-5th     仅生成 5da 的 input JSON"

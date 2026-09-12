@@ -20,7 +20,10 @@ from spectrum.labeling import (
     get_heavy_increase_mass,
     parse_heavy_type,
 )
-from spectrum.dia_data import DIAData
+from spectrum.dia_data import DIAData, pool_fragment_charges
+from workflows.fragment_structure import (
+    FragmentEvidence, fragment_structure_features, unavailable_features,
+)
 
 from workflows.q1a_helpers import Q1aAccumulator, is_split_window, SHIFT_EPSILON
 
@@ -152,6 +155,38 @@ def _is_empty_xic_pair(light_xic: np.ndarray, heavy_xic: np.ndarray) -> bool:
     if not np.any(heavy_xic["intensity"] > 0):
         return True
     return False
+
+
+def _single_fragment_panels(psm, dia, fragments, heavy_mz, config,
+                            split_window, heavy_type, radius, tolerance):
+    """Extract each selected scan once; derive legacy and Q/D/S evidence."""
+    if not config.getboolean(ConfigKeys.GENERAL,
+                             ConfigKeys.FRAGMENT_STRUCTURE_FEATURES, fallback=True):
+        return None, unavailable_features('disabled')
+    extractor = getattr(dia, 'xic_ms2_fragment_panel_extract', None)
+    if not callable(extractor):
+        # Compatibility for old third-party DIA adapters. Never invent
+        # charge separation or peak IDs from an already pooled trace.
+        return None, unavailable_features('unsupported_extractor')
+    if split_window is None:
+        return None, unavailable_features('missing_window')
+    if not fragments:
+        return None, unavailable_features('no_fragment_targets')
+    light, light_total = extractor(
+        psm._rt, radius, psm._precursor_mz, [f[2] for f in fragments],
+        tolerance, include_peak_ids=True)
+    heavy, heavy_total = extractor(
+        psm._rt, radius, heavy_mz, [f[3] for f in fragments],
+        tolerance, include_peak_ids=True)
+    if len(light) != len(fragments) or len(heavy) != len(fragments):
+        raise ValueError('Fragment panel size does not match theoretical targets')
+    records = [FragmentEvidence(*f, l, h) for f,l,h in zip(fragments,light,heavy)]
+    features = fragment_structure_features(
+        psm._sequence, psm._charge, records, split_window=split_window,
+        center_rt=float(psm._rt), silac=heavy_type == HeavyType.SILAC)
+    pooled = [(pool_fragment_charges(l),pool_fragment_charges(h))
+              for l,h in zip(light,heavy)]
+    return (pooled,light_total,heavy_total), features
 
 
 def multi_batch_work(
@@ -521,6 +556,9 @@ def multi_batch_work(
 
     # --- Q1a: finalize and merge features ---
     features.update(q1a_acc.compute_features())
+    # Q/D/S uses within-run acquisition cycles and one candidate identity.
+    # Cross-run pair modes keep a stable schema but do not claim applicability.
+    features.update(unavailable_features('cross_run'))
     if psm_is_split_window is None:
         # The expected heavy precursor has no valid DIA window.  Preserve
         # "unknown" for the split/co-isolation descriptor and make the
@@ -694,6 +732,12 @@ def single_pair_work(
 
     heavy_in_raw = dia_data.check_in_raw(heavy_precursor_mz)
 
+    fragment_panels, structure_features = _single_fragment_panels(
+        psm, dia_data, fragment_ions, heavy_precursor_mz, config,
+        is_split_window(w_light_for_q1a,w_heavy_for_q1a) if heavy_in_raw else None,
+        heavy_type, xic_cycle_window, mass_tol_ppm)
+    features.update(structure_features)
+
     fragment_apex_deltas = []
     fragment_mz_errs = []
     fragment_intensities = []  # per-ion max intensity for weighted correlation
@@ -729,7 +773,7 @@ def single_pair_work(
                                 fallback=6)
                   if config.has_section(ConfigKeys.SPECLIB) else 6)
     # 枚举所有的信息
-    for ions_type, ions_num, light_mass, heavy_mass in fragment_ions:
+    for fragment_index, (ions_type, ions_num, light_mass, heavy_mass) in enumerate(fragment_ions):
 
         if not heavy_in_raw:
             fragment_heavy_absent_count += 1
@@ -742,21 +786,16 @@ def single_pair_work(
 
         attempted_fragment_ions += 1
 
-        # 计算出 light 信息
-        light_ions_xic, light_all_intensity = dia_data.xic_ms2_peaks_extract(
-            psm._rt, xic_cycle_window,
-            precursor_mz=psm._precursor_mz,
-            ions_mass=light_mass,
-            mass_tol_ppm=mass_tol_ppm
-        )
-
-        # 计算出 heavy 信息
-        heavy_ions_xic, heavy_all_intensity = dia_data.xic_ms2_peaks_extract(
-            psm._rt, xic_cycle_window,
-            precursor_mz=heavy_precursor_mz,
-            ions_mass=heavy_mass,
-            mass_tol_ppm=mass_tol_ppm
-        )
+        if fragment_panels is not None:
+            pooled, light_all_intensity, heavy_all_intensity = fragment_panels
+            light_ions_xic, heavy_ions_xic = pooled[fragment_index]
+        else:
+            light_ions_xic, light_all_intensity = dia_data.xic_ms2_peaks_extract(
+                psm._rt, xic_cycle_window, precursor_mz=psm._precursor_mz,
+                ions_mass=light_mass, mass_tol_ppm=mass_tol_ppm)
+            heavy_ions_xic, heavy_all_intensity = dia_data.xic_ms2_peaks_extract(
+                psm._rt, xic_cycle_window, precursor_mz=heavy_precursor_mz,
+                ions_mass=heavy_mass, mass_tol_ppm=mass_tol_ppm)
 
         q1a_acc.add(
             ion_type=ions_type,

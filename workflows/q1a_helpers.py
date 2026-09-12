@@ -4,9 +4,10 @@ Implements §4.2 of docs/specs/2026-05-13-silac-validation-framework.md.
 
 Q1a measures, over the *separable* theoretical b/y fragments of a PSM,
 how many fragments have BOTH a credible light signal AND a credible
-heavy signal at the predicted m/z and rt. Each TP is one piece of
-independent physical evidence that the light search-engine call is
-correct; each FN is the inverse.
+heavy signal at the predicted m/z and rt. Historical Q1A TP/FN fields
+count paired/unpaired fragment names, not identification-level confusion
+matrix entries. Their pooled charge traces may reuse observed peaks;
+independent same-charge evidence is described by fragment_structure.py.
 
 Public surface:
     - is_signal_present_light(xic, intensity_floor) -> bool
@@ -136,13 +137,24 @@ def is_signal_present_heavy(
         if apex_delta > apex_delta_fraction * light_pw:
             return False
 
+    corr = xic_pair_pearson(light_xic, heavy_xic)
+    return bool(np.isfinite(corr) and corr > pearson_min)
+
+
+def xic_pair_pearson(light_xic, heavy_xic) -> float:
+    """Q1A's shared-RT Pearson, or NaN when correlation is undefined.
+
+    This describes shape only; it does not impose intensity or apex criteria.
+    """
+    if light_xic is None or heavy_xic is None or not len(light_xic) or not len(heavy_xic):
+        return float('nan')
     # Pearson correlation on shared rt grid (defensive sort first, mirrors calc_xic_score)
     light_sorted = light_xic[np.argsort(light_xic["rt"])]
     heavy_sorted = heavy_xic[np.argsort(heavy_xic["rt"])]
     rt_start = max(light_sorted["rt"].min(), heavy_sorted["rt"].min())
     rt_end = min(light_sorted["rt"].max(), heavy_sorted["rt"].max())
     if rt_start >= rt_end:
-        return False
+        return float('nan')
     # Cap interpolation grid to avoid oversampling narrow peaks
     # (which would bias pearson upward).
     n_points = min(100, max(len(light_sorted), len(heavy_sorted), 10))
@@ -150,14 +162,12 @@ def is_signal_present_heavy(
     l_int = np.interp(common_rt, light_sorted["rt"], light_sorted["intensity"])
     h_int = np.interp(common_rt, heavy_sorted["rt"], heavy_sorted["intensity"])
     if np.std(l_int) < 1e-10 or np.std(h_int) < 1e-10:
-        return False
+        return float('nan')
     try:
         corr, _ = pearsonr(l_int, h_int)
     except ValueError:
-        return False
-    if not np.isfinite(corr):
-        return False
-    return bool(corr > pearson_min)
+        return float('nan')
+    return float(corr) if np.isfinite(corr) else float('nan')
 
 
 def is_split_window(w_light: dict, w_heavy: dict):

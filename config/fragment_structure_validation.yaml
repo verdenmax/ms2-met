@@ -1,0 +1,11 @@
+schema: fragment_structure_validation_v1
+training_template: counterfactual/2da_label_dev_train.cv.yaml
+
+# Outer group/fold IDs come exclusively from the existing manifest.
+# Inner fitting, early stopping and OOF calibration are frozen once per
+# outer fold and shared by B, B+Q, B+D, B+S and B+QDS.
+analysis:
+  bootstrap_reps: 1000
+  bootstrap_seed: 20260912
+  minimum_recall_gain: 0.03
+  max_fpr_increase: 0.005

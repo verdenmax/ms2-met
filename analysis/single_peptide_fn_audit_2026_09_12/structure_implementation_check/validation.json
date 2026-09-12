@@ -1,0 +1,27 @@
+{
+  "purpose": "implementation_canary_not_model_evaluation",
+  "cases": [
+    "FN007",
+    "FN018",
+    "FN033",
+    "FN091",
+    "FN097",
+    "FN102",
+    "FN129",
+    "C007",
+    "C091",
+    "C097"
+  ],
+  "n_legacy_field_values_checked": 1520,
+  "all_legacy_values_exactly_equal": true,
+  "frozen_y_count_and_q1a_counts_equal": true,
+  "n_new_numeric_features": 28,
+  "sources_sha256": {
+    "spectrum/spectrum_utils.py": "507e7fe22c3ae9bdf00a294d8fecf2ce8f824cc942b980702cbcf7c0860ca7b7",
+    "spectrum/dia_data.py": "e7a88d15e6b0916bda402349dc1b22ec8d01a8c91cb504d90c306f72d74ce2ba",
+    "workflows/single_work.py": "eb84b5f048e7106d67f35a39dc688b8d7d519d50754447d48c901a9d918e1213",
+    "workflows/q1a_helpers.py": "43f91e1e3a710f68921c3134b8991efa81f5174d47dc06f7f5a6e62dac60a4fd",
+    "workflows/fragment_structure.py": "ed68e36eefc84e72710e53c6d13088cd71d2291188e2be258c0b2403bc517b4e",
+    "tools/spec_trainer/src/feature_groups.py": "45689253b3ba4fb26d905e7dcd6f78062b2e60ad60e3c0358d94568be8099000"
+  }
+}

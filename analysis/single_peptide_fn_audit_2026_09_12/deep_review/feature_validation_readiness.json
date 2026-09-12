@@ -1,0 +1,45 @@
+{
+  "metric_semantics": "error_identification_positive_v1",
+  "positive_class": "incorrect_identification",
+  "purpose": "readiness_audit_for_development_feature_validation",
+  "manifest": "/tmp/pfind_outer_fold_manifest.csv",
+  "manifest_sha256": "4906ff3edf9a940bf3aad801c471b09b9595c46c5a028067cc89e182db9833eb",
+  "features": "/home/verden/share/2026_04_27_kongweisa_diann_ZHOUHUdataset/feature_result/ms2-met-runs-08-20/baseline_2da_clean/features.csv",
+  "n_real_rows": 107227,
+  "n_actual_correct": 106666,
+  "n_actual_error": 561,
+  "n_frozen_groups": 38192,
+  "n_outer_folds": 5,
+  "n_prediction_covered": 89643,
+  "n_prediction_covered_correct": 89156,
+  "n_prediction_covered_error": 487,
+  "all_130_reviewed_fn_found": true,
+  "all_groups_in_single_outer_fold": true,
+  "source_rows_labels_sequences_match": true,
+  "new_feature_extraction_coverage_now": {
+    "full_real_cohort": false,
+    "cached_fn_rows": 130,
+    "cached_labelled_correct_reference_rows": 130
+  },
+  "previous_small_reference_descriptions": {
+    "FN": {
+      "n_records": 130,
+      "prediction_covered": 113,
+      "n_with_eligible_predicted_strong_both_below100": 35,
+      "n_with_alias_between_two_q1a_pairs": 8,
+      "n_with_pooled_pair_without_same_charge_pair": 10,
+      "n_without_complementary_cut": 66,
+      "median_longest_unresolved_sequence_block": 4.0
+    },
+    "labelled_correct_reference": {
+      "n_records": 130,
+      "prediction_covered": 111,
+      "n_with_eligible_predicted_strong_both_below100": 7,
+      "n_with_alias_between_two_q1a_pairs": 1,
+      "n_with_pooled_pair_without_same_charge_pair": 17,
+      "n_without_complementary_cut": 63,
+      "median_longest_unresolved_sequence_block": 4.0
+    }
+  },
+  "is_independent_confirmation": false
+}

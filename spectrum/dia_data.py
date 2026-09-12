@@ -33,6 +33,33 @@ XIC_DTYPE = np.dtype([
 ])
 
 
+def pool_fragment_charges(resolved: dict[int, np.ndarray]) -> np.ndarray:
+    """Preserve the historical 1+/2+ sum and intensity-weighted ppm exactly."""
+    if not resolved or not len(next(iter(resolved.values()))):
+        return np.empty(0, dtype=XIC_DTYPE)
+    arrays = [resolved[charge] for charge in OBSERVED_FRAGMENT_CHARGES]
+    n_rows = len(arrays[0])
+    if any(len(a) != n_rows or not np.array_equal(a['cycle_idx'], arrays[0]['cycle_idx'])
+           or not np.array_equal(a['rt'], arrays[0]['rt']) for a in arrays[1:]):
+        raise ValueError('Fragment charge traces must share acquisition rows')
+    pooled = np.empty(n_rows, dtype=XIC_DTYPE)
+    pooled['rt'] = arrays[0]['rt']
+    pooled['cycle_idx'] = arrays[0]['cycle_idx']
+    intensities = np.stack([array['intensity'] for array in arrays], axis=0)
+    pooled['intensity'] = intensities.sum(axis=0)
+    for row_idx in range(n_rows):
+        errors = np.asarray([array['ppm_error'][row_idx] for array in arrays], dtype='f8')
+        finite = np.isfinite(errors)
+        if not finite.any():
+            pooled['ppm_error'][row_idx] = float('nan')
+            continue
+        weights = intensities[:, row_idx][finite]
+        pooled['ppm_error'][row_idx] = (
+            np.average(errors[finite], weights=weights)
+            if float(weights.sum()) > 0 else np.mean(errors[finite]))
+    return pooled
+
+
 def deduplicate_with_tolerance(arr, tolerance=0.1):
     """
     对float32数组进行容差去重并排序
@@ -1236,8 +1263,16 @@ class DIAData:
         ions_masses,
         mass_tol_ppm: np.float32,
         fragment_charges: tuple[int, ...] = OBSERVED_FRAGMENT_CHARGES,
+        *,
+        include_peak_ids: bool = False,
     ) -> tuple[list[dict[int, np.ndarray]], np.float32]:
-        """Extract every fragment/charge target while loading each scan once."""
+        """Extract every fragment/charge target while loading each scan once.
+
+        Optional ``peak_ids`` entries are (global scan index, centroid indices)
+        scoped to this DIAData object. Ordinary XIC fields remain unchanged.
+        """
+        row_dtype = (np.dtype(XIC_DTYPE.descr + [("peak_ids", "O")])
+                     if include_peak_ids else XIC_DTYPE)
         charges = tuple(int(charge) for charge in fragment_charges)
         if not charges or any(charge <= 0 for charge in charges):
             raise ValueError("fragment_charges must contain positive integers")
@@ -1254,7 +1289,7 @@ class DIAData:
             rt, xic_cycle_window, precursor_mz)
         if not selected_global_indices:
             return [{
-                charge: np.empty(0, dtype=XIC_DTYPE) for charge in charges
+                charge: np.empty(0, dtype=row_dtype) for charge in charges
             } for _ in masses], 0.0
 
         rows = [
@@ -1271,17 +1306,22 @@ class DIAData:
             mz_arr, intensity_arr = self.get_spectrum_by_index(global_idx)
             total_intensity += np.sum(intensity_arr)
             cycle_idx = self._ms2_cycle_idx(int(global_idx))
-            errors, intensities = match_peak_targets_ppm(
-                mz_arr, intensity_arr, targets, mass_tol_ppm)
+            matched = match_peak_targets_ppm(
+                mz_arr, intensity_arr, targets, mass_tol_ppm,
+                return_peak_indices=include_peak_ids)
+            errors, intensities = matched[:2]
             for target_index, (ppm_error, match_intensity) in enumerate(zip(
                     errors, intensities)):
                 ion_index, charge_index = divmod(target_index, len(charges))
-                rows[ion_index][charges[charge_index]].append((
+                row = (
                     self.rt_values[global_idx], ppm_error,
                     match_intensity, cycle_idx,
-                ))
+                )
+                if include_peak_ids:
+                    row += ((int(global_idx), matched[2][target_index]),)
+                rows[ion_index][charges[charge_index]].append(row)
         return [{
-            charge: np.asarray(values, dtype=XIC_DTYPE)
+            charge: np.asarray(values, dtype=row_dtype)
             for charge, values in ion_rows.items()
         } for ion_rows in rows], float(total_intensity)
 
@@ -1298,32 +1338,7 @@ class DIAData:
             rt, xic_cycle_window, precursor_mz, ions_mass, mass_tol_ppm,
             OBSERVED_FRAGMENT_CHARGES,
         )
-        if not resolved or not len(next(iter(resolved.values()))):
-            return np.empty(0, dtype=XIC_DTYPE), total_intensity
-
-        arrays = [resolved[charge] for charge in OBSERVED_FRAGMENT_CHARGES]
-        n_rows = len(arrays[0])
-        pooled = np.empty(n_rows, dtype=XIC_DTYPE)
-        pooled["rt"] = arrays[0]["rt"]
-        pooled["cycle_idx"] = arrays[0]["cycle_idx"]
-        intensities = np.stack(
-            [array["intensity"] for array in arrays], axis=0)
-        pooled["intensity"] = intensities.sum(axis=0)
-        for row_idx in range(n_rows):
-            errors = np.asarray([
-                array["ppm_error"][row_idx] for array in arrays
-            ], dtype="f8")
-            finite = np.isfinite(errors)
-            if not finite.any():
-                pooled["ppm_error"][row_idx] = float("nan")
-                continue
-            weights = intensities[:, row_idx][finite]
-            pooled["ppm_error"][row_idx] = (
-                np.average(errors[finite], weights=weights)
-                if float(weights.sum()) > 0 else np.mean(errors[finite])
-            )
-
-        return pooled, total_intensity
+        return pool_fragment_charges(resolved), total_intensity
 
     def find_near_ms1_idx(self, rt: np.float32):
         """ 找到那个离这个 rt 更加接近 """
