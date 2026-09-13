@@ -347,9 +347,10 @@ def _validate_completed_job(root, job):
             raise FileNotFoundError(f'completed job model missing: {model}')
 
 
-def train_bundle(root):
+def train_bundle(root, *, verifier=None, job_validator=None):
     root = Path(root).resolve()
-    _, protocol = verify_bundle(root)
+    _, protocol = (verifier or verify_bundle)(root)
+    validate_job = job_validator or _validate_completed_job
     # One experiment writer at a time; interrupted partial jobs are retried in
     # place, while verified completed jobs are never retrained or overwritten.
     lock = root/'.train.lock'
@@ -363,7 +364,7 @@ def train_bundle(root):
         for job in protocol['jobs']:
             directory = root/job['result_dir']
             if (directory/'training.cv.json').exists():
-                _validate_completed_job(root, job)
+                validate_job(root, job)
                 print(f'Skip verified fold {job["fold"]} / {job["arm"]}', flush=True)
                 continue
             directory.mkdir(parents=True, exist_ok=True)
@@ -374,8 +375,8 @@ def train_bundle(root):
                 '--name', f'structure_fold_{job["fold"]}_{job["arm"]}',
                 '--logpath', str(directory/'train.log'), '--overwrite',
             ], cwd=PROJECT, check=True)
-            _validate_completed_job(root, job)
-        _atomic_json(root/'bundle_status.json', {**SEMANTICS, 'schema': SCHEMA, 'status': 'trained'})
+            validate_job(root, job)
+        _atomic_json(root/'bundle_status.json', {**SEMANTICS, 'schema': protocol['schema'], 'status': 'trained'})
     finally:
         lock.unlink()
 

@@ -532,9 +532,64 @@ def _configured_predefined_protocol(frame, data_cfg, n_folds):
     }
 
 
+def validate_fit_augmentation(train, extra, external, feature_cols):
+    """Validate real neg20 rows used only for fitting, before any model fits.
+
+    The experiment builder supplies the complete frozen relationship graph.
+    Here we additionally reject broken relationships visible in these inputs.
+    """
+    group, identity = "leakage_group_id", "experiment_sample_id"
+    for name, frame in (("train", train), ("augmentation", extra), ("test", external)):
+        _validate_frame(frame, feature_cols, "label", group)
+        for column in (group, identity, "sequence"):
+            if column not in frame or frame[column].astype("string").str.strip().fillna("").eq("").any():
+                raise ValueError(f"fit augmentation {name} requires nonempty {column}")
+        if frame[identity].duplicated().any():
+            raise ValueError(f"fit augmentation {name} has duplicate sample IDs")
+    if extra.empty or not extra.label.eq(0).all():
+        raise ValueError("fit augmentation requires nonempty real incorrect IDs only")
+    if "negative_source" not in extra or not extra.negative_source.eq("real_entrapment_neg20").all():
+        raise ValueError("fit augmentation currently supports real_entrapment_neg20 only")
+    if "q_value" not in extra:
+        raise ValueError("fit augmentation requires q_value")
+    q = pd.to_numeric(extra.q_value, errors="coerce")
+    if not (q.gt(.01) & q.le(.20)).all():
+        raise ValueError("fit augmentation requires 0.01 < q_value <= 0.20")
+    for frame in (train, external):
+        if "q_value" not in frame:
+            raise ValueError("frozen q01 rows require q_value")
+        q01 = pd.to_numeric(frame.q_value, errors="coerce")
+        if not (q01.ge(0) & q01.le(.01)).all():
+            raise ValueError("fit augmentation must preserve real q<=0.01 calibration/test rows")
+    combined = pd.concat([train, extra, external], ignore_index=True, sort=False)
+    if combined[identity].duplicated().any():
+        raise ValueError("fit augmentation overlaps frozen sample IDs")
+    prepare_cv_groups(combined, group, frozen_group_graph=True)
+    if set(external[group]) & set(pd.concat([train[group], extra[group]])):
+        raise ValueError("fit augmentation/train overlaps external test groups")
+    return {
+        "mode": "real_neg20_fitting_only_v1", "n_actual_error": len(extra),
+        "n_groups": int(extra[group].nunique()),
+        "early_stopping_augmented": False, "oof_calibration_augmented": False,
+        "external_test_augmented": False,
+    }
+
+
+def select_fit_augmentation(extra, blocked_groups):
+    """Exclude complete groups belonging to a member's early-stop/OOF rows."""
+    selected = extra.loc[~extra.leakage_group_id.isin(blocked_groups)].copy()
+    ids = sorted(selected.experiment_sample_id.astype(str))
+    return selected, {
+        "n_actual_error": len(selected),
+        "n_groups": int(selected.leakage_group_id.nunique()),
+        "n_excluded_error": len(extra)-len(selected),
+        "sample_ids_sha256": hashlib.sha256("\n".join(ids).encode()).hexdigest(),
+    }
+
+
 def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
                  return_fold_ids=False, predefined_fold_ids=None,
-                 predefined_inner_valid=None):
+                 predefined_inner_valid=None, fit_augmentation=None):
     """Train one model per fold, collect leak-free OOF preds, save fold models.
 
     Returns (oof_proba, fold_metrics, model_paths), plus fold IDs when
@@ -556,6 +611,14 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
     if min_class_groups < 1:
         raise ValueError("training.min_class_groups_per_split must be >= 1")
     grp_vals = None if groups is None else groups.values
+    if fit_augmentation is not None:
+        if groups is None or cfg["data"].get("group_col") != "leakage_group_id":
+            raise ValueError("fit augmentation requires frozen leakage_group_id groups")
+        if not np.array_equal(np.asarray(groups), df.leakage_group_id.to_numpy()):
+            raise ValueError("fit augmentation groups must equal the frozen dataframe groups")
+        # API callers get the same validation as the CLI (the CLI also checks
+        # the external test). No derived rows are ever appended to the OOF df.
+        validate_fit_augmentation(df, fit_augmentation, df.iloc[:0], feature_cols)
 
     if predefined_fold_ids is None:
         splits = make_cv_splits(
@@ -593,8 +656,20 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
             "fold %d split counts: train=%s valid=%s oof_test=%s",
             k, counts["train"], counts["valid"], counts["oof_test"])
 
+        fit_x, fit_y = X.iloc[tr2], y.iloc[tr2]
+        augmentation_audit = None
+        if fit_augmentation is not None:
+            selected, augmentation_audit = select_fit_augmentation(
+                fit_augmentation, set(groups.iloc[np.r_[val, te_idx]]))
+            fit_x = pd.concat([fit_x, selected[feature_cols]], ignore_index=True)
+            fit_y = pd.concat([fit_y, selected.label], ignore_index=True)
+            augmentation_audit.update(
+                n_total_fit_correct=int(fit_y.eq(1).sum()),
+                n_total_fit_error=int(fit_y.eq(0).sum()),
+                error_fraction=float(fit_y.eq(0).mean()))
+            logging.info("fold %d fitting-only augmentation: %s", k, augmentation_audit)
         model = ModelManager.create(cfg, feature_names=feature_cols)
-        model.fit(X.iloc[tr2], y.iloc[tr2], X.iloc[val], y.iloc[val])
+        model.fit(fit_x, fit_y, X.iloc[val], y.iloc[val])
         oof[te_idx] = model.predict_proba(X.iloc[te_idx])
         oof_folds[te_idx] = k
 
@@ -640,6 +715,8 @@ def assemble_oof(df, X, y, groups, cfg, feature_cols, model_prefix,
                 "calibration_operating_points": calibration,
                 "split_counts": counts,
             })
+        if augmentation_audit is not None:
+            fold_metrics[-1]["fit_augmentation"] = augmentation_audit
 
     assert not np.isnan(oof).any(), "OOF has NaN — some sample never predicted"
     assert (oof_folds >= 0).all(), "some sample has no OOF fold assignment"
@@ -689,10 +766,28 @@ def main(argv=None):
         train_cohort_audit["after"],
         cfg["data"].get("feature_arm", "legacy_auto"), len(feature_cols))
 
+    augmentation_files = cfg["data"].get("fit_augmentation_files") or []
+    augmentation, augmentation_audit = None, None
+    if augmentation_files:
+        if (not isinstance(augmentation_files, list) or not frozen_group_graph
+                or group_col != "leakage_group_id" or target_col != "label"
+                or not cfg["data"].get("test_files")):
+            raise ValueError("fit_augmentation_files requires a frozen grouped real external test")
+        augmentation = read_dataframe(augmentation_files)
+        # The cohort helper deliberately requires both classes. Check the
+        # combined input rather than treating an errors-only pool as a cohort.
+        eligible, _ = apply_training_cohort(
+            pd.concat([df, augmentation], ignore_index=True),
+            cfg["data"].get("cohort"), target_col=target_col)
+        if len(eligible) != len(df)+len(augmentation):
+            raise ValueError("fit augmentation must already satisfy the frozen cohort")
+        external = read_dataframe(cfg["data"]["test_files"])
+        augmentation_audit = validate_fit_augmentation(df, augmentation, external, feature_cols)
+
     oof, fold_metrics, model_paths, oof_folds = assemble_oof(
         df, X, y, groups, cfg, feature_cols, model_prefix,
         return_fold_ids=True, predefined_fold_ids=predefined_fold_ids,
-        predefined_inner_valid=predefined_inner_valid)
+        predefined_inner_valid=predefined_inner_valid, fit_augmentation=augmentation)
 
     target_fprs, primary_target_fpr = _operating_targets(cfg)
     operating_points = {}
@@ -845,6 +940,10 @@ def main(argv=None):
         "split_groups": grouping_audit,
         "predefined_protocol": predefined_protocol_audit,
     }
+    if augmentation_audit is not None:
+        summary["experiment"]["fit_augmentation"] = augmentation_audit
+        summary["experiment"]["augmented_train_test_sequence_overlap"] = _sequence_overlap(
+            pd.concat([df, augmentation], ignore_index=True), external, "sequence")
 
     audit_cfg = cfg.get("audit", {})
     susp, suspect_total = audit_labels(
@@ -876,7 +975,7 @@ def main(argv=None):
             if test_prediction_frame is not None else None),
     }
     summary["provenance"] = _provenance(
-        args, cfg, train_files, test_files or [])
+        args, cfg, list(train_files)+augmentation_files, test_files or [])
 
     # Write the JSON last: its presence is the completion marker for the bundle.
     _atomic_csv(artifact_paths["suspects"], susp)

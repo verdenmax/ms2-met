@@ -16,6 +16,42 @@ import sys
 PROJECT = Path(__file__).resolve().parents[1]
 
 
+def _sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as handle:
+        for block in iter(lambda: handle.read(1024*1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _extraction_fingerprints(config_path):
+    config = configparser.ConfigParser()
+    if not config.read(config_path):
+        raise FileNotFoundError(config_path)
+    # Include local extraction implementation/config resources without reading
+    # enormous raw spectra on each resume. Raw inputs remain immutable inputs.
+    paths = {Path(config_path).resolve(), PROJECT/'main.py', Path(__file__).resolve()}
+    for folder in ('workflows', 'spectrum', 'utils', 'config'):
+        paths.update((PROJECT/folder).rglob('*.py'))
+    for key in ('light_result_file', 'heavy_result_file'):
+        value = config.get('input', key, fallback='').strip()
+        if value:
+            paths.add(_path(value))
+    return {str(p): _sha256(p) for p in sorted(paths)}
+
+
+def verify_completed_run(config_path, output_dir):
+    config_path, output_dir = _path(config_path), _path(output_dir)
+    audit = json.loads((output_dir/'structure_extraction.json').read_text())
+    if (audit.get('status') != 'complete'
+            or audit.get('source_config_sha256') != _sha256(config_path)
+            or audit.get('run_config_sha256') != _sha256(output_dir/'config.ini')
+            or audit.get('features_sha256') != _sha256(output_dir/'features.csv')
+            or audit.get('input_code_sha256') != _extraction_fingerprints(config_path)):
+        raise ValueError('completed Q/D/S extraction differs from its frozen inputs; choose a new output directory')
+    return audit
+
+
 def _path(value):
     p=Path(value).expanduser()
     return p.resolve() if p.is_absolute() else (PROJECT/p).resolve()
@@ -65,13 +101,20 @@ def main():
     p.add_argument('--config',type=Path,default=Path('runs/baseline_2da_clean/config.ini'))
     p.add_argument('--output-dir',type=Path,default=Path('runs/baseline_2da_structure'))
     p.add_argument('--prepare-only',action='store_true',help='Write reviewable run config without starting extraction')
+    p.add_argument('--resume',action='store_true',help='Verify and reuse a completed, fingerprinted extraction')
     args=p.parse_args()
+    if args.resume and (_path(args.output_dir)/'features.csv').exists():
+        verify_completed_run(args.config, args.output_dir)
+        print(f'Skip verified Q/D/S extraction: {_path(args.output_dir)}', flush=True)
+        return
     config,result=prepare_run(args.config,args.output_dir)
     print(f'Q/D/S config: {config}\nOutput: {result}',flush=True)
     if args.prepare_only:
         return
     audit_path=result.parent/'structure_extraction.json'
     audit=json.loads(audit_path.read_text());audit['status']='running'
+    audit['input_code_sha256'] = _extraction_fingerprints(_path(args.config))
+    audit['run_config_sha256'] = _sha256(config)
     audit_path.write_text(json.dumps(audit,indent=2)+'\n')
     try:
         subprocess.run([sys.executable,str(PROJECT/'main.py'),
@@ -79,9 +122,13 @@ def main():
                        cwd=PROJECT,check=True)
         import pandas as pd
         rows=pd.read_csv(result,usecols=['fragment_structure_valid','fragment_structure_status'])
+        if (audit['input_code_sha256'] != _extraction_fingerprints(_path(args.config))
+                or audit['run_config_sha256'] != _sha256(config)):
+            raise ValueError('extraction inputs or implementation changed while running')
         audit.update(status='complete',n_rows=len(rows),
                      n_structure_available=int(rows.fragment_structure_valid.eq(1).sum()),
-                     structure_status_counts=rows.fragment_structure_status.value_counts(dropna=False).to_dict())
+                     structure_status_counts=rows.fragment_structure_status.value_counts(dropna=False).to_dict(),
+                     features_sha256=_sha256(result))
     except Exception as exc:
         audit.update(status='failed',error=f'{type(exc).__name__}: {exc}')
         raise

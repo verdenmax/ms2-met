@@ -69,6 +69,12 @@ STRUCTURE_VALIDATION_SOURCE_FEATURES ?= $(COUNTERFACTUAL_2DA_REAL_Q01_FEATURES)
 STRUCTURE_VALIDATION_MANIFEST ?= $(COUNTERFACTUAL_2DA_EFFECTIVENESS_ROOT)/outer_fold_manifest.csv
 STRUCTURE_VALIDATION_CONFIG ?= config/fragment_structure_validation.yaml
 STRUCTURE_VALIDATION_ROOT ?= $(CV_OUTPUT_ROOT)/single-peptide-structure-validation
+NEG20_STRUCTURE_CONFIG ?= $(FEATURE_ROOT)/baseline_2da_neg20/config.ini
+NEG20_STRUCTURE_OUTPUT ?= runs/baseline_2da_neg20_structure
+NEG20_STRUCTURE_FEATURES ?= $(NEG20_STRUCTURE_OUTPUT)/features.csv
+NEG20_STRUCTURE_REFERENCE ?= $(STRUCTURE_VALIDATION_ROOT)
+NEG20_STRUCTURE_ROOT ?= $(CV_OUTPUT_ROOT)/single-peptide-structure-neg20
+NEG20_STRUCTURE_BOOTSTRAPS ?= 1000
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -194,6 +200,37 @@ endef
 .PHONY: 2da-structure-features
 .PHONY: 2da-structure-validation 2da-structure-validation-build
 .PHONY: 2da-structure-validation-train 2da-structure-validation-summarize 2da-structure-validation-verify
+.PHONY: 2da-structure-neg20 2da-structure-neg20-features 2da-structure-neg20-build
+.PHONY: 2da-structure-neg20-run 2da-structure-neg20-train 2da-structure-neg20-summarize 2da-structure-neg20-verify
+
+# Check the reference before expensive extraction; sequential even with make -j.
+2da-structure-neg20:
+	$(PY) -m tools.fragment_structure_neg20 check-reference --reference-root "$(NEG20_STRUCTURE_REFERENCE)"
+	$(MAKE) 2da-structure-neg20-features
+	$(MAKE) 2da-structure-neg20-run
+
+2da-structure-neg20-features:
+	$(PY) -m tools.extract_fragment_structure \
+		--config "$(NEG20_STRUCTURE_CONFIG)" --output-dir "$(NEG20_STRUCTURE_OUTPUT)" --resume
+
+2da-structure-neg20-build:
+	$(PY) -m tools.fragment_structure_neg20 build \
+		--reference-root "$(NEG20_STRUCTURE_REFERENCE)" --features "$(NEG20_STRUCTURE_FEATURES)" \
+		--output-root "$(NEG20_STRUCTURE_ROOT)" --bootstrap-reps "$(NEG20_STRUCTURE_BOOTSTRAPS)"
+
+2da-structure-neg20-run:
+	$(PY) -m tools.fragment_structure_neg20 run \
+		--reference-root "$(NEG20_STRUCTURE_REFERENCE)" --features "$(NEG20_STRUCTURE_FEATURES)" \
+		--output-root "$(NEG20_STRUCTURE_ROOT)" --bootstrap-reps "$(NEG20_STRUCTURE_BOOTSTRAPS)"
+
+2da-structure-neg20-train:
+	$(PY) -m tools.fragment_structure_neg20 train --output-root "$(NEG20_STRUCTURE_ROOT)"
+
+2da-structure-neg20-summarize:
+	$(PY) -m tools.fragment_structure_neg20 summarize --output-root "$(NEG20_STRUCTURE_ROOT)"
+
+2da-structure-neg20-verify:
+	$(PY) -m tools.fragment_structure_neg20 verify --output-root "$(NEG20_STRUCTURE_ROOT)"
 
 2da-structure-features:
 	$(PY) -m tools.extract_fragment_structure \
@@ -234,6 +271,7 @@ help:
 	@echo "  make all             顺序跑 2th / 5th / normal"
 	@echo "  make 2da-structure-features  全量提取旧特征＋逐电荷/去重/序列结构，输出到新目录"
 	@echo "  make 2da-structure-validation  沿用冻结分组：五组特征训练、阈值验证和配对比较（可续跑）"
+	@echo "  make 2da-structure-neg20       neg20 Q/D/S 提取及四臂训练；冻结原 q01 测试与内部划分"
 	@echo ""
 	@echo "  make extract-2th     仅生成 2da 的 input JSON"
 	@echo "  make extract-5th     仅生成 5da 的 input JSON"
