@@ -31,7 +31,7 @@ def _extraction_fingerprints(config_path):
     # Include local extraction implementation/config resources without reading
     # enormous raw spectra on each resume. Raw inputs remain immutable inputs.
     paths = {Path(config_path).resolve(), PROJECT/'main.py', Path(__file__).resolve()}
-    for folder in ('workflows', 'spectrum', 'utils', 'config'):
+    for folder in ('workflows', 'spectrum', 'utils', 'config', 'constant'):
         paths.update((PROJECT/folder).rglob('*.py'))
     for key in ('light_result_file', 'heavy_result_file'):
         value = config.get('input', key, fallback='').strip()
@@ -40,10 +40,11 @@ def _extraction_fingerprints(config_path):
     return {str(p): _sha256(p) for p in sorted(paths)}
 
 
-def verify_completed_run(config_path, output_dir):
+def verify_completed_run(config_path, output_dir, *, reliability=False):
     config_path, output_dir = _path(config_path), _path(output_dir)
     audit = json.loads((output_dir/'structure_extraction.json').read_text())
     if (audit.get('status') != 'complete'
+            or audit.get('include_reliability', False) != reliability
             or audit.get('source_config_sha256') != _sha256(config_path)
             or audit.get('run_config_sha256') != _sha256(output_dir/'config.ini')
             or audit.get('features_sha256') != _sha256(output_dir/'features.csv')
@@ -57,7 +58,7 @@ def _path(value):
     return p.resolve() if p.is_absolute() else (PROJECT/p).resolve()
 
 
-def prepare_run(config_path: Path, output_dir: Path) -> tuple[Path,Path]:
+def prepare_run(config_path: Path, output_dir: Path, *, reliability=False) -> tuple[Path,Path]:
     config_path,output_dir=_path(config_path),_path(output_dir)
     config=configparser.ConfigParser()
     if not config.read(config_path):
@@ -74,6 +75,7 @@ def prepare_run(config_path: Path, output_dir: Path) -> tuple[Path,Path]:
         raise ValueError('Q/D/S run must use a separate output directory')
     config.set('general','feature_type','0')
     config.set('general','fragment_structure_features','true')
+    config.set('general','fragment_reliability_features',str(reliability).lower())
     config.set('general','result_file',str(result))
     config.set('general','work_directory',str(output_dir/'workspace'))
     output_dir.mkdir(parents=True,exist_ok=True)
@@ -86,6 +88,7 @@ def prepare_run(config_path: Path, output_dir: Path) -> tuple[Path,Path]:
             config.write(f)
     (output_dir/'structure_extraction.json').write_text(json.dumps({
         'schema':'fragment_structure_extraction_v1','status':'prepared',
+        'include_reliability':reliability,
         'source_config':str(config_path),
         'source_config_sha256':hashlib.sha256(config_path.read_bytes()).hexdigest(),
         'run_config':str(run_config),'features':str(result),
@@ -102,12 +105,13 @@ def main():
     p.add_argument('--output-dir',type=Path,default=Path('runs/baseline_2da_structure'))
     p.add_argument('--prepare-only',action='store_true',help='Write reviewable run config without starting extraction')
     p.add_argument('--resume',action='store_true',help='Verify and reuse a completed, fingerprinted extraction')
+    p.add_argument('--reliability',action='store_true',help='Also extract R on the unchanged QDS main group')
     args=p.parse_args()
     if args.resume and (_path(args.output_dir)/'features.csv').exists():
-        verify_completed_run(args.config, args.output_dir)
+        verify_completed_run(args.config, args.output_dir, reliability=args.reliability)
         print(f'Skip verified Q/D/S extraction: {_path(args.output_dir)}', flush=True)
         return
-    config,result=prepare_run(args.config,args.output_dir)
+    config,result=prepare_run(args.config,args.output_dir,reliability=args.reliability)
     print(f'Q/D/S config: {config}\nOutput: {result}',flush=True)
     if args.prepare_only:
         return
@@ -122,6 +126,15 @@ def main():
                        cwd=PROJECT,check=True)
         import pandas as pd
         rows=pd.read_csv(result,usecols=['fragment_structure_valid','fragment_structure_status'])
+        if args.reliability:
+            from workflows.fragment_reliability import FEATURE_NAMES, STATUS_COLUMNS, VERSION
+            reliability_rows = pd.read_csv(result,usecols=[*FEATURE_NAMES,*STATUS_COLUMNS])
+            if (not reliability_rows.fragment_reliability_version.eq(VERSION).all()
+                    or not reliability_rows.fragment_reliability_valid.equals(rows.fragment_structure_valid)
+                    or not reliability_rows.fragment_reliability_status.equals(rows.fragment_structure_status)):
+                raise ValueError('R extraction availability/version differs from QDS')
+            audit.update(n_reliability_available=int(reliability_rows.fragment_reliability_valid.eq(1).sum()),
+                         reliability_status_counts=reliability_rows.fragment_reliability_status.value_counts(dropna=False).to_dict())
         if (audit['input_code_sha256'] != _extraction_fingerprints(_path(args.config))
                 or audit['run_config_sha256'] != _sha256(config)):
             raise ValueError('extraction inputs or implementation changed while running')

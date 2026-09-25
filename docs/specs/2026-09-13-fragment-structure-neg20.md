@@ -2,6 +2,8 @@
 
 本实验在原 q01 正确鉴定和 trap 的冻结分组上，仅向拟合部分加入 `0.01 < q_value <= 0.20` 的真实 trap，比较增加错误训练样本及 Q/D/S 的效果。`neg20` 是 trap 搜索结果的筛选上限，不表示训练中 trap 占 20%。
 
+后续可靠切割 R 与旧计数消融使用本实验的完整冻结目录作参考，单独运行 `make 2da-reliability-ablation`，见 [R 消融文档](2026-09-19-fragment-reliability-ablation.md)。本页原入口和四臂含义不变。
+
 ## 一键运行
 
 在已有 neg20 输入 JSON、谱图和之前的结构验证目录的机器上执行：

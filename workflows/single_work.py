@@ -160,18 +160,20 @@ def _is_empty_xic_pair(light_xic: np.ndarray, heavy_xic: np.ndarray) -> bool:
 def _single_fragment_panels(psm, dia, fragments, heavy_mz, config,
                             split_window, heavy_type, radius, tolerance):
     """Extract each selected scan once; derive legacy and Q/D/S evidence."""
+    include_reliability = config.getboolean(
+        ConfigKeys.GENERAL, ConfigKeys.FRAGMENT_RELIABILITY_FEATURES, fallback=False)
     if not config.getboolean(ConfigKeys.GENERAL,
                              ConfigKeys.FRAGMENT_STRUCTURE_FEATURES, fallback=True):
-        return None, unavailable_features('disabled')
+        return None, unavailable_features('disabled', include_reliability=include_reliability)
     extractor = getattr(dia, 'xic_ms2_fragment_panel_extract', None)
     if not callable(extractor):
         # Compatibility for old third-party DIA adapters. Never invent
         # charge separation or peak IDs from an already pooled trace.
-        return None, unavailable_features('unsupported_extractor')
+        return None, unavailable_features('unsupported_extractor', include_reliability=include_reliability)
     if split_window is None:
-        return None, unavailable_features('missing_window')
+        return None, unavailable_features('missing_window', include_reliability=include_reliability)
     if not fragments:
-        return None, unavailable_features('no_fragment_targets')
+        return None, unavailable_features('no_fragment_targets', include_reliability=include_reliability)
     light, light_total = extractor(
         psm._rt, radius, psm._precursor_mz, [f[2] for f in fragments],
         tolerance, include_peak_ids=True)
@@ -183,7 +185,8 @@ def _single_fragment_panels(psm, dia, fragments, heavy_mz, config,
     records = [FragmentEvidence(*f, l, h) for f,l,h in zip(fragments,light,heavy)]
     features = fragment_structure_features(
         psm._sequence, psm._charge, records, split_window=split_window,
-        center_rt=float(psm._rt), silac=heavy_type == HeavyType.SILAC)
+        center_rt=float(psm._rt), silac=heavy_type == HeavyType.SILAC,
+        include_reliability=include_reliability)
     pooled = [(pool_fragment_charges(l),pool_fragment_charges(h))
               for l,h in zip(light,heavy)]
     return (pooled,light_total,heavy_total), features
@@ -558,7 +561,8 @@ def multi_batch_work(
     features.update(q1a_acc.compute_features())
     # Q/D/S uses within-run acquisition cycles and one candidate identity.
     # Cross-run pair modes keep a stable schema but do not claim applicability.
-    features.update(unavailable_features('cross_run'))
+    features.update(unavailable_features('cross_run', include_reliability=config.getboolean(
+        ConfigKeys.GENERAL, ConfigKeys.FRAGMENT_RELIABILITY_FEATURES, fallback=False)))
     if psm_is_split_window is None:
         # The expected heavy precursor has no valid DIA window.  Preserve
         # "unknown" for the split/co-isolation descriptor and make the

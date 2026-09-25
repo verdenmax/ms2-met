@@ -177,7 +177,8 @@ def test_registry_matches_extractor_and_keeps_historical_arms_unchanged():
     assert {'fragment_structure_status','fragment_structure_version'} <= METADATA_COLUMNS
 
 
-def test_single_candidate_pipeline_reuses_scans_and_preserves_all_old_values():
+@pytest.mark.parametrize('include_reliability', [False, True])
+def test_single_candidate_pipeline_reuses_scans_and_preserves_all_old_values(include_reliability):
     from spectrum.psm_info import PSMInfo
     from spectrum.labeling import HeavyType
     from workflows.single_work import single_pair_work
@@ -204,11 +205,14 @@ def test_single_candidate_pipeline_reuses_scans_and_preserves_all_old_values():
     old=single_pair_work(p,dia,cfg)
     old_calls=len(calls);calls.clear()
     cfg.set('general','fragment_structure_features','true')
+    cfg.set('general','fragment_reliability_features',str(include_reliability).lower())
     new=single_pair_work(p,dia,cfg)
     assert len(calls)==14 and old_calls>len(calls)
     assert new['fragment_structure_valid']==1
     additions=set(FEATURE_NAMES)|{'fragment_structure_valid','fragment_structure_status','fragment_structure_version'}
-    assert set(old)==set(new)
+    from workflows.fragment_reliability import FEATURE_NAMES as R_FEATURES, STATUS_COLUMNS as R_STATUS
+    r_columns = set(R_FEATURES) | set(R_STATUS) if include_reliability else set()
+    assert set(old) | r_columns == set(new)
     for name,value in old.items():
         if name in additions:continue
         if isinstance(value,(float,np.floating)) and np.isnan(value):assert np.isnan(new[name]),name

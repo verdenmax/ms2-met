@@ -274,7 +274,8 @@ def validate_job(root, job):
             raise ValueError('baseline job unexpectedly used augmentation')
 
 
-def paired_analysis(pooled, analysis):
+def paired_analysis(pooled, analysis, *, arms=ARMS, contrasts=CONTRASTS):
+    """Compare declared arms using the shared locked-vote metric helpers."""
     codes, groups = pd.factorize(pooled[GROUP], sort=True)
     group_labels = pd.DataFrame({'group': codes, 'label': pooled.label})
     if group_labels.groupby('group').label.nunique().gt(1).any():
@@ -284,21 +285,21 @@ def paired_analysis(pooled, analysis):
     if any(len(s) == 0 for s in strata):
         raise ValueError('paired bootstrap requires both classes')
     def points(weights=None):
-        return {arm: _locked_vote_metrics(pooled.label, pooled[f'{arm}_fpr_5_vote'], weights) for arm in ARMS}
+        return {arm: _locked_vote_metrics(pooled.label, pooled[f'{arm}_fpr_5_vote'], weights) for arm in arms}
     def contrast(metrics, coefficients):
         return [sum(coefficients[a]*metrics[a][k] for a in coefficients) for k in ('error_recall', 'fpr')]
     observed = points()
     rng = np.random.default_rng(analysis['bootstrap_seed'])
-    draws = {name: [] for name in CONTRASTS}
+    draws = {name: [] for name in contrasts}
     for _ in range(analysis['bootstrap_reps']):
         counts = np.zeros(len(groups))
         for part in strata:
             counts += np.bincount(rng.choice(part, len(part), replace=True), minlength=len(groups))
         metrics = points(counts[codes])
-        for name, coefficients in CONTRASTS.items():
+        for name, coefficients in contrasts.items():
             draws[name].append(contrast(metrics, coefficients))
     rows, changes = [], []
-    for name, coefficients in CONTRASTS.items():
+    for name, coefficients in contrasts.items():
         recall, fpr = contrast(observed, coefficients)
         bounds = np.quantile(draws[name], [.025, .975], axis=0)
         primary = name == analysis['primary_comparison']

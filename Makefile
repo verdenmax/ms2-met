@@ -75,6 +75,12 @@ NEG20_STRUCTURE_FEATURES ?= $(NEG20_STRUCTURE_OUTPUT)/features.csv
 NEG20_STRUCTURE_REFERENCE ?= $(STRUCTURE_VALIDATION_ROOT)
 NEG20_STRUCTURE_ROOT ?= $(CV_OUTPUT_ROOT)/single-peptide-structure-neg20
 NEG20_STRUCTURE_BOOTSTRAPS ?= 1000
+RELIABILITY_CONFIG ?= $(NEG20_STRUCTURE_CONFIG)
+RELIABILITY_OUTPUT ?= runs/baseline_2da_neg20_reliability
+RELIABILITY_FEATURES ?= $(RELIABILITY_OUTPUT)/features.csv
+RELIABILITY_REFERENCE ?= $(NEG20_STRUCTURE_ROOT)
+RELIABILITY_ROOT ?= $(CV_OUTPUT_ROOT)/single-peptide-reliability-ablation
+RELIABILITY_BOOTSTRAPS ?= 1000
 
 # 一键过滤现有 features.csv 的目标范围（可命令行覆盖，如 runs_new/...）
 # 例：make filter FILTER_GLOB='runs_new/baseline_*/features.csv'
@@ -202,6 +208,37 @@ endef
 .PHONY: 2da-structure-validation-train 2da-structure-validation-summarize 2da-structure-validation-verify
 .PHONY: 2da-structure-neg20 2da-structure-neg20-features 2da-structure-neg20-build
 .PHONY: 2da-structure-neg20-run 2da-structure-neg20-train 2da-structure-neg20-summarize 2da-structure-neg20-verify
+.PHONY: 2da-reliability-ablation 2da-reliability-ablation-features 2da-reliability-ablation-build
+.PHONY: 2da-reliability-ablation-run 2da-reliability-ablation-train 2da-reliability-ablation-summarize 2da-reliability-ablation-verify
+
+# Keep preflight, full extraction and training sequential even under make -j.
+2da-reliability-ablation:
+	$(PY) -m tools.fragment_reliability_ablation check-reference --reference-root "$(RELIABILITY_REFERENCE)"
+	$(MAKE) 2da-reliability-ablation-features
+	$(MAKE) 2da-reliability-ablation-run
+
+2da-reliability-ablation-features:
+	$(PY) -m tools.extract_fragment_structure --reliability --resume \
+		--config "$(RELIABILITY_CONFIG)" --output-dir "$(RELIABILITY_OUTPUT)"
+
+2da-reliability-ablation-build:
+	$(PY) -m tools.fragment_reliability_ablation build \
+		--reference-root "$(RELIABILITY_REFERENCE)" --features "$(RELIABILITY_FEATURES)" \
+		--output-root "$(RELIABILITY_ROOT)" --bootstrap-reps "$(RELIABILITY_BOOTSTRAPS)"
+
+2da-reliability-ablation-run:
+	$(PY) -m tools.fragment_reliability_ablation run \
+		--reference-root "$(RELIABILITY_REFERENCE)" --features "$(RELIABILITY_FEATURES)" \
+		--output-root "$(RELIABILITY_ROOT)" --bootstrap-reps "$(RELIABILITY_BOOTSTRAPS)"
+
+2da-reliability-ablation-train:
+	$(PY) -m tools.fragment_reliability_ablation train --output-root "$(RELIABILITY_ROOT)"
+
+2da-reliability-ablation-summarize:
+	$(PY) -m tools.fragment_reliability_ablation summarize --output-root "$(RELIABILITY_ROOT)"
+
+2da-reliability-ablation-verify:
+	$(PY) -m tools.fragment_reliability_ablation verify --output-root "$(RELIABILITY_ROOT)"
 
 # Check the reference before expensive extraction; sequential even with make -j.
 2da-structure-neg20:
@@ -272,6 +309,7 @@ help:
 	@echo "  make 2da-structure-features  全量提取旧特征＋逐电荷/去重/序列结构，输出到新目录"
 	@echo "  make 2da-structure-validation  沿用冻结分组：五组特征训练、阈值验证和配对比较（可续跑）"
 	@echo "  make 2da-structure-neg20       neg20 Q/D/S 提取及四臂训练；冻结原 q01 测试与内部划分"
+	@echo "  make 2da-reliability-ablation  全量 Q/D/S/R 提取及 R×旧计数四臂消融；沿用 neg20 冻结样本与分组"
 	@echo ""
 	@echo "  make extract-2th     仅生成 2da 的 input JSON"
 	@echo "  make extract-5th     仅生成 5da 的 input JSON"

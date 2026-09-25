@@ -14,6 +14,7 @@ from workflows.q1a_helpers import (
     is_signal_present_light, xic_pair_pearson,
 )
 from spectrum.dia_data import pool_fragment_charges
+from workflows import fragment_reliability
 
 
 VERSION = 'qds_v1'
@@ -54,11 +55,12 @@ class FragmentEvidence:
     heavy: dict[int, np.ndarray]
 
 
-def unavailable_features(reason: str) -> dict:
+def unavailable_features(reason: str, *, include_reliability: bool = False) -> dict:
     return {**dict.fromkeys(FEATURE_NAMES, float('nan')),
             'fragment_structure_valid': 0,
             'fragment_structure_version': VERSION,
-            'fragment_structure_status': reason}
+            'fragment_structure_status': reason,
+            **(fragment_reliability.unavailable_features(reason) if include_reliability else {})}
 
 
 def _fraction(a, b):
@@ -147,6 +149,7 @@ def _main_group(groups, center_rt):
 def fragment_structure_features(
     sequence: str, precursor_charge: int, fragments: list[FragmentEvidence], *,
     split_window: bool | None, center_rt: float, silac: bool = True,
+    include_reliability: bool = False,
 ) -> dict:
     """Compute 28 numeric Q/D/S features from a single PSM's observations.
 
@@ -159,26 +162,26 @@ def fragment_structure_features(
     if n < 2 or precursor_charge < 1 or not np.isfinite(center_rt):
         raise ValueError('A sequence, positive precursor charge and finite RT are required')
     if split_window is None:
-        return unavailable_features('missing_window')
+        return unavailable_features('missing_window', include_reliability=include_reliability)
     eligible = [f for f in fragments if is_separable_fragment(
         f.light_mass, f.heavy_mass, split_window)]
     if not eligible:
-        return unavailable_features('no_separable_targets')
+        return unavailable_features('no_separable_targets', include_reliability=include_reliability)
     for f in eligible:
         if f.ion_type not in ('b', 'y') or not 1 <= f.ordinal < n:
             raise ValueError('Fragment positions must refer to internal b/y cuts')
         for side in (f.light, f.heavy):
             for z in (1, 2):
                 if z not in side or not len(side[z]):
-                    return unavailable_features('no_ms2_scans')
+                    return unavailable_features('no_ms2_scans', include_reliability=include_reliability)
                 x = side[z]
                 if not {'rt','intensity','cycle_idx','peak_ids'} <= set(x.dtype.names or ()):
-                    return unavailable_features('missing_peak_identity')
+                    return unavailable_features('missing_peak_identity', include_reliability=include_reliability)
                 if (not np.isfinite(x['rt']).all() or not np.isfinite(x['intensity']).all()
                         or (x['intensity'] < 0).any() or (x['cycle_idx'] < 0).any()
                         or (np.diff(x['cycle_idx']) <= 0).any()):
-                    return unavailable_features('invalid_acquisition_rows')
-    out = unavailable_features('ok')
+                    return unavailable_features('invalid_acquisition_rows', include_reliability=include_reliability)
+    out = unavailable_features('ok', include_reliability=include_reliability)
     out['fragment_structure_valid'] = 1
     paired = []; light_opportunities = 0; pooled_count = pooled_only = 0
     dominant_count = dominant_mismatch = 0
@@ -232,7 +235,7 @@ def fragment_structure_features(
     for p in paired:
         sig = (_signature(p['light']), _signature(p['heavy']))
         if not sig[0] or not sig[1]:
-            return unavailable_features('inconsistent_peak_identity')
+            return unavailable_features('inconsistent_peak_identity', include_reliability=include_reliability)
         groups[sig].append(p)
     groups = list(groups.values())
     total_weight = sum(p['weight'] for p in paired)
@@ -280,4 +283,6 @@ def fragment_structure_features(
         'ms2_structure_outside_main_intensity_fraction':_fraction(informative_weight-main_weight,informative_weight),
         'ms2_structure_main_ambiguous_cut_fraction':_fraction(ambiguous,len(main)),
     })
+    if include_reliability:
+        out.update(fragment_reliability.reliability_features(n, main))
     return out

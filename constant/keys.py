@@ -38,6 +38,7 @@ class ConfigKeys(metaclass=ConstantsClass):
     # docs/superpowers/specs/2026-06-20-xic-apex-shape-penalty-design.md
     LIGHT_FRAGMENT_SHAPE = "light_fragment_shape"
     FRAGMENT_STRUCTURE_FEATURES = "fragment_structure_features"
+    FRAGMENT_RELIABILITY_FEATURES = "fragment_reliability_features"
     # Drop PSMs whose heavy precursor fell outside the acquisition range
     # (heavy_out_of_range == 1) for BOTH classes; default on. See
     # workflows/feature_postfilter.py.

@@ -22,6 +22,7 @@ METADATA_COLUMNS = frozenset({
     "sequence", "charge", "raw_title1", "raw_title2", "labeling",
     "isotope_model",
     "fragment_structure_version", "fragment_structure_status",
+    "fragment_reliability_version", "fragment_reliability_status",
     "protein_names", "label", "label_type",
     "precursor_mz", "sequence_len", "rt",
     "negative_source", "negative_confidence", "query_id", "parent_id",
@@ -61,6 +62,7 @@ ELIGIBILITY_FEATURES = frozenset({
     "has_lib_pred",
     "isotope_model_valid",
     "fragment_structure_valid",
+    "fragment_reliability_valid",
 })
 
 
@@ -222,6 +224,12 @@ MS2_STRUCTURE_FEATURES = frozenset({
 })
 
 
+MS2_RELIABILITY_FEATURES = frozenset({
+    'ms2_reliability_stable_cut_fraction',
+    'ms2_reliability_stable_longest_gap_fraction',
+})
+
+
 FEATURE_GROUPS = {
     "eligibility": ELIGIBILITY_FEATURES,
     "context": CONTEXT_FEATURES,
@@ -231,6 +239,7 @@ FEATURE_GROUPS = {
     "ms2_charge": MS2_CHARGE_FEATURES,
     "ms2_dedup": MS2_DEDUP_FEATURES,
     "ms2_structure": MS2_STRUCTURE_FEATURES,
+    "ms2_reliability": MS2_RELIABILITY_FEATURES,
 }
 
 
@@ -290,6 +299,8 @@ EXPERIMENT_ARMS = {
     "ms1_ms2_structure": ("ms1_observed", "ms2_observed", "ms2_structure"),
     "ms1_ms2_qds": ("ms1_observed", "ms2_observed", "ms2_charge",
                     "ms2_dedup", "ms2_structure"),
+    "ms1_ms2_qds_r": ("ms1_observed", "ms2_observed", "ms2_charge",
+                      "ms2_dedup", "ms2_structure", "ms2_reliability"),
     "evidence_all_qds": ("ms1_observed", "ms2_observed", "ms2_predicted",
                          "ms2_charge", "ms2_dedup", "ms2_structure"),
 }
